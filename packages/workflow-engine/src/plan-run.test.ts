@@ -8,6 +8,7 @@ import {
   type PlanUnit,
   type PlanUnitStatus,
   type Workflow,
+  type WorkflowRunState,
 } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import {
@@ -63,11 +64,21 @@ const planRun = (overrides: Partial<PlanRun> = {}): PlanRun => ({
   ...overrides,
 });
 
-const input = (overrides: Partial<PlanRunAdvance>): PlanRunAdvance => ({
+// `unitRunState` is the state of every unit run asked about, for the plan runs of one live unit;
+// `runStates` names them one by one.
+const input = ({
+  unitRunState,
+  runStates,
+  ...overrides
+}: Partial<PlanRunAdvance> & {
+  unitRunState?: WorkflowRunState;
+  runStates?: Record<string, WorkflowRunState>;
+}): PlanRunAdvance => ({
   now: T1,
   units: units('ready', 'waiting', 'ready'),
-  unitRunState: undefined,
+  runState: (runId) => (runStates ? runStates[runId] : unitRunState),
   onFailure: 'stop',
+  limit: 1,
   unitsReadAt: null,
   lastUnitEndedAt: null,
   runIdFor: (key) => `pr1.${key}`,
@@ -84,7 +95,7 @@ const started = (key: string, outcome: PlanRun['units'][number]['outcome'] = 'ru
 describe('picking the next unit (spec 40, 41, 42)', () => {
   it('starts the first ready unit in plan order', () => {
     const decision = advancePlanRun(planRun(), input({}));
-    expect(decision.start).toEqual(started('U1'));
+    expect(decision.start).toEqual([started('U1')]);
     expect(decision.planRun).toMatchObject({ state: 'running', units: [started('U1')] });
   });
 
@@ -93,7 +104,7 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
     for (const unitRunState of ['running', 'waiting'] as const) {
       const decision = advancePlanRun(before, input({ unitRunState }));
       expect(decision.planRun).toBe(before);
-      expect(decision.start).toBeUndefined();
+      expect(decision.start).toEqual([]);
     }
   });
 
@@ -102,7 +113,7 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
       planRun({ units: [started('U1')] }),
       input({ unitRunState: 'done' }),
     );
-    expect(decision.start).toEqual(started('U3'));
+    expect(decision.start).toEqual([started('U3')]);
     expect(decision.planRun.units).toEqual([started('U1', 'done'), started('U3')]);
   });
 
@@ -111,7 +122,7 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
       planRun({ units: [started('U1', 'done'), started('U3')] }),
       input({ unitRunState: 'done', units: units('claimed', 'waiting', 'delivered') }),
     );
-    expect(decision.start).toBeUndefined();
+    expect(decision.start).toEqual([]);
     expect(decision.planRun).toMatchObject({
       state: 'waiting',
       waitingFor: ['U1 waits for its pull request to merge', 'U2 waits for U1 to merge'],
@@ -129,7 +140,7 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
       waiting,
       input({ units: units('delivered', 'ready', 'delivered') }),
     );
-    expect(decision.start).toEqual(started('U2'));
+    expect(decision.start).toEqual([started('U2')]);
     expect(decision.planRun).toMatchObject({ state: 'running', waitingFor: [] });
   });
 
@@ -138,7 +149,7 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
       planRun({ units: [started('U1')] }),
       input({ unitRunState: 'done', unitsReadAt: T0, lastUnitEndedAt: T1 }),
     );
-    expect(decision.start).toBeUndefined();
+    expect(decision.start).toEqual([]);
     expect(decision.planRun).toMatchObject({
       state: 'waiting',
       units: [started('U1', 'done')],
@@ -148,9 +159,9 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
       planRun({ units: [started('U1')] }),
       input({ unitRunState: 'done', lastUnitEndedAt: T1 }),
     );
-    expect(unread.start).toBeUndefined();
+    expect(unread.start).toEqual([]);
     const fresh = advancePlanRun(decision.planRun, input({ unitsReadAt: T1, lastUnitEndedAt: T1 }));
-    expect(fresh.start).toEqual(started('U3'));
+    expect(fresh.start).toEqual([started('U3')]);
   });
 
   it('skips a unit that a pull request claims', () => {
@@ -158,7 +169,7 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
       planRun(),
       input({ units: units('claimed', 'waiting', 'ready') }),
     );
-    expect(decision.start?.unitKey).toBe('U3');
+    expect(decision.start.map((u) => u.unitKey)).toEqual(['U3']);
   });
 
   it('never starts a unit twice: a unit whose run ended without a pull request stays ready and is named', () => {
@@ -166,7 +177,7 @@ describe('picking the next unit (spec 40, 41, 42)', () => {
       planRun({ units: [started('U1', 'done'), started('U3')] }),
       input({ unitRunState: 'done', units: units('ready', 'waiting', 'ready') }),
     );
-    expect(decision.start).toBeUndefined();
+    expect(decision.start).toEqual([]);
     expect(decision.planRun.waitingFor).toEqual([
       'No pull request found for U1',
       'U2 waits for U1 to merge',
@@ -201,7 +212,7 @@ describe('a unit run that fails or is stopped (spec 43)', () => {
       planRun({ units: [started('U1')] }),
       input({ unitRunState: 'failed', onFailure: 'stop' }),
     );
-    expect(decision.start).toBeUndefined();
+    expect(decision.start).toEqual([]);
     expect(decision.planRun).toMatchObject({
       state: 'failed',
       units: [started('U1', 'failed')],
@@ -227,14 +238,14 @@ describe('a unit run that fails or is stopped (spec 43)', () => {
       input({ unitRunState: 'failed', onFailure: 'skip' }),
     );
     // U2 depends on U1 and stays waiting; U3 does not.
-    expect(decision.start?.unitKey).toBe('U3');
+    expect(decision.start.map((u) => u.unitKey)).toEqual(['U3']);
     expect(decision.planRun.units).toEqual([started('U1', 'failed'), started('U3')]);
 
     const after = advancePlanRun(
       decision.planRun,
       input({ unitRunState: 'done', onFailure: 'skip' }),
     );
-    expect(after.start).toBeUndefined();
+    expect(after.start).toEqual([]);
     expect(after.planRun).toMatchObject({
       state: 'waiting',
       waitingFor: [
@@ -243,6 +254,125 @@ describe('a unit run that fails or is stopped (spec 43)', () => {
         'No pull request found for U3',
       ],
     });
+  });
+});
+
+// Three independent units, for agent orchestration spec 13 and 14.
+const free = (a: PlanUnitStatus, b: PlanUnitStatus, c: PlanUnitStatus): PlanUnit[] => [
+  unit('U1', a),
+  unit('U2', b),
+  unit('U3', c),
+];
+
+describe('units in parallel', () => {
+  it('starts two of three ready units with the limit 2, and the third when one ends', () => {
+    const first = advancePlanRun(
+      planRun(),
+      input({ limit: 2, units: free('ready', 'ready', 'ready') }),
+    );
+    expect(first.start).toEqual([started('U1'), started('U2')]);
+    expect(first.planRun).toMatchObject({
+      state: 'running',
+      units: [started('U1'), started('U2')],
+    });
+
+    const still = advancePlanRun(
+      first.planRun,
+      input({ limit: 2, units: free('ready', 'ready', 'ready'), unitRunState: 'running' }),
+    );
+    expect(still.planRun).toBe(first.planRun);
+    expect(still.start).toEqual([]);
+
+    const next = advancePlanRun(
+      first.planRun,
+      input({
+        limit: 2,
+        units: free('claimed', 'ready', 'ready'),
+        runStates: { 'pr1.U1': 'done', 'pr1.U2': 'running' },
+      }),
+    );
+    expect(next.start).toEqual([started('U3')]);
+    expect(next.planRun.units).toEqual([started('U1', 'done'), started('U2'), started('U3')]);
+  });
+
+  it('keeps one live with the default 1, as before', () => {
+    const decision = advancePlanRun(planRun(), input({ units: free('ready', 'ready', 'ready') }));
+    expect(decision.start).toEqual([started('U1')]);
+  });
+
+  it('with stop, starts nothing after a failure and fails once the other run has ended', () => {
+    const both = planRun({ units: [started('U1'), started('U2')] });
+    const failing = advancePlanRun(
+      both,
+      input({
+        limit: 2,
+        units: free('ready', 'ready', 'ready'),
+        runStates: { 'pr1.U1': 'failed', 'pr1.U2': 'running' },
+      }),
+    );
+    expect(failing.start).toEqual([]);
+    expect(failing.planRun).toMatchObject({
+      state: 'running',
+      units: [started('U1', 'failed'), started('U2')],
+      message: 'The run for U1 failed, so no further unit was started',
+      waitingFor: ['Waits for the run of U2 to end'],
+      endedAt: null,
+    });
+
+    const ended = advancePlanRun(
+      failing.planRun,
+      input({
+        limit: 2,
+        units: free('ready', 'claimed', 'ready'),
+        runStates: { 'pr1.U1': 'failed', 'pr1.U2': 'done' },
+      }),
+    );
+    expect(ended.start).toEqual([]);
+    expect(ended.planRun).toMatchObject({
+      state: 'failed',
+      units: [started('U1', 'failed'), started('U2', 'done')],
+      message: 'The run for U1 failed, so no further unit was started',
+      endedAt: T1,
+    });
+  });
+
+  it('with skip, goes on with the next ready unit', () => {
+    const decision = advancePlanRun(
+      planRun({ units: [started('U1'), started('U2')] }),
+      input({
+        limit: 2,
+        onFailure: 'skip',
+        units: free('ready', 'ready', 'ready'),
+        runStates: { 'pr1.U1': 'failed', 'pr1.U2': 'running' },
+      }),
+    );
+    expect(decision.start).toEqual([started('U3')]);
+    expect(decision.planRun).toMatchObject({ state: 'running', message: null });
+  });
+
+  it('waits for a fresh read before starting more, and stays running meanwhile', () => {
+    const decision = advancePlanRun(
+      planRun({ units: [started('U1'), started('U2')] }),
+      input({
+        limit: 2,
+        units: free('ready', 'ready', 'ready'),
+        runStates: { 'pr1.U1': 'done', 'pr1.U2': 'running' },
+        unitsReadAt: T0,
+        lastUnitEndedAt: T1,
+      }),
+    );
+    expect(decision.start).toEqual([]);
+    expect(decision.planRun).toMatchObject({
+      state: 'running',
+      waitingFor: ['Reading the plan from its host before U3 starts'],
+    });
+  });
+
+  it('stops every live unit', () => {
+    expect(stopPlanRun(planRun({ units: [started('U1'), started('U2')] }), T1).units).toEqual([
+      started('U1', 'stopped'),
+      started('U2', 'stopped'),
+    ]);
   });
 });
 
@@ -285,7 +415,7 @@ describe('ending (spec 44, 45)', () => {
     });
     const decision = advancePlanRun(stopped, input({ unitRunState: 'stopped' }));
     expect(decision.planRun).toBe(stopped);
-    expect(decision.start).toBeUndefined();
+    expect(decision.start).toEqual([]);
     expect(() => stopPlanRun(stopped, T1)).toThrow(RunRejected);
   });
 });
@@ -343,7 +473,7 @@ describe('refusing a start (spec 46, 47)', () => {
   });
 
   it('refuses a second plan run on the same plan', () => {
-    expect(planRunRefusal({ ...start, liveOnPlan: true })).toMatch(/one unit at a time/);
+    expect(planRunRefusal({ ...start, liveOnPlan: true })).toMatch(/one plan run at a time/);
   });
 
   it('refuses a plan that is gone, not followed, without units or fully delivered', () => {

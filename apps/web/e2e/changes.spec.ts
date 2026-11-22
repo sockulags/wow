@@ -267,6 +267,8 @@ test.describe("a chat thread's changes", () => {
 
     // A thread whose folder is not in Git says why instead of listing files.
     await page.goto('/chat/new');
+    // As above: the provider first, so the form has its projects before the list opens.
+    await choose(main(page).getByLabel('Provider instance'), 'Mock Claude');
     await choose(main(page).getByRole('combobox', { name: 'Project' }), 'Demo');
     await messageBox(page).fill('Hello from a plain folder');
     await messageBox(page).press('Enter');

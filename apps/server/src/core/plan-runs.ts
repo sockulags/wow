@@ -28,16 +28,28 @@ export const isPlanRunCommand = (command: ServerCommand): command is PlanRunComm
 // same decision made twice cannot start two runs.
 export const unitRunId = (planRunId: string, unitKey: string): string => `${planRunId}.${unitKey}`;
 
-const ON_FAILURE_KEY = 'workflows.planRunOnFailure';
+function projectSetting(
+  key: 'workflows.planRunOnFailure' | 'workflows.planRunParallel',
+  read: ReadModel,
+  context: DecideContext,
+  projectId: string,
+): unknown {
+  const definition = context.registry[key];
+  if (!definition) throw new Error(`${key} is missing from the settings registry`);
+  return resolveStored(key, definition, { projectId }, (scope) => read.setting(key, scope)).value;
+}
 
 function onFailure(read: ReadModel, context: DecideContext, projectId: string): PlanRunOnFailure {
-  const definition = context.registry[ON_FAILURE_KEY];
-  if (!definition) throw new Error(`${ON_FAILURE_KEY} is missing from the settings registry`);
-  const { value } = resolveStored(ON_FAILURE_KEY, definition, { projectId }, (scope) =>
-    read.setting(ON_FAILURE_KEY, scope),
+  const parsed = PlanRunOnFailure.safeParse(
+    projectSetting('workflows.planRunOnFailure', read, context, projectId),
   );
-  const parsed = PlanRunOnFailure.safeParse(value);
-  return parsed.success ? parsed.data : PlanRunOnFailure.parse(definition.default);
+  return parsed.success ? parsed.data : 'stop';
+}
+
+// How many units' runs a plan run keeps live at once (agent orchestration spec 13).
+function parallel(read: ReadModel, context: DecideContext, projectId: string): number {
+  const value = projectSetting('workflows.planRunParallel', read, context, projectId);
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : 1;
 }
 
 const changed = (cause: string, planRun: PlanRun): DomainEvent => ({
@@ -57,23 +69,25 @@ function advanceEvents(
   context: DecideContext,
 ): DomainEvent[] {
   const intent = read.planIntents().find((candidate) => candidate.id === planRun.planId);
-  const current = planRun.units.find((unit) => unit.outcome === 'running');
-  const last = planRun.units.at(-1);
+  const ends = planRun.units
+    .map((unit) => read.run(unit.runId)?.endedAt ?? null)
+    .filter((at): at is string => at !== null)
+    .toSorted();
   const decision = advancePlanRun(planRun, {
     now: context.now,
     units: intent?.units,
-    unitRunState: current ? read.run(current.runId)?.state : undefined,
+    runState: (runId) => read.run(runId)?.state,
     onFailure: onFailure(read, context, planRun.projectId),
+    limit: parallel(read, context, planRun.projectId),
     unitsReadAt:
       read.hostReads(planRun.projectId).find((row) => row.id === hostReadId('plan', planRun.planId))
         ?.fetchedAt ?? null,
-    lastUnitEndedAt: (last && read.run(last.runId)?.endedAt) ?? null,
+    lastUnitEndedAt: ends.at(-1) ?? null,
     runIdFor: (unitKey) => unitRunId(planRun.id, unitKey),
   });
   let next = decision.planRun;
   const runEvents: DomainEvent[] = [];
-  const { start } = decision;
-  if (start) {
+  for (const start of decision.start) {
     try {
       runEvents.push(
         ...startRunEvents(
@@ -95,15 +109,23 @@ function advanceEvents(
         ),
       );
     } catch (error) {
-      // A first unit that cannot start refuses the plan run; a later one ends it with the reason.
-      if (!(error instanceof CommandRejected) || !before) throw error;
-      next = {
-        ...next,
-        state: 'failed',
-        units: next.units.map((unit) => (unit === start ? { ...unit, outcome: 'failed' } : unit)),
-        message: `The run for ${start.unitKey} could not start: ${error.message}`,
-        endedAt: context.now,
-      };
+      // A plan run whose first unit cannot start is refused. Otherwise the unit is marked failed
+      // and no unit starts after it; the plan run ends with the reason once no unit's run is live.
+      if (!(error instanceof CommandRejected) || (!before && runEvents.length === 0)) throw error;
+      // Units after it in this decision were not started, so they are not listed either.
+      const notStarted = new Set(
+        decision.start.slice(decision.start.indexOf(start) + 1).map((unit) => unit.unitKey),
+      );
+      const units = next.units
+        .filter((unit) => !notStarted.has(unit.unitKey))
+        .map((unit) =>
+          unit.unitKey === start.unitKey ? { ...unit, outcome: 'failed' as const } : unit,
+        );
+      const message = `The run for ${start.unitKey} could not start: ${error.message}`;
+      next = units.some((unit) => unit.outcome === 'running')
+        ? { ...next, state: 'running', units, message, waitingFor: [] }
+        : { ...next, state: 'failed', units, message, waitingFor: [], endedAt: context.now };
+      break;
     }
   }
   if (before && isDeepStrictEqual(before, next)) return [];
@@ -161,14 +183,15 @@ export function decidePlanRun(
     case 'planRun.stop': {
       const planRun = requirePlanRun(read, command.planRunId);
       const stopped = engineCall(() => stopPlanRun(planRun, context.now));
-      const current = planRun.units.find((unit) => unit.outcome === 'running');
-      const run = current ? read.run(current.runId) : undefined;
+      // Every unit's run that is going stops as a run does (spec 45): its turn is interrupted,
+      // threads stay.
+      const live = planRun.units.flatMap((unit) => {
+        const run = unit.outcome === 'running' ? read.run(unit.runId) : undefined;
+        return run && isLiveRunState(run.state) ? [run] : [];
+      });
       return [
         changed(command.type, stopped),
-        // The unit's run stops as a run does (spec 45): its turn is interrupted, threads stay.
-        ...(run && isLiveRunState(run.state)
-          ? runInput(command.type, run.id, { type: 'stop' }, read, context)
-          : []),
+        ...live.flatMap((run) => runInput(command.type, run.id, { type: 'stop' }, read, context)),
         ...closePlanEvents(stopped.planId, read),
       ];
     }

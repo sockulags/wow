@@ -79,7 +79,7 @@ test('a plan run works through ready units @review-loop-40 @review-loop-41', asy
   ]);
   await expect(status(page, 'U1')).toHaveText('Claimed');
   await expect(status(page, 'U3')).toHaveText('Claimed');
-  // One unit at a time: no second plan run beside this one.
+  // One plan run per plan: no second one beside this one.
   await expect(page.getByRole('button', { name: 'Run ready units' })).toBeDisabled();
   if (sketching) {
     await page.screenshot({ path: sketchPath('2026-11-review-loop', 'plan-run') });

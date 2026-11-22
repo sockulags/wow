@@ -350,6 +350,10 @@ Further checks against the same hosts:
       folder is not opened: a toast says the % would be read as a variable.
 - [ ] At 1024 px wide, open a run that waits at a gate and open the side panel: Approve, Send
       back and Stop stay visible beside the panel, under the gate's text.
+- [ ] **Units at once.** In a followed plan with two ready units that do not depend on each
+      other, set `workflows.planRunParallel` to 2 for the project and press Run ready units:
+      both units' runs start, each in its own folder under `workspaces`, and the plan run lists
+      both with their step. Stop the plan run: both runs stop. Set it back to 1.
 - [ ] Optional: create an event trigger (Workflows → Triggers → New trigger, "Pull request
       merged") and merge a followed pull request on the host: one run starts within
       `hosts.pollSeconds`, and polling again starts no second one.

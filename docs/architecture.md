@@ -1381,7 +1381,8 @@ removal ask only about files.
 ### Plan runs
 
 A plan run works through a plan's ready units by itself (review loop spec 40 to 47). It starts
-ordinary runs, one per unit and one at a time, so gates, review, notifications and working
+ordinary runs, one per unit and up to `workflows.planRunParallel` at once (agent orchestration
+spec 13), so gates, review, notifications and working
 copies work for a unit's run as for any other. Nothing is merged: a unit counts as delivered
 only when the host shows its pull request merged.
 
@@ -1397,31 +1398,35 @@ waitingFor, message, startedAt, endedAt}`. `state` is `running` while a unit's r
 planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
 - **Decisions** (`packages/workflow-engine/src/plan-run.ts`, pure). `planRunRefusal` says why a
   plan run cannot start: the workflow is not for units, a plan run is already live on the plan
-  (one unit at a time), the intent has no plan, the plan has `source: issues`, the plan or its
+  (one plan run per plan), the intent has no plan, the plan has `source: issues`, the plan or its
   spec is stale (the reason names the file and both revisions), the plan is not followed (only
   a followed plan has ready units), or it has no units or every unit is delivered.
-  `advancePlanRun` takes the plan run, the plan's units as the host last showed them and the
-  state of the unit's run that is going, and answers the next plan run and the unit to start.
-  While that run is live nothing changes. When it has ended its outcome is recorded; a failed
-  or stopped run ends the plan run as `failed` when `workflows.planRunOnFailure` is `stop`, and
-  with `skip` the unit is left. Then the first unit in plan order that is `ready` and that this
-  plan run has not started yet is started. A unit is never started twice in one plan run: one
-  whose run ended without a pull request stays `ready` on the host and is named as "No pull
-  request found for U1". A unit someone else's pull request claims is not `ready`, so it is
-  skipped, and a unit that depends on one that was left is not `ready` either. With nothing to
-  start, the plan run is `done` when every unit is delivered and `waiting` otherwise, with
-  `waitingSentences`: "U2 waits for U1 to merge", "U1 waits for its pull request to merge", "U5
-  is blocked: …", "The run for U1 failed", or the unit's status reason. `stopPlanRun` ends it
-  as `stopped`.
+  `advancePlanRun` takes the plan run, the plan's units as the host last showed them, the state
+  of each unit's run that is going and the limit `workflows.planRunParallel` (project-scoped,
+  default 1), and answers the next plan run and the units to start (agent orchestration spec
+  13). A unit whose run has ended gets its outcome recorded. A failed or stopped run, when
+  `workflows.planRunOnFailure` is `stop`, sets the plan run's `message`: from then on no unit
+  starts, it says which runs it waits for, and it ends as `failed` once the other live runs have
+  ended (a live plan run has a message only then). With `skip` the unit is left. Then, while
+  fewer than the limit run, the next units in plan order that are `ready` and that this plan run
+  has not started yet are started, each in its own run. A unit is never started twice in one plan
+  run: one whose run ended without a pull request stays `ready` on the host and is named as "No
+  pull request found for U1". A unit someone else's pull request claims is not `ready`, so it is
+  skipped, and a unit that depends on one that was left, or on one whose run is still going, is
+  not `ready` either. With nothing to start and nothing running, the plan run is `done` when every
+  unit is delivered and `waiting` otherwise, with `waitingSentences`: "U2 waits for U1 to merge",
+  "U1 waits for its pull request to merge", "U5 is blocked: …", "The run for U1 failed", or the
+  unit's status reason. `stopPlanRun` ends it as `stopped` and marks every live unit stopped.
 - **Server** (`core/plan-runs.ts`). `planRun.start {planRunId, planId, workflowId}` refuses with
   the reason or stores the plan run and, in the same commit, starts the first unit's run
-  through `startRunEvents` with the unit; a first unit whose run cannot start refuses the
-  start. A unit's run always gets its own working copy, whatever the workflow's "Own working
-  copy" switch says (spec 40). `planRun.stop {planRunId}` stops the live unit run with the
+  through `startRunEvents` with the unit (the first units, up to the limit); a first unit whose
+  run cannot start refuses the start. A unit's run always gets its own working copy, whatever the workflow's "Own working
+  copy" switch says (spec 40). `planRun.stop {planRunId}` stops every live unit run with the
   engine's `stop` input in the same commit, so its turn is interrupted and its threads and
   working copy stay as for any stopped run (spec 45). `planRun.advance {planRunId}` is an
   `InternalCommand` that decides again; a decision that changes nothing stores nothing, and a
-  later unit whose run cannot start ends the plan run as `failed` with the reason. Each change
+  later unit whose run cannot start is marked failed and ends the plan run as `failed` with the
+  reason, once no other unit's run is live. Each change
   is one `planRun.changed` event with the whole row.
 - **What moves it** (`plans/plan-runs.ts`, `PlanRuns`). The service listens to commits and
   sends `planRun.advance` when a run with a `unit` has ended and when `plans.synced` touches
@@ -1709,8 +1714,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
   `scheduler.paused`, `scheduler.toastSeconds`
 - workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`,
-  `workflows.unitPromptTemplate`, `workflows.planRunOnFailure` (the last two are project-scoped,
-  see "Plan runs"), `workflows.verdictApprovedLine`, `workflows.alwaysStopSkills`,
+  `workflows.unitPromptTemplate`, `workflows.planRunOnFailure`, `workflows.planRunParallel` (the
+  last three are project-scoped, see "Plan runs"), `workflows.verdictApprovedLine`, `workflows.alwaysStopSkills`,
   `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves"),
   `workflows.verdictChangesRequestedLine`, `workflows.verdictBlockedLine`,
   `workflows.goBackTemplate`, `workflows.maxStepVisits` (project-scoped, see "Rules" under

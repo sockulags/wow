@@ -1355,8 +1355,16 @@ unit starts; when units remain but none is ready, the plan run waits and goes on
 shows the change. A unit claimed by a pull request this plan run did not start is skipped. When a
 unit run fails or is stopped, `workflows.planRunOnFailure` decides: `stop` (default) stops the
 plan run, `skip` leaves that unit and goes on with the next ready unit that does not depend on
-it. When every unit is delivered, the plan run is done. Stop ends the live unit run and starts no
-further unit. One plan run per plan at a time; a stale plan or spec, or a plan with
+it. When every unit is delivered, the plan run is done. Stop ends the live unit runs and starts no
+further unit.
+
+**Units at once** (`workflows.planRunParallel`, per project, default 1) lets a plan run keep more
+than one unit's run going: with 2, two ready units start side by side, each in its own working
+copy, and the next ready unit starts when one ends. The plan run lists each live unit with the
+step its run is at and what that step's thread runs now, and Threads at work names the unit
+beside each step thread. With `stop`, a failure starts nothing more and the plan run ends as
+failed once the other live runs have ended. More at once means more running on the machine, so
+the default stays 1. One plan run per plan at a time; a stale plan or spec, or a plan with
 `source: issues`, cannot be run, and the button says why.
 
 ### Reading from the hosts

@@ -17,6 +17,12 @@ const words = (text: string) => text.toLowerCase().split(/\s+/).filter(Boolean);
 export function paletteScore(command: AppCommand, query: string): number {
   const typed = words(query);
   if (typed.length === 0) return 1;
+  if (
+    command.queryPrefix !== undefined &&
+    !query.trimStart().toLowerCase().startsWith(command.queryPrefix)
+  ) {
+    return 0;
+  }
   const score = textScore(command, typed);
   if (score > 0) return score;
   // Found by the server for this very text, below every match in the command's own words.

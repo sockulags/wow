@@ -108,6 +108,13 @@ const unitRun = (state: WorkflowRun['state']): WorkflowRun => ({
   endedAt: null,
 });
 
+// A live unit's run at its first step, run by that step's thread.
+const liveUnitRun = (id: string, threadId: string): WorkflowRun => ({
+  ...unitRun('running'),
+  id,
+  steps: [{ stepId: 'deliver-work', state: 'running', threadId, artifactsFound: [] }],
+});
+
 interface Sent {
   readonly method: string;
   readonly params: unknown;
@@ -283,7 +290,7 @@ describe('the plan run above the units', () => {
     const link = within(region).getByRole('link', { name: 'U1 Count down' });
     expect(link.getAttribute('href')).toBe('/workflows/runs/pr1.U1');
     expect(within(region).getByTestId('plan-run-unit-U1').textContent).toContain('Done');
-    // One unit at a time: no second plan run while this one is live.
+    // One plan run per plan: no second one while this one is live.
     const startButton = screen.getByRole('button', { name: 'Run ready units' });
     expect(startButton.hasAttribute('disabled')).toBe(true);
 
@@ -339,12 +346,66 @@ describe('the plan run above the units', () => {
     );
     const region = await screen.findByRole('region', { name: 'Plan run' });
     const units = within(region).getByTestId('plan-run-units').querySelectorAll('li');
-    expect([...units].map((item) => item.textContent)).toEqual(['U1 Count downRunning']);
+    expect([...units].map((item) => item.textContent)).toEqual(['U1 Count downRunning · build']);
     expect(
       within(region)
         .getAllByRole('link')
         .map((link) => link.getAttribute('href')),
     ).toEqual(['/workflows/runs/pr1.U1']);
+  });
+
+  it('lists each live unit with its step and what its step thread runs now (agent orchestration spec 15)', async () => {
+    await renderApp(
+      '/plans/tea/2026-01-tea-timer',
+      runtimeWith({
+        ...base,
+        planRuns: [
+          planRun({
+            state: 'running',
+            waitingFor: ['Waits for the run of U3 to end'],
+            message: 'The run for U2 failed, so no further unit was started',
+            units: [
+              { unitKey: 'U1', title: 'Count down', runId: 'pr1.U1', outcome: 'running' },
+              { unitKey: 'U2', title: 'Ring the bell', runId: 'pr1.U2', outcome: 'failed' },
+              { unitKey: 'U3', title: 'Show the time left', runId: 'pr1.U3', outcome: 'running' },
+            ],
+          }),
+        ],
+        workflows: [workflow('deliver', 'Deliver')],
+        workflowRuns: [liveUnitRun('pr1.U1', 't-u1'), liveUnitRun('pr1.U3', 't-u3')],
+        threadActivity: [
+          {
+            threadId: 't-u1',
+            turnId: 'turn-1',
+            turnState: 'running',
+            startedAt: T0,
+            endedAt: null,
+            toolCalls: 4,
+            runningTool: null,
+            lastText: null,
+          },
+        ],
+      }),
+    );
+    const region = await screen.findByRole('region', { name: 'Plan run' });
+    expect(within(region).getByTestId('plan-run-unit-U1').textContent).toContain(
+      'Running · deliver-work',
+    );
+    expect(within(region).getByTestId('plan-run-unit-U3').textContent).toContain(
+      'Running · deliver-work',
+    );
+    expect(within(region).getByTestId('plan-run-unit-U2').textContent).toContain('Failed');
+    expect(within(region).getAllByTestId('plan-run-unit-activity')).toHaveLength(1);
+    expect(
+      within(within(region).getByTestId('plan-run-unit-U1')).getByTestId('plan-run-unit-activity')
+        .textContent,
+    ).toContain('4 tool calls');
+    expect(within(region).getByTestId('plan-run-message').textContent).toBe(
+      'The run for U2 failed, so no further unit was started',
+    );
+    expect(within(region).getByTestId('plan-run-waiting').textContent).toBe(
+      'Waits for the run of U3 to end',
+    );
   });
 
   it('says why a plan run stopped after a failure', async () => {
