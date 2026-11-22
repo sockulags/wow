@@ -516,6 +516,13 @@ It opens to list every call. Anything else in the turn, such as text, an approva
 Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off shows every call
 on its own row.
 
+**Pictures**: when a tool's result holds a picture (a screenshot a browser tool took, an image
+Claude Code read, Codex's image view), it shows as a thumbnail under the tool's row, also while
+the row is closed; click one, or press Enter on it, to see it full size. A row shows up to four
+(`chat.toolImagesShown`) with "+N more" for the rest. wow keeps them with the thread's images and
+under the same size limit (`chat.imageMaxBytes`); one that is too large or not a picture wow
+shows is named under the row ("1 picture not shown (too large)").
+
 **Subagents**: when the agent hands work to a subagent (Claude Code's Agent tool, a Codex
 collab agent), the call is one row, such as "Agent: explore the auth code · 3 tool calls · 1:32".
 While the subagent works, its own tool calls and notes are listed under the row, drawn like the

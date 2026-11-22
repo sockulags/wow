@@ -10,9 +10,11 @@ import {
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
+  ImagesOmitted,
   TaskStatus,
   ThreadState,
   ToolFacts,
+  ToolStoredImage,
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
 import { SentSkill, SkillRef } from './skills.js';
@@ -317,6 +319,10 @@ export const ToolCallItemPayload = ToolFacts.partial().extend({
   // provider reported them.
   toolCount: z.number().int().nonnegative().optional(),
   answer: z.string().optional(),
+  // Pictures the result held, stored for the thread, and how many were not kept and why (chat
+  // overview spec 32, 33).
+  images: z.array(ToolStoredImage).optional(),
+  imagesOmitted: ImagesOmitted.optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 

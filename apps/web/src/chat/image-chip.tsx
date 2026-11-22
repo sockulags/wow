@@ -27,7 +27,10 @@ export interface ImageTarget {
   readonly model?: string | undefined;
 }
 
-export const imageLabel = (image: SentImage, index: number): string =>
+// What a thumbnail and the full-size view need of an image: a message's or a tool row's.
+type ShownImage = { readonly id: string; readonly name?: string | undefined };
+
+export const imageLabel = (image: ShownImage, index: number): string =>
   image.name ?? `Image ${index + 1}`;
 
 // The browser's own check before anything is sent: the type it says the file is and its size.
@@ -133,7 +136,7 @@ function Thumbnail({
   className,
 }: {
   threadId: string;
-  image: SentImage;
+  image: ShownImage;
   label: string;
   className?: string;
 }) {
@@ -167,7 +170,7 @@ export function ImageViewer({
   onClose,
 }: {
   threadId: string;
-  image: SentImage | undefined;
+  image: ShownImage | undefined;
   label: string;
   onClose(): void;
 }) {
@@ -188,7 +191,7 @@ function FullImage({
   label,
 }: {
   threadId: string;
-  image: SentImage;
+  image: ShownImage;
   label: string;
 }) {
   const state = useImage(threadId, image.id);
@@ -295,5 +298,77 @@ export function SentImages({
         onClose={() => setOpen(undefined)}
       />
     </>
+  );
+}
+
+const pictureLabel = (index: number) => `Picture ${index + 1} of the tool's result`;
+
+// The pictures of a tool's result (chat overview spec 33): thumbnails under the row's line,
+// the first `shown` of them with "+N more" for the rest, and what was not kept and why.
+export function ToolImages({
+  threadId,
+  images,
+  omitted,
+  shown,
+  onMore,
+}: {
+  threadId: string;
+  images: readonly { readonly id: string }[];
+  omitted: { readonly count: number; readonly reason: string } | undefined;
+  // How many show; the rest are behind "+N more".
+  shown: number;
+  onMore?: (() => void) | undefined;
+}) {
+  const [open, setOpen] = useState<number>();
+  const visible = images.slice(0, shown);
+  const more = images.length - visible.length;
+  const opened = open === undefined ? undefined : images[open];
+  return (
+    <div
+      role="list"
+      aria-label="Pictures of the result"
+      data-testid="tool-images"
+      className="flex flex-wrap items-center gap-1"
+    >
+      {visible.map((image, index) => (
+        <span role="listitem" key={image.id} data-testid="tool-image">
+          <button
+            type="button"
+            aria-label={`Show ${pictureLabel(index).toLowerCase()} full size`}
+            className={cn(thumbnailButton, 'size-16')}
+            onClick={() => setOpen(index)}
+          >
+            <Thumbnail threadId={threadId} image={image} label={pictureLabel(index)} />
+          </button>
+        </span>
+      ))}
+      {more > 0 && (
+        <span role="listitem">
+          <button
+            type="button"
+            className="rounded-md px-1.5 text-2xs text-muted-foreground hover:text-foreground"
+            onClick={onMore}
+          >
+            +{more} more
+          </button>
+        </span>
+      )}
+      {omitted && (
+        <span
+          role="listitem"
+          data-testid="tool-images-omitted"
+          className="text-2xs text-muted-foreground"
+        >
+          {omitted.count} {omitted.count === 1 ? 'picture' : 'pictures'} not shown ({omitted.reason}
+          )
+        </span>
+      )}
+      <ImageViewer
+        threadId={threadId}
+        image={opened}
+        label={open === undefined ? '' : pictureLabel(open)}
+        onClose={() => setOpen(undefined)}
+      />
+    </div>
   );
 }

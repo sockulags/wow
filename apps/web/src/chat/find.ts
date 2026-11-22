@@ -26,7 +26,7 @@ import { helperPayload, helperRowText } from './helpers';
 import { compactionText, settingsChangeText } from './items';
 import { withoutMentions } from './mentions';
 import { openKey } from './open-state';
-import { argumentList, lastLines, payloadOf, type ToolPayload } from './tools/facts';
+import { argumentList, lastLines, payloadOf, picturesText, type ToolPayload } from './tools/facts';
 import { sentSkillName, type ConversationEntry } from './view-model';
 import { summaryText, type TurnSummary } from './turn-summary';
 
@@ -148,6 +148,7 @@ function toolPieces(walk: Walk, item: ThreadItem, payload: ToolPayload, opens: r
     awaitingApproval: walk.awaitingApproval,
     times: false,
   });
+  add(picturesText(payload), opens);
   if (payload.kind === 'subagent') {
     add([line, payload.agentType].filter(Boolean).join(' · '), opens);
     const inside = [...opens, openKey('agent', item.id)];

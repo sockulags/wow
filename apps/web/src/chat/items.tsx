@@ -762,7 +762,7 @@ function ItemBody({
     case 'tool_call': {
       const parsed = ToolCallItemPayload.safeParse(item.payload);
       return parsed.success ? (
-        <ToolCall payload={parsed.data} context={context} />
+        <ToolCall payload={parsed.data} context={context} threadId={item.threadId} />
       ) : (
         <Unreadable item={item} />
       );

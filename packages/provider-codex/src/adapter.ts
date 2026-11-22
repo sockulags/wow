@@ -7,6 +7,7 @@ import type {
   ProviderEvent,
   ProviderInstance,
   ProviderTestResult,
+  ToolImage,
   ProviderUpdate,
   AgentState,
   QuestionReply,
@@ -269,8 +270,35 @@ const subtract = (total: TokenUsage, baseline: TokenUsage | null): TokenUsage =>
       }
     : total;
 
+const isImageBlock = (entry: unknown): boolean =>
+  typeof entry === 'object' && entry !== null && 'type' in entry && entry.type === 'image';
+
+// The pictures of an MCP result (chat overview spec 31): image blocks with base64 data.
+const imagesOf = (value: unknown): ToolImage[] =>
+  Array.isArray(value)
+    ? value.flatMap((entry: unknown): ToolImage[] => {
+        if (!isImageBlock(entry) || typeof entry !== 'object' || entry === null) return [];
+        const data = 'data' in entry ? entry.data : undefined;
+        const mimeType = 'mimeType' in entry ? entry.mimeType : undefined;
+        return typeof data === 'string' && data !== ''
+          ? [{ base64: data, mediaType: typeof mimeType === 'string' ? mimeType : '' }]
+          : [];
+      })
+    : [];
+
+// What a tool item showed as pictures: an MCP result's images, or the file an image view opened.
+function toolItemImages(item: ThreadItem): ToolImage[] {
+  if (item.type === 'imageView') return [{ path: item.path }];
+  if (item.type === 'mcpToolCall' && item.result) return imagesOf(item.result.content);
+  return [];
+}
+
 const textOf = (value: unknown): string => {
   if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    // A picture is shown on the row, not written out as data.
+    value = value.filter((entry: unknown) => !isImageBlock(entry));
+  }
   if (Array.isArray(value)) {
     const texts = value.flatMap((entry: unknown) =>
       typeof entry === 'object' &&
@@ -1396,12 +1424,14 @@ export class CodexAdapter implements ProviderAdapter {
       const { output, ok } = toolResult(item);
       if (output)
         this.#emit({ type: 'toolCallOutput', threadId, itemId: nestedId(item.id), output });
+      const images = toolItemImages(item);
       this.#emit({
         type: 'toolCallCompleted',
         threadId,
         itemId: nestedId(item.id),
         status: ok ? 'ok' : 'error',
         ...toolTimes(item),
+        ...(images.length > 0 ? { images } : {}),
       });
     }
   }
@@ -1459,6 +1489,7 @@ export class CodexAdapter implements ProviderAdapter {
     if (!streamed && output)
       this.#emit({ type: 'toolCallOutput', threadId, itemId: item.id, output });
     const diff = item.type === 'fileChange' ? fileChangeDiff(item.changes) : undefined;
+    const images = toolItemImages(item);
     this.#emit({
       type: 'toolCallCompleted',
       threadId,
@@ -1466,6 +1497,7 @@ export class CodexAdapter implements ProviderAdapter {
       status: ok ? 'ok' : 'error',
       ...toolTimes(item),
       ...(diff === undefined ? {} : { diff }),
+      ...(images.length > 0 ? { images } : {}),
     });
   }
 

@@ -41,7 +41,16 @@ export function toolParts(
   }
 }
 
-export function ToolCall({ payload, context }: { payload: ToolPayload; context: ItemContext }) {
+export function ToolCall({
+  payload,
+  context,
+  threadId,
+}: {
+  payload: ToolPayload;
+  context: ItemContext;
+  // The thread the row's pictures are stored for (chat overview spec 32); absent, none show.
+  threadId?: string | undefined;
+}) {
   if (payload.kind === 'subagent') return <AgentCall payload={payload} context={context} />;
   return (
     <ToolRowFrame
@@ -50,6 +59,12 @@ export function ToolCall({ payload, context }: { payload: ToolPayload; context: 
       output={payload.output}
       itemId={context.itemId}
       failed={payload.kind !== undefined && payload.status === 'error'}
+      pictures={
+        threadId !== undefined &&
+        ((payload.images?.length ?? 0) > 0 || payload.imagesOmitted !== undefined)
+          ? { threadId, images: payload.images ?? [], omitted: payload.imagesOmitted }
+          : undefined
+      }
     />
   );
 }

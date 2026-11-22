@@ -257,6 +257,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     prepareThread: (threadId) => workspaces.prepareThread(threadId),
     snapshots,
     helpers: helperEndpoint,
+    // The image store is made below; a tool's result only arrives once both are.
+    toolImages: (threadId, list) => images.keepToolImages(threadId, list),
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   // Gives the assistant a turn when a thread it started ends a turn or asks something.

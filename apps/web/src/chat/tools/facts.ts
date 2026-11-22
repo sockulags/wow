@@ -162,3 +162,10 @@ export function groupSummary(payloads: readonly ToolPayload[]): string {
   const text = [...counts].map(([part, count]) => partText[part](count)).join(', ');
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+// "2 pictures" for a call whose result held pictures (chat overview spec 34), for find and the
+// export; empty without.
+export function picturesText(payload: ToolPayload): string {
+  const count = payload.images?.length ?? 0;
+  return count === 0 ? '' : `${count} ${count === 1 ? 'picture' : 'pictures'}`;
+}

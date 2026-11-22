@@ -1704,7 +1704,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
   `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
-  notifications"), `chat.commitTimeoutMs`,
+  notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3461,6 +3461,16 @@ Opened, output sits in `output.tsx`'s box with its last `chat.toolOutputLines` l
 lines" and Copy (which copies all of it). A group (`group.tsx`) is closed once something follows
 it or its turn ended with no call running, and then reads what it did ("Read 2 files, ran 1
 command · 1 failed", `groupSummary`); before that it draws its latest call with its time.
+
+Pictures (chat overview spec 31 to 34): the Claude adapter takes the image blocks of a
+`tool_result` and the Codex adapter the image content of an MCP result and the file of an
+`imageView` item, as `toolCallCompleted.images` (`{base64, mediaType}` or `{path}`). Before the
+event is batched, the provider service has `ImageStore.keepToolImages` store each one in the
+thread's image folder, sniffed by its bytes and within `chat.imageMaxBytes`, and puts
+`storedImages` and `imagesOmitted` in its place, so no picture's bytes reach the event log. The
+tool row (`tools/row.tsx`) shows `ToolImages` (`image-chip.tsx`) under its line while closed, the
+first `chat.toolImagesShown` with "+N more", and all of them when open; the group line counts
+them. Find and the export use `picturesText` ("2 pictures").
 
 `chat/task-pin.tsx`: the latest `task_list` of the running turn, or else the last turn, is pinned
 above the composer as "3/7 · <task in progress>" (`TaskPin`), opening to the list; Ctrl+T

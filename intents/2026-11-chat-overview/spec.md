@@ -175,22 +175,23 @@ It names their files as they are at 0.5.0.
 
 ### Pictures in tool rows (U8)
 
-31. When a tool's result holds images, the adapter hands them to wow as bytes with their media
-    type. Examples are a browser screenshot over MCP, Claude Code reading a PNG, and Codex's
-    image view.
-    - Claude Code: image blocks in a tool result.
-    - Codex: an image view's path, read by the server, and image content in an MCP result.
-32. The server stores each image as an attachment of the thread, the same way and with the same
-    limits as images in a message (PNG, JPEG, GIF, WebP up to `chat.imageMaxBytes`). The tool
-    call's payload names the stored ids. An image over the limit or of another type is not
-    stored; the row says "1 image not shown (too large)". Text in the result stays as today, and
-    the `[image]` placeholder line is no longer added for a stored image.
-33. The tool row shows its images as thumbnails under its line, also while the row is closed,
-    at most `chat.toolImagesShown` (4) with "+N more", which opens the row. A click or Enter
-    opens one full size, as a message's image opens. In a group of tool calls, the group line
-    shows the count ("2 images") and the thumbnails show when it is opened.
-34. Find matches "image" in a tool row with images. The Markdown export writes
-    "(2 images)" on the tool's line. The images are deleted with the thread's other attachments.
+31. When a tool's result holds pictures, the adapter hands them to wow (a browser screenshot over
+    MCP, Claude Code reading a PNG, Codex's image view):
+    - Claude Code: image blocks in a tool result, as bytes;
+    - Codex: image content in an MCP result, as bytes, and an image view's file, as its path,
+      which the server reads within the size limit.
+32. The server stores each picture as an attachment of the thread before the event goes on, the
+    same way and with the same limits as images in a message (PNG, JPEG, GIF, WebP up to
+    `chat.imageMaxBytes`). The tool call's row names the stored ids; the bytes never go into
+    the event log. A picture over the limit, of another type or gone is not stored, and the row
+    says "1 picture not shown (too large)". The text of the result stays, without a line for a
+    picture.
+33. The tool row shows its pictures as thumbnails under its line, also while the row is closed,
+    at most `chat.toolImagesShown` (4) with "+N more", which opens the row and shows all. A click
+    or Enter opens one full size, as a message's image opens. In a group of tool calls, the
+    group line shows the count ("2 pictures") and the thumbnails show when it is opened.
+34. Find matches "2 pictures" on a tool row with pictures. The Markdown export ends the tool's
+    line with "(2 pictures)". The pictures are kept and removed with the thread's other images.
 
 ### More in a message (U9, U10, U11)
 
@@ -322,9 +323,11 @@ ProviderLimit[]}` in `packages/contracts/src/provider.ts`. Topic `providerLimits
 
 ### U8 Tool images
 
-- Decided: `ProviderEvent` tool output gets `images?: {base64, mediaType}[]`. The tool call
-  payload gets `images?: SentImage[]` and `imagesOmitted?: {count, reason}`. Stored through the
-  attachments store under the thread's folder.
+- Decided: `toolCallCompleted.images?: ToolImage[]` (`{base64, mediaType}` or `{path}`) from the
+  adapters; the provider service replaces them with `storedImages?: {id, mediaType}[]` and
+  `imagesOmitted?: {count, reason}` (`ImageStore.keepToolImages`, synchronous, in the thread's
+  image folder) before the event is batched. The tool call payload gets `images` and
+  `imagesOmitted`.
 - Decided: setting `chat.toolImagesShown` (int 1–20, 4).
 
 ### U9 Files

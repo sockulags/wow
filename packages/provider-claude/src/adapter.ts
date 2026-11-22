@@ -23,6 +23,7 @@ import type {
   QuestionReply,
   SessionTools,
   TaskStatus,
+  ToolImage,
 } from '@wow/contracts';
 import { markRecommended, replyText } from '@wow/contracts';
 import { readFile } from 'node:fs/promises';
@@ -212,6 +213,24 @@ const toProviderModel = (model: ModelInfo): ProviderModel => ({
   efforts: model.supportedEffortLevels ?? [],
 });
 
+// The pictures of a tool's result (chat overview spec 31): image blocks with base64 data, such
+// as a screenshot an MCP browser tool took or a picture the Read tool opened.
+const toolImages = (content: unknown): ToolImage[] => {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block: unknown): ToolImage[] => {
+    if (!block || typeof block !== 'object' || !('type' in block) || block.type !== 'image') {
+      return [];
+    }
+    const source = 'source' in block ? block.source : undefined;
+    if (!source || typeof source !== 'object' || !('data' in source)) return [];
+    const data = source.data;
+    const mediaType = 'media_type' in source ? source.media_type : undefined;
+    return typeof data === 'string' && data !== ''
+      ? [{ base64: data, mediaType: typeof mediaType === 'string' ? mediaType : '' }]
+      : [];
+  });
+};
+
 const toolOutput = (content: unknown): string => {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -220,10 +239,13 @@ const toolOutput = (content: unknown): string => {
       if (block && typeof block === 'object' && 'type' in block) {
         if (block.type === 'text' && 'text' in block && typeof block.text === 'string')
           return block.text;
+        // A picture is shown on the row itself, not as a placeholder line.
+        if (block.type === 'image') return '';
         return `[${String(block.type)}]`;
       }
       return '';
     })
+    .filter((line) => line !== '')
     .join('\n');
 };
 
@@ -812,6 +834,7 @@ export class ClaudeAdapter implements ProviderAdapter {
           const agent = session.agents.delete(block.tool_use_id)
             ? agentResult(message.tool_use_result)
             : {};
+          const images = toolImages(block.content);
           this.#emit({
             type: 'toolCallCompleted',
             threadId,
@@ -819,6 +842,7 @@ export class ClaudeAdapter implements ProviderAdapter {
             status: block.is_error ? 'error' : 'ok',
             ...(diff === undefined || block.is_error ? {} : { diff }),
             ...agent,
+            ...(images.length > 0 ? { images } : {}),
           });
           const subject = session.taskCreates.get(block.tool_use_id);
           const created = TaskCreateResult.safeParse(message.tool_use_result);

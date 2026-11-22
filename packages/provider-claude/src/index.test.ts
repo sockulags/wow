@@ -482,6 +482,51 @@ describe('@wow/provider-claude', () => {
     ]);
   });
 
+  it("hands a tool result's pictures over and leaves them out of its text (chat overview spec 31)", async () => {
+    const shot: FakeStep = {
+      message: {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_s',
+              content: [
+                { type: 'text', text: 'Took a screenshot' },
+                {
+                  type: 'image',
+                  source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' },
+                },
+              ],
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: 'sess-1',
+      } as unknown as SDKMessage,
+    };
+    const h = harness([
+      [assistantToolUse('toolu_s', 'mcp__browser__screenshot', {}), shot, result(0)],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const calls = h.events.filter(
+      (event) => event.type === 'toolCallOutput' || event.type === 'toolCallCompleted',
+    );
+    expect(calls).toEqual([
+      { type: 'toolCallOutput', threadId: 't1', itemId: 'toolu_s', output: 'Took a screenshot' },
+      {
+        type: 'toolCallCompleted',
+        threadId: 't1',
+        itemId: 'toolu_s',
+        status: 'ok',
+        images: [{ base64: 'iVBORw0K', mediaType: 'image/png' }],
+      },
+    ]);
+  });
+
   it('starts Claude Code with the instance binary, config directory, env and launch args', async () => {
     const h = harness([[result(0.01)]]);
     const done = h.next('turnCompleted');

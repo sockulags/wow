@@ -31,6 +31,7 @@ import {
   oneLine,
   otherFolder,
   payloadOf,
+  picturesText,
   shownPath,
   toolDuration,
   type ToolPayload,
@@ -305,7 +306,8 @@ export function conversationMarkdown(input: ConversationExport): string {
         const payload = payloadOf(item);
         if (!payload) break;
         agent(turn);
-        line(toolLine(payload, context));
+        const pictures = picturesText(payload);
+        line(`${toolLine(payload, context)}${pictures === '' ? '' : ` (${pictures})`}`);
         // A subagent call is its line and its answer (spec 8).
         const answer =
           payload.kind === 'subagent'

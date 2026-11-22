@@ -674,6 +674,15 @@ export const settingsRegistry = {
     default: 14,
     scope: 'global',
   }),
+  'chat.toolImagesShown': defineSetting({
+    schema: z.number().int().min(1).max(20),
+    group: 'chat',
+    label: 'Pictures shown on a tool row',
+    description:
+      'How many pictures of a tool result show as thumbnails under its row; the rest are behind "+N more", which opens the row.',
+    default: 4,
+    scope: 'global',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

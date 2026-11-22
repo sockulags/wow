@@ -13,7 +13,10 @@ import {
   hideSecrets,
   secretPatterns,
   type ProviderAdapter,
+  type ImagesOmitted,
   type ProviderCommand,
+  type ToolImage,
+  type ToolStoredImage,
   type ProviderInstance,
   type QueuedMessage,
   type RefreshToolsOutcome,
@@ -61,6 +64,14 @@ export interface ProviderServiceDeps {
   // wow's helper tools for a chat thread's turn (agent orchestration spec 1): undefined when the
   // thread may not have them or the server does not listen yet; without it, no turn gets them.
   readonly helpers?: { grant(threadId: string): ProviderToolset | undefined } | undefined;
+  // Stores the pictures of a tool's result for the thread (chat overview spec 32); without it,
+  // tool rows get no pictures.
+  readonly toolImages?:
+    | ((
+        threadId: string,
+        images: readonly ToolImage[],
+      ) => { readonly stored: ToolStoredImage[]; readonly omitted: ImagesOmitted | undefined })
+    | undefined;
   // Milliseconds since the epoch; tests pass their own.
   readonly now?: (() => number) | undefined;
 }
@@ -970,12 +981,29 @@ export class ProviderService {
       this.#toolsReported(parsed.data.threadId, parsed.data.tools, 'turn');
       return;
     }
-    const batch = this.#pending.get(parsed.data.threadId);
-    if (batch) batch.push(parsed.data);
-    else this.#pending.set(parsed.data.threadId, [parsed.data]);
+    const stored = this.#withStoredImages(parsed.data);
+    const batch = this.#pending.get(stored.threadId);
+    if (batch) batch.push(stored);
+    else this.#pending.set(stored.threadId, [stored]);
     if (this.#flushScheduled || this.#stopped) return;
     this.#flushScheduled = true;
     setImmediate(() => this.#flush());
+  }
+
+  // A tool's pictures are stored before the event is: the item names them by id (chat overview
+  // spec 32), and their bytes never go into the event log.
+  #withStoredImages(event: ProviderEvent): ProviderEvent {
+    if (event.type !== 'toolCallCompleted' || !event.images || event.images.length === 0) {
+      return event;
+    }
+    const { images, ...rest } = event;
+    const kept = this.#deps.toolImages?.(event.threadId, images);
+    if (!kept) return { ...rest, imagesOmitted: { count: images.length, reason: 'not kept' } };
+    return {
+      ...rest,
+      ...(kept.stored.length > 0 ? { storedImages: kept.stored } : {}),
+      ...(kept.omitted ? { imagesOmitted: kept.omitted } : {}),
+    };
   }
 
   #flush(): void {

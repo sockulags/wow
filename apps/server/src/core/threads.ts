@@ -2046,6 +2046,12 @@ function decideProviderEvents(
               ...(event.toolCount === undefined ? {} : { toolCount: event.toolCount }),
               ...(event.answer === undefined ? {} : { answer: event.answer }),
               ...(event.agentState === undefined ? {} : { agentState: event.agentState }),
+              // The pictures the provider service stored before the event got here (chat
+              // overview spec 32); raw bytes never reach the item.
+              ...(event.storedImages === undefined || event.storedImages.length === 0
+                ? {}
+                : { images: event.storedImages }),
+              ...(event.imagesOmitted === undefined ? {} : { imagesOmitted: event.imagesOmitted }),
               ...(event.diff === undefined
                 ? {}
                 : {
