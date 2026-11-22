@@ -245,8 +245,9 @@ export function ThreadsAtWork() {
   );
 }
 
-// "Show threads at work" and "Open thread in panel…" (spec 11, 15), and one search-only entry per
-// thread, "In panel: <title>", that the second opens the palette on.
+// "Show threads at work" and "Open thread in panel…" (spec 11, 15), and one entry per thread,
+// "In panel: <title>", listed only for a search that starts with "In panel", which the second
+// opens the palette on.
 export function atWorkCommands({
   threads,
   openThreadId,
@@ -281,7 +282,7 @@ export function atWorkCommands({
         title: `In panel: ${thread.title}`,
         group: 'Threads',
         searchOnly: true,
-        keywords: ['panel', 'beside'],
+        queryPrefix: 'in panel',
         run: (context) =>
           openThreadTab(context, { threadId: thread.id, title: thread.title, from: route }),
       })),

@@ -17,6 +17,13 @@ describe('palette', () => {
     expect(displayTitle({ title: 'Edit card: Lunch', group: 'Cards' })).toBe('Edit card: Lunch');
   });
 
+  it('lists an entry with a query prefix only for a search that starts with it', () => {
+    const inPanel = command('panel', 'In panel: Palette target', { queryPrefix: 'in panel' });
+    expect(paletteScore(inPanel, 'palette target')).toBe(0);
+    expect(paletteScore(inPanel, 'In panel: palette')).toBeGreaterThan(0);
+    expect(paletteScore(inPanel, '  in panel target')).toBeGreaterThan(0);
+  });
+
   it('ranks title matches above keyword matches and never matches scattered letters', () => {
     const zoom = command('zoom', 'Reset calendar zoom', { keywords: ['zoom', 'default'] });
     const feature = command('wf', 'Feature: search panel', { group: 'Workflows' });
