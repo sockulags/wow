@@ -884,6 +884,29 @@ describe('CodexAdapter', () => {
     developerInstructions: 'You operate wow only.',
   };
 
+  it('adds the helper tools as one more MCP server and keeps the thread its own settings (orchestration spec 1)', async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send({
+      ...startTurn,
+      helperTools: {
+        name: 'wow',
+        url: 'http://127.0.0.1:4317/threads/mcp',
+        token: 'invented-thread-token',
+      },
+    });
+    const params = written(current(), 'thread/start')?.['params'] as Record<string, unknown>;
+    // A dotted key adds `wow` to the user's own servers instead of replacing them.
+    expect(params['config']).toEqual({
+      'mcp_servers.wow': {
+        url: 'http://127.0.0.1:4317/threads/mcp',
+        http_headers: { Authorization: 'Bearer invented-thread-token' },
+      },
+    });
+    expect(params).toMatchObject({ cwd: '/work/demo', model: 'gpt-6.1-sol' });
+    expect(params['sandbox']).not.toBe('read-only');
+    expect(params['developerInstructions']).toBeUndefined();
+  });
+
   it('starts an assistant thread with the wow MCP server, a read-only sandbox without network and the given folder', async () => {
     const { adapter, current, tools } = setup(() => new ScriptedCodex(baseAnswers));
     await adapter.send(assistantTurn);

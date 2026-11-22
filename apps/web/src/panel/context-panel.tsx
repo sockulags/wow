@@ -11,6 +11,7 @@ import { useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { ThreadChanges } from '@/chat/thread-changes';
 import { ToolsTab } from './tools-tab';
+import { ThreadTab } from './thread-tab';
 import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
 import { FileViewer } from './file-viewer';
@@ -218,6 +219,8 @@ export function ContextPanel() {
   const changes = tab?.kind === 'changes' ? tab.changes : undefined;
   // What the thread's session can use (thread work spec 37).
   const tools = tab?.kind === 'tools' ? tab.tools : undefined;
+  // Another thread beside the view (parallel threads spec 15).
+  const otherThread = tab?.kind === 'thread' ? tab.thread : undefined;
   const { width, cap } = useShownPanelWidth(selection.view);
   const baseLabel = baseTabLabel(selection);
   const threads = useTopic('threads');
@@ -320,6 +323,8 @@ export function ContextPanel() {
             'Changes'
           ) : tools ? (
             'Session tools'
+          ) : otherThread ? (
+            'Thread'
           ) : page ? (
             'Page'
           ) : hostItem ? (
@@ -355,6 +360,8 @@ export function ContextPanel() {
           <ThreadChanges key={tab.id} changes={changes} />
         ) : tools && tab ? (
           <ToolsTab key={tab.id} tools={tools} />
+        ) : otherThread && tab ? (
+          <ThreadTab key={tab.id} thread={otherThread} />
         ) : (
           <PanelBody selection={selection} />
         )}

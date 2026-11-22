@@ -77,6 +77,8 @@ import {
   TurnSnapshot,
 } from './snapshots.js';
 import { ChangeRequestOpenedItemPayload, CommittedItemPayload } from './thread-git.js';
+import { ApplyConfirmed, ChangesAppliedItemPayload } from './apply.js';
+import { HelperIsolation } from './helpers.js';
 import { FileHash, RunEffect, UnpushedWork, WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
@@ -263,6 +265,16 @@ export const Command = z.discriminatedUnion('type', [
     itemId: Id,
     confirmed: RestoreConfirmed,
   }),
+  // Apply a chat thread's changes to its project folder (parallel threads spec 1 to 7), with the
+  // lists the confirm showed. Taken by the RPC dispatch handler, which writes the files first;
+  // the engine alone refuses it, so the assistant and a setup file cannot apply.
+  z.object({
+    type: z.literal('thread.applyToProject'),
+    threadId: Id,
+    confirmed: ApplyConfirmed,
+  }),
+  // Undo on an apply line (spec 9): the files it wrote go back where they still hold its writes.
+  z.object({ type: z.literal('thread.undoApply'), threadId: Id, itemId: Id }),
   // The way out of a go-back the provider keeps refusing (a session file cleaned up, a point it no
   // longer accepts): the thread stops going back, so its next message goes on in the thread's
   // own session, or starts a new conversation where it has none yet (a fork). Edit's replaced
@@ -777,6 +789,52 @@ export const InternalCommand = z.discriminatedUnion('type', [
   // The thread git service after the user's Commit or Open in a chat thread's dialogs (thread
   // work spec 29, 32): the line on the thread's last turn.
   z.object({ type: z.literal('thread.committed'), threadId: Id, commit: CommittedItemPayload }),
+  // Helper threads (agent orchestration spec 2 to 8). Only wow's helper tools send these, for the
+  // main thread whose token called them; the engine refuses them from anyone else. `start` makes
+  // a chat thread with the main thread as its parent and sends it the brief; `write` sends it a
+  // message (queued while it works); `stop` stops its running turn.
+  z.object({
+    type: z.literal('helper.start'),
+    threadId: Id,
+    parentThreadId: Id,
+    title: z.string().trim().min(1).max(200),
+    brief: z.string().trim().min(1),
+    providerInstanceId: Id.optional(),
+    model: z.string().min(1).optional(),
+    effort: z.string().min(1).optional(),
+    isolation: HelperIsolation,
+  }),
+  z.object({
+    type: z.literal('helper.write'),
+    threadId: Id,
+    parentThreadId: Id,
+    text: z.string().trim().min(1),
+  }),
+  z.object({ type: z.literal('helper.stop'), threadId: Id, parentThreadId: Id }),
+  // The main thread's agent answers a question its helper asked (agent orchestration spec 2, 4).
+  // Approvals are never answered this way.
+  z.object({
+    type: z.literal('helper.answer'),
+    threadId: Id,
+    parentThreadId: Id,
+    questionId: Id,
+    reply: QuestionReply,
+  }),
+  // wow's helper follower (spec 3): a helper ended a turn, failed or asked a question, so its main
+  // thread's agent is told with a message. A turn that was stopped tells nothing.
+  z.object({
+    type: z.literal('helper.followed'),
+    threadId: Id,
+    reason: z.enum(['turnEnded', 'question']),
+    questionId: Id.optional(),
+  }),
+  // The apply service wrote a thread's changes into the project folder, or undid that (parallel
+  // threads spec 8, 9): the line on the thread's last turn.
+  z.object({
+    type: z.literal('thread.changesApplied'),
+    threadId: Id,
+    applied: ChangesAppliedItemPayload,
+  }),
   z.object({
     type: z.literal('thread.changeRequestOpened'),
     threadId: Id,
@@ -1336,6 +1394,19 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       before: TurnSnapshot.nullable(),
       after: TurnSnapshot.nullable(),
     }),
+  }),
+  // A thread became a helper of `parentThreadId` (agent orchestration spec 4).
+  z.object({
+    kind: z.literal('thread.helperStarted'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, parentThreadId: Id, at: Timestamp }),
+  }),
+  // The `changes_applied` line (parallel threads spec 8); with `undoOf`, that apply is marked
+  // undone.
+  z.object({
+    kind: z.literal('thread.changesApplied'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, item: ThreadItem }),
   }),
   // Edit put `by` in the place of `turnId` (agent workbench spec 62).
   z.object({

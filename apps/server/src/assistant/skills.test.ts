@@ -67,6 +67,7 @@ function acceptOverRpc(proposalId: string) {
     images: undefined as never,
     snapshots: undefined as never,
     threadGit: undefined as never,
+    threadApply: undefined as never,
     plans: undefined as never,
     workflows: undefined as never,
     providers: undefined as never,

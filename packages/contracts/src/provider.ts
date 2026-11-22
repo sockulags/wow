@@ -50,6 +50,11 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     permissionMode: PermissionMode,
     resumeId: z.string().min(1).optional(),
     toolset: ProviderToolset.optional(),
+    // wow's helper tools beside the session's own tools and servers (agent orchestration spec 1):
+    // an ordinary session that also reaches this MCP server. Never with `toolset`. Fixed for the
+    // life of the provider's session: a change starts a new session that resumes the same
+    // conversation where the provider can.
+    helperTools: ProviderToolset.optional(),
     // What the agent is told it is for, in place of the provider's own instructions for coding.
     instructions: z.string().min(1).optional(),
     // Images of the message, as files wow stored (agent workbench spec 53, 55): Claude Code gets

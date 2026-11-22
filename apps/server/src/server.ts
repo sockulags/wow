@@ -14,6 +14,9 @@ import { BriefRequester } from './assistant/briefs.js';
 import { Chief } from './assistant/chief.js';
 import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
+import { HelperEndpoint, helperMcpPath } from './helpers/endpoint.js';
+import { HelperTools } from './helpers/helper-tools.js';
+import { HelperFollower } from './helpers/follow.js';
 import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
@@ -38,6 +41,7 @@ import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { FolderSnapshots } from './files/snapshots.js';
 import { ThreadGit } from './workspaces/thread-git.js';
+import { ThreadApply } from './workspaces/apply.js';
 import { listTerminalSessions } from './providers/sessions.js';
 import { ProviderUpdates, createNpmRunner, type RunNpm } from './providers/update.js';
 import type { Spawn } from './files/editor.js';
@@ -120,6 +124,8 @@ export interface RunningServer {
   readonly plans: PlansService;
   readonly workflows: WorkflowRunner;
   readonly follower: DelegationFollower;
+  // Tells a main thread when its helper ends a turn or asks (agent orchestration spec 3).
+  readonly helperFollower: HelperFollower;
   readonly briefs: BriefRequester;
   readonly chief: Chief;
   readonly workspaces: Workspaces;
@@ -211,6 +217,32 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     platform: options.platform ?? process.platform,
     clock: options.clock ?? (() => new Date()),
   });
+  // wow's helper tools for chat threads (agent orchestration spec 1): a chat thread of the
+  // user's, not a step's, with `chat.helpers` on for its project.
+  const helperEndpoint = new HelperEndpoint({
+    version,
+    logger,
+    allowed: (threadId) => {
+      const row = database.db.select().from(threads).where(eq(threads.id, threadId)).get();
+      // A helper has no helpers of its own (agent orchestration spec 7).
+      if (!row || row.kind !== 'chat' || row.runId !== null || row.startedBy === 'helper') {
+        return false;
+      }
+      return settings.get(
+        'chat.helpers',
+        row.projectId === null ? {} : { projectId: row.projectId },
+      );
+    },
+    provider: new HelperTools({
+      db: database.db,
+      engine,
+      logger,
+      git: () => ({
+        timeoutMs: settings.get('trackers.gitTimeoutMs'),
+        stopWaitMs: settings.get('advanced.gitStopWaitMs'),
+      }),
+    }),
+  });
   const providerService = new ProviderService({
     db: database.db,
     engine,
@@ -223,10 +255,12 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     changes: folderChanges,
     prepareThread: (threadId) => workspaces.prepareThread(threadId),
     snapshots,
+    helpers: helperEndpoint,
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   // Gives the assistant a turn when a thread it started ends a turn or asks something.
   const follower = new DelegationFollower({ db: database.db, engine, logger });
+  const helperFollower = new HelperFollower({ db: database.db, engine, logger });
   // Asks the assistant for the brief of each new decision (chief of staff spec 18).
   const briefs = new BriefRequester({ db: database.db, engine, logger });
   const workflows = new WorkflowRunner({
@@ -328,6 +362,16 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
   });
   engine.onCommit((commit) => images.copyForkImages(commit.events));
+  const threadApply = new ThreadApply({
+    db: database.db,
+    engine,
+    settings,
+    logger,
+    home,
+    platform: options.platform ?? process.platform,
+    clock: options.clock ?? (() => new Date()),
+    snapshots,
+  });
   const threadGit = new ThreadGit({
     db: database.db,
     engine,
@@ -360,6 +404,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     images,
     snapshots,
     threadGit,
+    threadApply,
     detectProviders: () => detectProviders({ env, platform: options.platform ?? process.platform }),
     discoverProjects: () =>
       discoverProjects({
@@ -425,6 +470,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       void mcp(request, response);
       return;
     }
+    if (pathname === helperMcpPath) {
+      void helperEndpoint.handle(request, response);
+      return;
+    }
     response.writeHead(426, { 'content-type': 'text/plain' });
     response.end('Upgrade Required');
   });
@@ -444,6 +493,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     });
   } catch (error) {
     follower.stop();
+    helperFollower.stop();
     briefs.stop();
     await workflows.stop();
     await workspaces.stop();
@@ -456,6 +506,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     throw new Error('WebSocket server has no TCP address');
   const port = address.port;
   assistantAccess = { url: `http://127.0.0.1:${port}${assistantMcpPath}`, token: assistantToken };
+  helperEndpoint.listening(`http://127.0.0.1:${port}`);
 
   wss.on('connection', (socket: WebSocket) => {
     const send = (message: ServerMessage) => {
@@ -560,9 +611,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const stop = () =>
     (stopped ??= (async () => {
       follower.stop();
+      helperFollower.stop();
       briefs.stop();
       chief.stop();
       await follower.settled();
+      await helperFollower.settled();
       await briefs.settled();
       await stopServices();
       await providerUpdates.stop();
@@ -594,6 +647,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     plans,
     workflows,
     follower,
+    helperFollower,
     briefs,
     chief,
     workspaces,

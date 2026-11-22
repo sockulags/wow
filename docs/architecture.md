@@ -179,7 +179,8 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  list, false and true for older rows (migration 0027_thread_list); queued: the
                  message waiting for the running turn to end (migration 0028_queued_messages);
                  baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
-                 first turn (migration 0029_thread_changes); stateSince (0031); goBack(json:
+                 first turn (migration 0029_thread_changes); parentThreadId: a helper thread's
+                 main thread, with startedBy 'helper' (migration 0042_helper_threads); stateSince (0031); goBack(json:
                  GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
                  0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
                  working copy, null for older rows (migration 0035_thread_working_copy)
@@ -1688,8 +1689,11 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.exportReasoning` (see "Find in the conversation and copy it"), `chat.ownWorkingCopy`,
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
-  `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.commitTimeoutMs`,
+  `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive`,
+  `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
+  `chat.activityTextMaxLength` (see
+  "Threads at work and a thread in the panel"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3681,13 +3685,15 @@ not the Assistant) at each turn's start and end, so the user can put them back.
   the user's repository, and both only read: no object, ref, index entry, stash or HEAD change is
   ever written there.
 - **Taking one.** `take(threadId, turnId, 'start' | 'end')`: the listed files (over
-  `chat.snapshotMaxFiles` gives none), `lstat` each: a link is kept as its own text (mode
+  `chat.snapshotMaxFiles` gives none), `lstat` each, `chat.snapshotReadsAtOnce` side by side: a link is kept as its own text (mode
   120000, never followed), a file over `chat.snapshotMaxFileBytes` is left out and named with its
   size in `omitted`, a name with a line break or one this system cannot write back is left out
   too. Files whose size, time and mode match the store's `wow-manifest.json` and whose time is
   before the last read began (Git's "racily clean" rule, measured with a scratch file's time) keep
   their blob; the rest go through `hash-object --no-filters -w --stdin-paths` (exact bytes, CRLF
-  kept, no filter). `update-index --index-info` and `write-tree` make the tree; a ref
+  kept, no filter). `update-index --index-info` and `write-tree` make the tree, which the
+  manifest names as `tree`; each snapshot logs its file count, how many were hashed and its time.
+  A ref
   `refs/turns/<sha of turn id>-<start|end>` keeps it. The executable bit is read where the system
   has one; on Windows a file keeps the mode it had in the last snapshot. The result is recorded
   with the internal `thread.snapshotTaken {threadId, turnId, at, snapshot}` (event
@@ -3741,8 +3747,9 @@ removed, failed, undoOf?, undoneBy?, edit?, at}` on the thread's last turn, and 
   could not be written fails the turn with the reason and nothing is sent. Its line has
   `edit: true` and no Undo.
 - **Expiry.** `expire()` (at start and after each end snapshot) drops each snapshot older than
-  `chat.snapshotKeepDays` by the server's clock: its ref and old restore trees go, the manifest is
-  removed, `git prune --expire=now` runs in the store, and `thread.snapshotsDropped {threadId,
+  `chat.snapshotKeepDays` by the server's clock: its ref and old restore trees go,
+  `git prune --expire=now` runs in the store, the manifest is removed only when its `tree` is no
+  longer in the store (a manifest without one is removed; a kept tree keeps all its blobs), and `thread.snapshotsDropped {threadId,
 turnIds, before}` sets those snapshots to `{missing}`, so the turns stop offering Restore.
   Turns stored before have none and offer none (spec 44).
 - **Web.** `chat/restore.tsx`: `restoreStore` with `askRestore` (reads the preview),
@@ -3848,6 +3855,50 @@ request's header; it is in no git argument or environment. Only one commit or pu
 runs at a time. The assistant has no tool for any of it (`thread.committed` and
 `thread.changeRequestOpened` are server-only), and wow never amends, merges, rebases, pulls,
 forces or deletes a branch, except the empty one it made for a commit that was then refused.
+
+### Apply a thread's changes to the project folder
+
+Parallel threads spec 1 to 10. A chat thread with its own working copy (`workingCopy.startSha`)
+has "Apply to project folder…" in its Changes view (`keybindings.applyToProject`, Mod+Shift+A,
+palette `chat.applyToProject`). The confirm and the line live in `apps/web/src/chat/apply.tsx`;
+the line's words in `chat/git-lines.ts` (`appliedLineText`, `appliedText`), shared with Ctrl+F
+and the Markdown export. The server side is `apps/server/src/workspaces/apply.ts` (`ThreadApply`),
+reached only through the RPCs below; the engine refuses `thread.applyToProject` and
+`thread.undoApply` sent to it alone, so the assistant and a setup file cannot apply.
+
+- `threads.applyPreview {threadId}` answers `ApplyPreview`. It refuses (as `status`) a thread
+  that is not a chat thread or has no copy, a running turn in the thread, a running turn in any
+  thread whose `cwd` is the project folder (`projectBusy`, compared by `folderKey`), a missing
+  folder, a project folder outside Git and a missing git. Otherwise it lists the copy's changes
+  (`listChangedSince`: `git diff --name-only -z --no-renames <startSha>` and `ls-files --others
+--exclude-standard`, over `chat.snapshotMaxFiles` refused), reads the start commit's tree and
+  blobs from the copy's repository (`readFolderTree`, `readFolderBlobs`) and compares base,
+  theirs (the copy) and ours (the project folder) as bytes: ours = theirs `same`, ours = base
+  `write` or `delete`, both changed: `deletedThere`, `deletedHere`, `binary`, or a
+  `git merge-file -p` of the three on scratch files under `<home>/apply-scratch`
+  (`mergeFileBytes`) that is `merge` when Git reports no conflict and `conflict` otherwise. A
+  link, a side over `chat.snapshotMaxFileBytes`, or a path `unsafeSnapshotPath` refuses or that
+  leads through a link in either folder is left. `nothing` when no file would be written.
+- `dispatch` takes `thread.applyToProject {threadId, confirmed}` before the engine and runs it in
+  the project folder's snapshot queue (`FolderSnapshots.exclusive`), so it never meets a snapshot
+  or restore of that folder half done. It plans again and answers `conflict` with the new
+  preview as `data` when `applyConfirmedOf(preview)` differs from `confirmed`. Then it keeps the
+  touched files as they are now as a tree in the project folder's snapshot store
+  (`refs/applies/<ms>-<sha1 of the command id>/before`), writes and deletes with `node:fs`
+  (empty folders a delete leaves go; the executable bit follows the copy where the system has
+  one), keeps the result under `/after`, and records `thread.changesApplied {threadId,
+applied}` (event `thread.changesApplied`, item `changes_applied` on the last turn, with
+  `savedAs` naming the refs). Refs older than `chat.snapshotKeepDays` are dropped at the next
+  apply into that folder.
+- `thread.undoApply {threadId, itemId}`: only the thread's newest apply line, not undone
+  (`undoableApply`). Each touched file whose content still matches `/after` (or is still absent)
+  gets `/before` back, or is deleted when it had none; one changed since is listed in `left` as
+  "changed since Apply". The undo line has `undoOf`, and the projector sets `undoneBy` on the
+  apply line.
+
+Apply writes no object, ref, index entry or HEAD in either repository, and runs `diff`,
+`ls-files`, `ls-tree`, `cat-file` and `merge-file` only, with hooks and the file system monitor
+off like every store command.
 
 ### What the session can use
 
@@ -4249,6 +4300,114 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
   "Took under 1 s" (`tookText` in `lib/format.ts`).
 - **Diagrams** (spec 99). `drawDiagram` sets the theme variable `edgeLabelBackground` to
   `transparent`, so an edge label has no box in either theme.
+
+### Threads at work and a thread in the panel
+
+Parallel threads spec 11 to 17. The topic `threadActivity` (`core/thread-activity.ts`,
+`threadActivityRows`) is built from the stored rows each time it is read, like `decisions`: one
+`ThreadActivity` per thread that is not the assistant's, not archived, and is `working`,
+`needs_you` or has `seen` false. It carries the thread's last turn that Edit did not replace (its
+state and times), how many tool calls that turn made, the payload of its newest running call
+(`runningTool`) and the last non-empty line of its newest answer, cut at
+`chat.activityTextMaxLength` (read from the settings table's global row). `Subscriptions` pushes
+it whenever `threads`, `turns`, `threadItems` or `settings` change (`activitySources`).
+
+The web app's `/chat/work` (`chat/at-work.tsx`, `ThreadsAtWork`) joins it with `threads` and
+`decisions`: a thread with a decision or in `needs_you` is under "Needs you" with the decision's
+title, a `working` one under "Working" with the working line (`WorkingIndicator`, the call named
+by `runningToolLabel` as the conversation's line names it), the rest under "Finished, not read"
+with the last line and when the turn ended; each group oldest first by `stateSince`. Rows move
+with the arrow keys, Enter opens the thread, and `keybindings.threadToPanel` (P, scoped to Chat)
+opens it in the panel. The list's "At work · N" row and `keybindings.threadsAtWork` (Mod+Shift+O,
+palette `chat.threadsAtWork`) lead there.
+
+A panel tab of kind `thread` (`ViewerThread {threadId, title, from}`, `openThreadTab`,
+`threadTabId`) shows `panel/thread-tab.tsx`: the thread's `ThreadConversation` with `compact`,
+as a step's thread is shown in the panel, and "Open thread". The tab strip names it by the
+thread's current title. "Open thread in panel…" (`keybindings.openThreadInPanel`, Mod+Alt+O,
+palette `chat.openThreadInPanel`) opens the palette with `paletteSearch` set to "In panel: ",
+which lists the search-only commands `panel-thread.<id>` of every thread but the one on screen.
+
+### Helper tools in a chat session
+
+Agent orchestration U1 (spec 1, Interface, Security). A second MCP path on the wow port,
+`/threads/mcp` (`helpers/endpoint.ts`, `HelperEndpoint`), answers wow's helper tools for ordinary
+chat sessions through the same `answerMcp` as `/assistant/mcp` (`assistant/mcp.ts`). The provider
+service asks `HelperEndpoint.grant(threadId)` in `#chatTurn`, after the start snapshot, and puts
+the answer on the `startTurn` as `helperTools {name: 'wow', url, token}`. It answers only for a
+chat thread of the user's (`kind` chat, no `runId`) whose project has `chat.helpers` on (default
+on), and only once the server listens. The token is made the first time a thread asks and is the
+same for every turn of it for the server's life, because a provider's session keeps the server it
+was opened with across turns; it is kept in memory only. A request is answered only with a token
+`grant` made, compared in constant time, for the thread it was made for, and only while that
+thread may still have the tools (asked again on every request), so turning the setting off
+refuses the token at once. The assistant's token and the app's token open nothing here, and a
+thread's token does not open `/assistant/mcp`. A helper thread (`startedBy: 'helper'`) gets no
+helper tools of its own.
+
+**Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
+(`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,
+`write_to_helper` and `stop_helper` to the thread whose token called. The reads come straight
+from the stored rows: each helper's state, what its running call runs, a question it waits on, a
+waiting approval named as the person's, and its last answer; `list_helpers` also names every
+provider instance with whether it is connected. `start_helper` resolves an instance by id or
+name, checks with `readSnapshotRepository` that the project is in Git for `isolation: 'copy'`,
+and dispatches `helper.start`; `write_to_helper` and `stop_helper` dispatch `helper.write` and
+`helper.stop`. They go to the engine with the origin `helper` (`CommandOrigin`), and
+`decideInSteps` refuses `helper.*` from any other origin. `helpers/decide.ts` (`decideHelper`)
+decides them in steps, as the assistant's delegation does: the main thread must be a chat
+thread with no `runId` that is not a helper; `chat.helpersPerThread` and `chat.helpersLive` count
+helpers that work (state `working` or a running turn). `helper.start` decides the user's
+`thread.create` on the named instance (refused unless its last test passed), with the main
+thread's model and effort on the same instance or the instance's defaults, the mode
+`helperPermissionMode` gives (contracts `helpers.ts`: the main thread's own mode on the same
+provider, else the widest of the other provider's modes whose reach, 0 read to 4 no sandbox, is
+not above the main thread's), and the main thread's `cwd`, or the project's with `ownWorkingCopy`
+for `copy`; then `thread.helperStarted` (sets `parentThreadId` and `startedBy: 'helper'`), a
+`helper_started` item (`HelperStartedItemPayload`) on the main thread's last turn, and the brief
+through `thread.sendMessage`. `helper.write` is `thread.sendMessage` and `helper.stop`
+`thread.interrupt`, for a helper of that main thread only. The read model's `helperThreads`
+lists a main thread's helpers, or all.
+
+**Following helpers** (U3, spec 3, 7). `helpers/follow.ts` (`HelperFollower`) listens for
+`turn.ended` and `question.asked` of a thread with `startedBy: 'helper'` and, after the commit,
+dispatches the internal `helper.followed {threadId, reason, questionId?}` (refused from the
+assistant and the helper tools). `decideHelperFollow` turns it into the user's
+`thread.sendMessage` to the main thread, so it waits in the queue while the main turn runs or is
+handed to it where the provider takes that: "From wow: your helper "<title>" (id <id>, on
+<instance>) ended its turn. Its answer: …" with the turn's answers, cut at
+`chat.helperAnswerMaxLength`; "… failed: <the error item's message>"; or "… asks a question (id
+<question id>): <request>" with a pointer to `answer_helper_question`. A turn that was stopped,
+a question already answered and an approval tell nothing, so stopping a main thread never starts
+it again. `answer_helper_question` dispatches `helper.answer`, decided as the user's
+`question.answer` for a question of that main thread's helper only. `thread.interrupt` of a main
+thread also interrupts the running turn of each of its helpers in the same commit;
+`thread.setDone` and `thread.setArchived` of a main thread are refused while a helper works
+(`refuseWhileHelpersWork`), and removing its working copy already is, since a helper in its
+folder shares the copy.
+
+**Seeing helpers** (U4, spec 10 to 12). The `helper_started` item draws as `chat/tools/helper.tsx`
+(`HelperRow`): `helperRowText` ("Helper · Codex at work · Review the timer change", with "own
+working copy" for `copy`), then the helper's state from `threads` and `threadActivity`: the
+working line while it works, "Waits for you", "Failed", or its last line and when. The title and
+"Open in panel" open it with `openThreadTab` in the view's panel, "Open thread" goes to it, and
+Stop sends `thread.interrupt` while it works. `chat/helpers.ts` holds `helperRowText`, which
+Ctrl+F and the Markdown export use too, and `nestHelpers`, which puts a helper right after its
+main thread, one step in, when both are in the same list (a thread list group, a Threads at work
+group), and names the main thread ("Helper of …") of a helper listed alone.
+
+- Claude (`ClaudeAdapter#withHelperTools`): the session's own options stay (settings sources, the
+  user's tools, servers and launch arguments, the permission mode) and `mcpServers` gets `wow`
+  as an HTTP server with the token in its `Authorization` header; no `strictMcpConfig`, no
+  `allowedTools`, so its tools are asked about by the session's mode like any tool. The session
+  records `helperTools` (`url token`); a turn with another value or none closes it and opens a
+  new one resuming the same conversation, as the assistant's session does for its instructions.
+- Codex (`helperToolSettings`): `thread/start` and `thread/resume` get `config` with the dotted
+  key `mcp_servers.wow`, as `codex -c` takes it, so the user's own `mcp_servers` from
+  `config.toml` stay; nothing else of the thread changes. It is read when the codex thread starts
+  or resumes, so a change applies from its next start. That a dotted key adds rather than
+  replaces is read from codex's `-c` behaviour, not seen against the app-server
+  (`docs/windows-smoke.md`, section 11).
 
 ## Workflow builder and run view
 

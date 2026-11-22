@@ -15,6 +15,7 @@ import {
 } from './attachments.js';
 import { Command, CommandId, DispatchResult } from './commands.js';
 import { RestorePreview, RestorePreviewParams } from './snapshots.js';
+import { ApplyPreview } from './apply.js';
 import {
   CommitParams,
   CommitPlan,
@@ -52,6 +53,7 @@ import {
   SettingRow,
   Skill,
   Thread,
+  ThreadActivity,
   ThreadItem,
   TrackerService,
   Trigger,
@@ -118,6 +120,8 @@ export const subscriptionTopics = {
   assistantPermissionUses: { row: AssistantPermissionUse, threadScoped: false },
   // Everything that waits for the user, in the server's order (chief of staff spec 16, 17).
   decisions: { row: Decision, threadScoped: false },
+  // What each thread at work does now (parallel threads spec 11, 12).
+  threadActivity: { row: ThreadActivity, threadScoped: false },
   // The assistant's briefings, newest first (chief of staff spec 20 to 23).
   briefings: { row: Briefing, threadScoped: false },
   // Setup files applied here, in the order applied, with their Undo state.
@@ -401,6 +405,12 @@ export const rpcMethods = {
   'threads.restorePreview': {
     params: RestorePreviewParams,
     result: RestorePreview,
+  },
+  // What "Apply to project folder" would do now (parallel threads spec 2 to 5), read at this
+  // moment; nothing is written. A refusal comes back as `status` with its reason.
+  'threads.applyPreview': {
+    params: z.object({ threadId: z.string().min(1) }),
+    result: ApplyPreview,
   },
   // Commit from a chat thread's Changes (thread work spec 27 to 30). The plan is read only. Commit
   // runs the repository's commit hooks, on the user's click only; refused as `rejected` with a

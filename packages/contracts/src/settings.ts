@@ -590,6 +590,60 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
+  'chat.helpers': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Helper threads',
+    description:
+      "Give the agent of a chat thread wow's helper tools, with which it can start helper threads on any connected Claude Code or Codex instance when the task needs one or you ask for it. A helper's approvals stay yours.",
+    default: true,
+    scope: 'project',
+  }),
+  'chat.helpersPerThread': defineSetting({
+    schema: z.number().int().min(1).max(20),
+    group: 'chat',
+    label: 'Helpers of one thread at once',
+    description:
+      "How many helper threads one thread's agent may have working at the same time. Over it, starting another is refused with the reason.",
+    default: 3,
+    scope: 'global',
+  }),
+  'chat.helpersLive': defineSetting({
+    schema: z.number().int().min(1).max(50),
+    group: 'chat',
+    label: 'Helpers at once in all',
+    description:
+      'How many helper threads may be working at the same time across every thread. Over it, starting another is refused with the reason.',
+    default: 6,
+    scope: 'global',
+  }),
+  'chat.helperAnswerMaxLength': defineSetting({
+    schema: z.number().int().min(200).max(200_000),
+    group: 'chat',
+    label: 'Longest helper answer sent back',
+    description:
+      "How many characters of a helper's answer wow sends back to the thread that started it. A longer answer is cut, and the agent reads the rest with read_helper.",
+    default: 20_000,
+    scope: 'global',
+  }),
+  'chat.activityTextMaxLength': defineSetting({
+    schema: z.number().int().min(20).max(5000),
+    group: 'chat',
+    label: 'Last words shown in Threads at work',
+    description:
+      'How many characters of the last line a thread wrote Threads at work shows under a thread that finished.',
+    default: 300,
+    scope: 'global',
+  }),
+  'chat.snapshotReadsAtOnce': defineSetting({
+    schema: z.number().int().min(1).max(1024),
+    group: 'chat',
+    label: 'Files looked at at once in a snapshot',
+    description:
+      "How many of a thread's files wow looks at side by side while it takes a snapshot. More is faster on a fast disk; fewer leaves more room for other programs.",
+    default: 32,
+    scope: 'global',
+  }),
   'chat.snapshotKeepDays': defineSetting({
     schema: z.number().int().min(1).max(3650),
     group: 'chat',
@@ -2249,6 +2303,26 @@ export const settingsRegistry = {
     'Chat: commit…',
     "Open the commit dialog of the open chat thread's Changes, which commits the files you tick with the repository's hooks.",
     'Mod+Shift+K',
+  ),
+  'keybindings.threadsAtWork': keybinding(
+    'Threads at work',
+    'Show every thread that works, waits for you or finished a turn you have not seen, with what each does now.',
+    'Mod+Shift+O',
+  ),
+  'keybindings.threadToPanel': keybinding(
+    'Threads at work: open in panel',
+    'Open the thread that has the keyboard in Threads at work in a tab of the side panel.',
+    'P',
+  ),
+  'keybindings.openThreadInPanel': keybinding(
+    'Open thread in panel…',
+    'Pick a thread and open it in a tab of the side panel next to the view you are in, with its conversation and composer.',
+    'Mod+Alt+O',
+  ),
+  'keybindings.applyToProject': keybinding(
+    'Chat: apply to project folder…',
+    "Open the confirm that writes the open thread's changes from its own working copy into the project folder, as uncommitted changes.",
+    'Mod+Shift+A',
   ),
   'keybindings.commitConfirm': keybinding(
     'Commit or open the pull request',

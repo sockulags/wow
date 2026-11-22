@@ -19,6 +19,7 @@ import {
   type RefreshToolsOutcome,
   type RestoreConfirmed,
   type ThreadToolsSource,
+  type ProviderToolset,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
@@ -57,6 +58,9 @@ export interface ProviderServiceDeps {
   // Keeps a chat thread's folder as each turn starts and ends, and puts it back for Edit's
   // "Conversation and files" (thread work spec 19, 21); without it, turns have no snapshots.
   readonly snapshots?: TurnSnapshots | undefined;
+  // wow's helper tools for a chat thread's turn (agent orchestration spec 1): undefined when the
+  // thread may not have them or the server does not listen yet; without it, no turn gets them.
+  readonly helpers?: { grant(threadId: string): ProviderToolset | undefined } | undefined;
   // Milliseconds since the epoch; tests pass their own.
   readonly now?: (() => number) | undefined;
 }
@@ -829,7 +833,8 @@ export class ProviderService {
       if (refused !== undefined) throw new Error(refused);
     }
     await snapshots?.take(command.threadId, turnId, 'start');
-    return this.#marked(command, turnId, index);
+    const helperTools = this.#deps.helpers?.grant(command.threadId);
+    return this.#marked(helperTools ? { ...command, helperTools } : command, turnId, index);
   }
 
   // Before a chat thread's turn goes out, the folder is read (agent workbench spec 34): its

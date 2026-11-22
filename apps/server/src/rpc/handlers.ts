@@ -50,6 +50,7 @@ import { changesOptions, readRunDiff, readThreadDiff } from '../workflows/change
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { WorkspaceChanged, WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
 import { ThreadGitRefused, type ThreadGit } from '../workspaces/thread-git.js';
+import { ApplyChanged, ApplyRefused, type ThreadApply } from '../workspaces/apply.js';
 import { planSetup } from '../setup/plan.js';
 import { writeSetup } from '../setup/write.js';
 import { RpcFault, type Handlers } from './router.js';
@@ -79,6 +80,8 @@ export interface HandlerDeps {
   readonly snapshots: FolderSnapshots;
   // Commit and pull request from a chat thread's Changes (thread work spec 27 to 36).
   readonly threadGit: ThreadGit;
+  // Apply a thread's changes to its project folder (parallel threads spec 1 to 10).
+  readonly threadApply: ThreadApply;
   readonly detectProviders: () => Promise<DetectedProvider[]>;
   readonly discoverProjects: () => Promise<DiscoveredProject[]>;
   readonly listSessions: (providerInstanceId?: string) => Promise<TerminalSession[]>;
@@ -183,6 +186,20 @@ async function restoreCall<T>(call: () => Promise<T>): Promise<T> {
   }
 }
 
+// An apply that cannot be made answers `rejected` with the reason; one whose files changed since
+// the confirm answers `conflict` with the new preview (parallel threads spec 6).
+async function applyCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof ApplyRefused) {
+      throw new RpcFault(error.notFound ? 'not_found' : 'rejected', error.message);
+    }
+    if (error instanceof ApplyChanged) throw new RpcFault('conflict', error.message, error.preview);
+    throw error;
+  }
+}
+
 // A refusal of the commit and pull request dialogs carries what they show with it.
 async function threadGitCall<T>(call: () => Promise<T>): Promise<T> {
   try {
@@ -248,6 +265,10 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       // Restoring writes the folder first, then records the line (thread work spec 20, 24).
       if (command.type === 'thread.restoreFiles' || command.type === 'thread.undoRestore') {
         return restoreCall(() => deps.snapshots.restore(commandId, command));
+      }
+      // Applying writes the project folder first, then records the line (parallel threads spec 8).
+      if (command.type === 'thread.applyToProject' || command.type === 'thread.undoApply') {
+        return applyCall(() => deps.threadApply.run(commandId, command));
       }
       await checkEditRestore(command, deps);
       const result = deps.engine.dispatch(commandId, command);
@@ -426,6 +447,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     }),
     'threads.workingCopyPlan': ({ projectId }) => deps.workspaces.plan(projectId),
     'threads.restorePreview': (params) => restoreCall(() => deps.snapshots.preview(params)),
+    'threads.applyPreview': ({ threadId }) => applyCall(() => deps.threadApply.preview(threadId)),
     'threads.workingCopyStatus': async ({ threadId }) => {
       try {
         return await deps.workspaces.threadStatus(threadId);

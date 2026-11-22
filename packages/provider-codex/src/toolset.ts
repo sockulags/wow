@@ -45,6 +45,21 @@ export function toolsOnlySettings(
   };
 }
 
+// wow's helper tools beside the thread's own (agent orchestration spec 1). The key is a dotted
+// path, as `codex -c` takes it, so the user's own `mcp_servers` from config.toml stay and `wow`
+// is one more; everything else is the thread's usual settings. Read when the thread starts or
+// resumes, so a change applies from the codex thread's next start.
+export function helperToolSettings(helperTools: Toolset): Pick<ThreadStartParams, 'config'> {
+  return {
+    config: {
+      [`mcp_servers.${helperTools.name}`]: {
+        url: helperTools.url,
+        http_headers: { Authorization: `Bearer ${helperTools.token}` },
+      },
+    },
+  };
+}
+
 // A proposal's thread (thread work spec 28): the same switches with no MCP server at all, so the
 // model has no tool of wow's or the user's and can only answer with words.
 export function proposalSettings(): Pick<ThreadStartParams, 'config' | 'ephemeral'> {

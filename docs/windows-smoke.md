@@ -413,6 +413,11 @@ on (gitlab.com or your own), a real Claude Code sign-in, and nothing secret in t
       the notification that says so.
 - [ ] Tell the assistant "remember: never plan anything before nine": the note is under Settings
       → Assistant → Memory, and a card it plans afterwards respects it.
+- [ ] Helper tools (agent orchestration U1): in a project with MCP servers of your own (in
+      `.mcp.json` for Claude Code, in `config.toml` for Codex), start a chat thread on each.
+      Claude Code's `/mcp` in a terminal, or the thread's Tools tab, lists your servers and `wow`;
+      ask the agent which MCP servers it has and that your own still work. Turn **Helper threads**
+      off for the project, send a message: the Claude session starts again without `wow`.
 
 ## 12. Uninstall
 

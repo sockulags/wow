@@ -413,17 +413,18 @@ export function workingFacts(
       ? { input: usage.data.inputTokens ?? 0, output: usage.data.outputTokens ?? 0 }
       : undefined;
   return {
-    tool:
-      runningCall === undefined
-        ? undefined
-        : (runningCall.command ??
-          (runningCall.server !== undefined && runningCall.tool !== undefined
-            ? `${runningCall.server} › ${runningCall.tool}`
-            : oneLine(runningCall, cwd))),
+    tool: runningCall === undefined ? undefined : runningToolLabel(runningCall, cwd),
     toolCalls: calls.length,
     tokens: counted,
   };
 }
+
+// What the working line names a running call by: its command, `server › tool`, or its row's line.
+export const runningToolLabel = (call: ToolCallItemPayload, cwd: string): string =>
+  call.command ??
+  (call.server !== undefined && call.tool !== undefined
+    ? `${call.server} › ${call.tool}`
+    : oneLine(call, cwd));
 
 // The messages Alt+Up and Alt+Down move between (spec 74): the user's and the agent's text.
 export const isMessage = (item: Pick<ThreadItem, 'kind'>): boolean =>

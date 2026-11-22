@@ -578,6 +578,23 @@ host refuses after the push, its message shows; the branch stays pushed and you 
 again. wow never amends, merges, rebases, pulls, force-pushes or deletes a branch, and the
 assistant cannot commit, push or open a pull request.
 
+**Apply to project folder…** (**Ctrl+Shift+A**, `keybindings.applyToProject`) is in the Changes
+of a thread that has its own working copy. It brings the thread's work into the project's own
+folder without a branch, push or pull request: every file the thread changed since its copy was
+made (its commits and what it has not committed) is written there as an uncommitted change. A
+confirm lists them first: **Left for you** (with why), **Merged with your changes**, **Written**
+and **Deleted**. A file you have not touched in the project folder gets the thread's version. A
+file you changed too is merged when Git can do it without a conflict; otherwise it is left as you
+have it, and so is a file one side deleted and the other changed, a binary file both changed, a
+link or a file larger than `chat.snapshotMaxFileBytes`. Nothing is committed or staged and no
+branch changes, in the project folder or in the thread's copy. Apply waits while a turn runs in
+the thread or in a thread that works in the project folder. When the files change between the
+confirm and Apply, the confirm shows the new lists instead. The conversation then shows "Applied
+to C:\Code\tea · 3 written · 1 merged · 1 deleted · 2 left for you" with **Undo**, which puts
+back each file Apply wrote or deleted, except a file you changed since (it is named). Undo is
+offered on the newest apply until it is used, for `chat.snapshotKeepDays` days. The assistant
+cannot apply.
+
 A turn ends with its usage: input, output and cached tokens, and the cost when the provider
 reports one. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
@@ -769,6 +786,47 @@ Change model, effort or permission mode in the composer bar; the next turn uses 
 or the stop button interrupts a running turn and keeps what it produced; the turn ends with
 "Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
+
+### Helper threads
+
+**Helper threads** (`chat.helpers`, per project, on by default) gives the agent of every chat
+thread wow's helper tools, beside its own tools and MCP servers: Claude Code and Codex both see
+one more MCP server named `wow`. With it the agent can start a **helper**: another thread, on any
+connected Claude Code or Codex instance, that gets the agent's brief as its first message. Ask for
+one in your own words ("ask Codex to review this"), or the agent starts one when the task needs a
+second agent. A helper works in the same folder as its main thread, as Claude Code's subagents do,
+or in its own working copy when the agent asks for that. Its permission mode is never wider than
+the main thread's: on the other provider it gets the closest mode that reaches no further. Its
+approvals are yours, as in every thread. When a helper ends its turn, its answer comes back to the
+main thread as a message from wow ("From wow: your helper … ended its turn. Its answer: …"), and
+the agent goes on with it; a helper's question comes back the same way, and the agent answers it
+when what it knows settles it. The agent can also read how a helper stands, write to it and stop
+it. In the main thread each helper is a row where it was started, such as "Helper · Codex at work
+· Review the timer change", with what it runs now, what it waits for or the last thing it said;
+click it to open the helper in the side panel, or use **Open thread** and **Stop**. In the thread
+list and Threads at work a helper sits under its main thread. Stopping the main thread stops its
+helpers, and it cannot be marked done or archived while a helper works. At most
+`chat.helpersPerThread` (3) helpers of one thread, and `chat.helpersLive` (6) in all, work at
+once. Turn the setting off for a project to keep `wow` out of its sessions; a Claude
+session then starts again on the same conversation, and a Codex thread leaves it out from its
+next start. A workflow step's thread and the Assistant never get it.
+
+### Threads at work
+
+**At work** at the top of the thread list (**Ctrl+Shift+O**, `keybindings.threadsAtWork`, or
+"Show threads at work") lists every thread that waits for you, works, or finished a turn you have
+not read, in that order, each group oldest first. Each row has the title, the project and branch
+(or folder) and one line: what the thread waits for ("Wants to run rm -rf build"), what it runs
+now ("Running pnpm test · 2:10 · 14 tool calls"), or the last line it wrote and when. Archived
+threads and the Assistant are not in it; a workflow step's thread is. The arrow keys move,
+**Enter** opens the thread, and **P** (`keybindings.threadToPanel`) opens it in the side panel.
+`chat.activityTextMaxLength` sets how much of the last line shows.
+
+**A thread beside another**: **Open thread in panel…** (**Ctrl+Alt+O**,
+`keybindings.openThreadInPanel`) opens the palette on your threads ("In panel: …"); the pick opens
+in a tab of the side panel next to the view you are in, with its conversation, its approval,
+question and gate cards and its composer. The tab has the thread's title and **Open thread**.
+Find, export, restore, fork and edit are in the main view only.
 
 ### Reading a long thread
 

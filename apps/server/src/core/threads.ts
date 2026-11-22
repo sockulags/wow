@@ -115,11 +115,30 @@ type ThreadCommand = Extract<
       | 'thread.snapshotsDropped'
       | 'thread.committed'
       | 'thread.changeRequestOpened'
+      | 'thread.applyToProject'
+      | 'thread.undoApply'
+      | 'thread.changesApplied'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
   }
 >;
+
+// A main thread is not put away while a helper of it works (agent orchestration spec 7).
+function refuseWhileHelpersWork(thread: Thread, read: ReadModel, what: string): void {
+  const working = read
+    .helperThreads(thread.id)
+    .filter((helper) => helper.state === 'working' || read.runningTurn(helper.id) !== undefined);
+  if (working.length === 0) return;
+  throw new CommandRejected(
+    'rejected',
+    `"${thread.title}" is not ${what} while its helper${working.length === 1 ? '' : 's'} ${working
+      .map((helper) => `"${helper.title}"`)
+      .join(
+        ', ',
+      )} ${working.length === 1 ? 'works' : 'work'}. Stop ${working.length === 1 ? 'it' : 'them'} first.`,
+  );
+}
 
 export const isThreadCommand = (command: ServerCommand): command is ThreadCommand =>
   command.type.startsWith('providerInstance.') ||
@@ -978,17 +997,24 @@ export function decideThread(
       const thread = requireThread(read, command.threadId);
       const turn = read.runningTurn(thread.id);
       if (!turn) throw new CommandRejected('rejected', `Thread ${thread.id} has no running turn`);
-      return [
-        {
-          kind: 'turn.interruptRequested',
-          aggregate: thread.id,
-          payload: {
-            threadId: thread.id,
-            turnId: turn.id,
-            providerInstanceId: thread.providerInstanceId,
-          },
-        },
+      // A helper belongs to its main thread: stopping the main thread stops the helpers that work
+      // (agent orchestration spec 7).
+      const stops = [
+        { stopped: thread, running: turn },
+        ...read.helperThreads(thread.id).flatMap((helper) => {
+          const running = read.runningTurn(helper.id);
+          return running ? [{ stopped: helper, running }] : [];
+        }),
       ];
+      return stops.map(({ stopped, running }) => ({
+        kind: 'turn.interruptRequested' as const,
+        aggregate: stopped.id,
+        payload: {
+          threadId: stopped.id,
+          turnId: running.id,
+          providerInstanceId: stopped.providerInstanceId,
+        },
+      }));
     }
     // Background work (agent workbench spec 90): the provider does the stopping and moving, and
     // what it reports afterwards is what the thread shows.
@@ -1111,6 +1137,7 @@ export function decideThread(
         return [stateChanged(thread.id, state, now)];
       }
       if (thread.state === 'done') return [];
+      refuseWhileHelpersWork(thread, read, 'marked done');
       if (
         thread.state === 'working' ||
         thread.state === 'needs_you' ||
@@ -1165,6 +1192,7 @@ export function decideThread(
     case 'thread.setArchived': {
       const thread = requireThread(read, command.threadId);
       if ((thread.archived ?? false) === command.archived) return [];
+      if (command.archived) refuseWhileHelpersWork(thread, read, 'archived');
       if (command.archived && thread.runId !== null) {
         throw new CommandRejected(
           'rejected',
@@ -1198,6 +1226,40 @@ export function decideThread(
         'rejected',
         "Files are put back only from a chat thread's message or restore line, after its confirm.",
       );
+    // The apply service writes the files first and records them with `thread.changesApplied`
+    // (parallel threads spec 10).
+    case 'thread.applyToProject':
+    case 'thread.undoApply':
+      throw new CommandRejected(
+        'rejected',
+        "A thread's changes are applied to the project folder only from its Changes, after the confirm.",
+      );
+    // The line goes on the thread's last turn (parallel threads spec 8).
+    case 'thread.changesApplied': {
+      const thread = requireThread(read, command.threadId);
+      const last = read.lastTurn(thread.id);
+      if (!last)
+        throw new CommandRejected('rejected', 'A thread without turns has nothing to apply.');
+      const index = read.nextItemIndex(thread.id);
+      return [
+        {
+          kind: 'thread.changesApplied',
+          aggregate: thread.id,
+          payload: {
+            threadId: thread.id,
+            item: {
+              id: `${last.id}:changes-applied:${index}`,
+              threadId: thread.id,
+              turnId: last.id,
+              index,
+              kind: 'changes_applied',
+              payload: command.applied,
+              streaming: false,
+            },
+          },
+        },
+      ];
+    }
     case 'thread.snapshotTaken': {
       const thread = requireThread(read, command.threadId);
       if (!read.threadTurns(thread.id).some((turn) => turn.id === command.turnId)) {

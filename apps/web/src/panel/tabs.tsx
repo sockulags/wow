@@ -29,6 +29,7 @@ function tabIcon(tab: Exclude<PanelTab, { kind: 'host' }>): LucideIcon {
   if (tab.kind === 'page') return BookOpenIcon;
   if (tab.kind === 'changes') return GitCompareIcon;
   if (tab.kind === 'tools') return WrenchIcon;
+  if (tab.kind === 'thread') return MessagesSquareIcon;
   const kind = tab.file.read?.kind;
   const extension = fileLanguage(tab.file.path);
   if (kind === 'image' || (extension !== undefined && pictures.has(extension))) return ImageIcon;
@@ -136,7 +137,12 @@ export function PanelTabStrip({
 }) {
   const { layout } = useRuntime();
   const pageReads = useTopic('pageReads') ?? [];
+  const threads = useTopic('threads');
   const nameOf = (tab: Exclude<PanelTab, { kind: 'host' }>): string => {
+    // A thread renamed since it was opened shows its name now.
+    if (tab.kind === 'thread') {
+      return threads?.find((thread) => thread.id === tab.thread.threadId)?.title ?? tabName(tab);
+    }
     if (tab.kind !== 'page') return tabName(tab);
     const link = runPageRead(pageReads, tab.page.runId)?.pages.find(
       (entry) => entry.ref === tab.page.ref,

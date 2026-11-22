@@ -6,6 +6,7 @@ import {
   touchPageRead,
   DomainEvent,
   TextItemPayload,
+  ChangesAppliedItemPayload,
   FilesRestoredItemPayload,
   isTurnSnapshot,
   type StoredSnapshot,
@@ -535,6 +536,25 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       }
       return ['threadItems'];
     }
+    case 'thread.changesApplied': {
+      const { item } = event.payload;
+      tx.insert(threadItems).values(item).run();
+      const applied = ChangesAppliedItemPayload.parse(item.payload);
+      if (applied.undoOf !== undefined) {
+        const row = tx
+          .select({ payload: threadItems.payload })
+          .from(threadItems)
+          .where(eq(threadItems.id, applied.undoOf))
+          .get();
+        if (row) {
+          tx.update(threadItems)
+            .set({ payload: { ...asRecord(row.payload), undoneBy: item.id } })
+            .where(eq(threadItems.id, applied.undoOf))
+            .run();
+        }
+      }
+      return ['threadItems'];
+    }
     case 'turn.replaced':
       tx.update(turns)
         .set({ replacedBy: event.payload.by })
@@ -755,6 +775,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .onConflictDoNothing()
         .run();
       return ['decisions'];
+    case 'thread.helperStarted':
+      tx.update(threads)
+        .set({ startedBy: 'helper', parentThreadId: event.payload.parentThreadId })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return ['threads'];
     case 'thread.delegated':
       tx.update(threads)
         .set({ startedBy: 'assistant' })
@@ -1107,6 +1133,16 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(threads).where(eq(threads.providerSessionId, sessionId)).all(),
     projectThreads: (projectId) =>
       tx.select().from(threads).where(eq(threads.projectId, projectId)).all(),
+    helperThreads: (parentThreadId) =>
+      tx
+        .select()
+        .from(threads)
+        .where(
+          parentThreadId === undefined
+            ? eq(threads.startedBy, 'helper')
+            : eq(threads.parentThreadId, parentThreadId),
+        )
+        .all(),
     runningTurn: (threadId) =>
       tx
         .select()

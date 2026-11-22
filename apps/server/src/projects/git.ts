@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import {
   access,
   constants,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -1233,6 +1234,29 @@ export async function updateSnapshotRefs(
   return updated.ok ? { ok: true } : { ok: false, message: updated.message };
 }
 
+// The refs of the store under `prefix`, by full name.
+export async function listSnapshotRefs(
+  store: string,
+  prefix: string,
+  options: GitRunOptions,
+): Promise<
+  { readonly ok: true; readonly refs: string[] } | { readonly ok: false; readonly message: string }
+> {
+  const listed = await runStoreGit(
+    ['for-each-ref', '--format=%(refname)', prefix],
+    { cwd: store, store, maxBytes: 16 * 1024 * 1024 },
+    options,
+  );
+  if (!listed.ok) return { ok: false, message: listed.message };
+  return {
+    ok: true,
+    refs: listed.stdout
+      .toString('utf8')
+      .split('\n')
+      .filter((line) => line !== ''),
+  };
+}
+
 // Drops the objects no ref keeps any more.
 export async function pruneSnapshotStore(
   store: string,
@@ -1246,8 +1270,80 @@ export async function pruneSnapshotStore(
   return pruned.ok ? { ok: true } : { ok: false, message: pruned.message };
 }
 
+// The files of a folder's work tree that differ from `base` (parallel threads spec 2): changed,
+// deleted and added against that commit, staged or not, and new files Git does not ignore. Only
+// reads.
+export async function listChangedSince(
+  folder: string,
+  base: string,
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  { readonly ok: true; readonly paths: string[] } | { readonly ok: false; readonly message: string }
+> {
+  const changed = await runStoreGit(
+    ['diff', '--name-only', '-z', '--no-renames', '--no-ext-diff', base, '--'],
+    { cwd: folder, maxBytes },
+    options,
+  );
+  if (!changed.ok) return { ok: false, message: changed.message };
+  const added = await runStoreGit(
+    ['ls-files', '--others', '--exclude-standard', '-z'],
+    { cwd: folder, maxBytes },
+    options,
+  );
+  if (!added.ok) return { ok: false, message: added.message };
+  const paths = new Set(
+    [changed.stdout, added.stdout].flatMap((out) =>
+      out
+        .toString('utf8')
+        .split('\0')
+        .filter((entry) => entry !== ''),
+    ),
+  );
+  return { ok: true, paths: [...paths].toSorted() };
+}
+
+// A three-way merge of one file's bytes with `git merge-file` (parallel threads spec 3), run in
+// `scratch`, a folder of wow's that is no repository. The merged bytes when Git found no
+// conflict, else undefined; nothing of a repository is read or written.
+export async function mergeFileBytes(
+  scratch: string,
+  sides: { readonly ours: Buffer; readonly base: Buffer; readonly theirs: Buffer },
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<Buffer | undefined> {
+  await mkdir(scratch, { recursive: true });
+  await Promise.all([
+    writeFile(path.join(scratch, 'ours'), sides.ours),
+    writeFile(path.join(scratch, 'base'), sides.base),
+    writeFile(path.join(scratch, 'theirs'), sides.theirs),
+  ]);
+  const merged = await runStoreGit(
+    ['merge-file', '-p', 'ours', 'base', 'theirs'],
+    { cwd: scratch, maxBytes },
+    options,
+  );
+  return merged.ok ? merged.stdout : undefined;
+}
+
+// Whether the store still holds a tree, and so every blob in it (a prune keeps what a ref reaches
+// whole). Any failure answers false: the caller then reads every file again, which is only slower.
+export async function snapshotTreeKept(
+  store: string,
+  tree: string,
+  options: GitRunOptions,
+): Promise<boolean> {
+  const found = await runStoreGit(
+    ['cat-file', '-e', `${tree}^{tree}`],
+    { cwd: store, store, maxBytes: 4096 },
+    options,
+  );
+  return found.ok;
+}
+
 // Every file of a snapshot tree, with its size.
-export async function readSnapshotTree(
+export function readSnapshotTree(
   store: string,
   tree: string,
   maxBytes: number,
@@ -1256,9 +1352,33 @@ export async function readSnapshotTree(
   | { readonly ok: true; readonly entries: SnapshotEntry[] }
   | { readonly ok: false; readonly message: string }
 > {
+  return readTreeIn({ cwd: store, store, maxBytes }, tree, options);
+}
+
+// Every file of a commit or tree of the repository `folder` is in, with its size; only reads.
+export function readFolderTree(
+  folder: string,
+  rev: string,
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly entries: SnapshotEntry[] }
+  | { readonly ok: false; readonly message: string }
+> {
+  return readTreeIn({ cwd: folder, maxBytes }, rev, options);
+}
+
+async function readTreeIn(
+  call: StoreGitCall,
+  tree: string,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly entries: SnapshotEntry[] }
+  | { readonly ok: false; readonly message: string }
+> {
   const listed = await runStoreGit(
     ['ls-tree', '-r', '-l', '-z', '--full-tree', tree],
-    { cwd: store, store, maxBytes },
+    call,
     options,
   );
   if (!listed.ok) return { ok: false, message: listed.message };
@@ -1278,8 +1398,33 @@ export async function readSnapshotTree(
 }
 
 // The bytes of the blobs, by id (`cat-file --batch`), in one read.
-export async function readSnapshotBlobs(
+export function readSnapshotBlobs(
   store: string,
+  ids: readonly string[],
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly blobs: Map<string, Buffer> }
+  | { readonly ok: false; readonly message: string }
+> {
+  return readBlobsIn({ cwd: store, store }, ids, maxBytes, options);
+}
+
+// The same from the repository `folder` is in; only reads.
+export function readFolderBlobs(
+  folder: string,
+  ids: readonly string[],
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly blobs: Map<string, Buffer> }
+  | { readonly ok: false; readonly message: string }
+> {
+  return readBlobsIn({ cwd: folder }, ids, maxBytes, options);
+}
+
+async function readBlobsIn(
+  where: Pick<StoreGitCall, 'cwd' | 'store'>,
   ids: readonly string[],
   maxBytes: number,
   options: GitRunOptions,
@@ -1292,8 +1437,7 @@ export async function readSnapshotBlobs(
   const read = await runStoreGit(
     ['cat-file', '--batch'],
     {
-      cwd: store,
-      store,
+      ...where,
       input: Buffer.from(`${wanted.join('\n')}\n`, 'utf8'),
       maxBytes: maxBytes + wanted.length * 100,
     },

@@ -79,6 +79,8 @@ export interface ReadModel {
   threadsWithSession(sessionId: string): Thread[];
   // Every thread of the project, step threads included.
   projectThreads(projectId: string): Thread[];
+  // The helper threads of a main thread, or every helper thread (agent orchestration spec 8).
+  helperThreads(parentThreadId?: string): Thread[];
   runningTurn(threadId: string): Turn | undefined;
   // The thread's turn with the highest index, running or not.
   lastTurn(threadId: string): Turn | undefined;
@@ -212,6 +214,12 @@ type AssistantCommand = Extract<ServerCommand, { type: `assistant.${string}` }>;
 export const isAssistantCommand = (command: ServerCommand): command is AssistantCommand =>
   command.type.startsWith('assistant.');
 
+// Helper threads (agent orchestration spec 2), decided in steps in `helpers/decide.ts`.
+type HelperCommand = Extract<ServerCommand, { type: `helper.${string}` }>;
+
+export const isHelperCommand = (command: ServerCommand): command is HelperCommand =>
+  command.type.startsWith('helper.');
+
 type SetupCommand = Extract<ServerCommand, { type: `setup.${string}` }>;
 
 export const isSetupCommand = (command: ServerCommand): command is SetupCommand =>
@@ -246,7 +254,7 @@ export function decide(
   if (command.type === 'hosts.itemRead') return decideHostItemRead(command, read);
   if (command.type === 'pages.sync') return decidePages(command, read);
   if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
-  if (isAssistantCommand(command) || isSetupCommand(command)) {
+  if (isAssistantCommand(command) || isSetupCommand(command) || isHelperCommand(command)) {
     // They apply other commands step by step, each on what the one before left behind.
     throw new Error(`${command.type} is decided in steps; dispatch it through the engine`);
   }

@@ -553,6 +553,54 @@ describe('@wow/provider-claude', () => {
     expect(options?.plugins).toBeUndefined();
   });
 
+  const helperTools = {
+    name: 'wow',
+    url: 'http://127.0.0.1:4317/threads/mcp',
+    token: 'invented-thread-token',
+  };
+
+  it('adds the helper tools beside the session own settings, tools and servers (orchestration spec 1)', async () => {
+    const h = harness([[result(0.01)]]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ permissionMode: 'acceptEdits', helperTools }));
+    await done;
+    const options = h.queries[0]?.options;
+    expect(options).toMatchObject({
+      cwd: '/work/demo',
+      permissionMode: 'acceptEdits',
+      settingSources: ['user', 'project', 'local'],
+      extraArgs: { 'add-dir': '../shared', verbose: null },
+      mcpServers: {
+        wow: {
+          type: 'http',
+          url: 'http://127.0.0.1:4317/threads/mcp',
+          headers: { Authorization: 'Bearer invented-thread-token' },
+        },
+      },
+    });
+    // The user's own servers and tools stay: nothing is narrowed.
+    expect(options?.strictMcpConfig).toBeUndefined();
+    expect(options?.tools).toBeUndefined();
+    expect(options?.allowedTools).toBeUndefined();
+  });
+
+  it('reopens the session on the same conversation when the helper tools change', async () => {
+    const h = harness([[result(0)], [result(0)], [result(0)]]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ helperTools }));
+    await done;
+    done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ helperTools }));
+    await done;
+    expect(h.queries).toHaveLength(1);
+    done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ resumeId: 'sess-1' }));
+    await done;
+    expect(h.queries).toHaveLength(2);
+    expect(h.queries[1]?.options).toMatchObject({ resume: 'sess-1' });
+    expect(h.queries[1]?.options.mcpServers).toBeUndefined();
+  });
+
   it('denies an assistant turn every tool that is not one of the wow tools', async () => {
     const h = harness([
       [

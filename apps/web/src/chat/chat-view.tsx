@@ -1,7 +1,15 @@
 import type { Thread } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon, SparklesIcon } from 'lucide-react';
+import { nestHelpers } from './helpers';
+import {
+  ActivityIcon,
+  MessagesSquareIcon,
+  PinIcon,
+  PlusIcon,
+  SearchIcon,
+  SparklesIcon,
+} from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useStore } from 'zustand';
 import { eventToBinding, normalizeBinding } from '@/app/keybindings';
@@ -77,6 +85,22 @@ function useMarkSeen(threads: readonly Thread[] | undefined) {
 
 const rowSelector = '[data-thread-row]';
 
+// "At work · 3" above the list (parallel threads spec 11).
+function AtWorkLink() {
+  const count = useTopic('threadActivity')?.length ?? 0;
+  return (
+    <div className="flex shrink-0 px-2 pb-1">
+      <Button asChild variant="ghost" size="sm" className="w-full justify-start">
+        <Link to="/chat/work" data-testid="at-work-link">
+          <ActivityIcon />
+          At work{count > 0 ? ` · ${count}` : ''}
+          <ShortcutHint shortcut="keybindings.threadsAtWork" className="ml-auto" />
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
 function ThreadList() {
   const { rows: threads, status } = useTopicState('threads');
   const runs = useTopic('workflowRuns') ?? [];
@@ -145,6 +169,7 @@ function ThreadList() {
           </Link>
         </Button>
       </div>
+      <AtWorkLink />
       <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-1">
         <div className="relative">
           <SearchIcon
@@ -235,17 +260,23 @@ function ThreadList() {
                   <span className="ml-1 tabular-nums opacity-70">{members.length}</span>
                 </h3>
                 <ul className="flex flex-col gap-0.5">
-                  {members.map((thread) => {
+                  {nestHelpers(members, (member) => member, threads).map((nested) => {
+                    const { entry: thread } = nested;
                     const workflow = workflowName(thread.runId);
                     const place =
                       projects.find((candidate) => candidate.id === thread.projectId)?.name ??
                       baseName(thread.cwd);
-                    const detail = [workflow, place, relative(thread.updatedAt)]
+                    const detail = [
+                      nested.helperOf === undefined ? undefined : `Helper of ${nested.helperOf}`,
+                      workflow,
+                      place,
+                      relative(thread.updatedAt),
+                    ]
                       .filter(Boolean)
                       .join(' · ');
                     const unread = isUnread(thread);
                     return (
-                      <li key={thread.id}>
+                      <li key={thread.id} className={cn(nested.depth === 1 && 'ml-4')}>
                         <Link
                           to="/chat/$threadId"
                           params={{ threadId: thread.id }}

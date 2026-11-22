@@ -382,6 +382,12 @@ describe("the assistant's turn (spec 2)", () => {
         model: 'sonnet',
         effort: 'low',
         permissionMode: 'acceptEdits',
+        // wow's helper tools (agent orchestration spec 1), never the assistant's toolset.
+        helperTools: {
+          name: 'wow',
+          url: expect.stringMatching(/\/threads\/mcp$/),
+          token: expect.any(String),
+        },
       },
     ]);
 

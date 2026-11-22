@@ -51,6 +51,7 @@ import {
   toolsOnlyMode,
   toolsOnlySandbox,
   toolsOnlySettings,
+  helperToolSettings,
   toolsOnlyUses,
 } from './toolset.js';
 import { codexProtocolFingerprint } from './protocol/generated/fingerprint.js';
@@ -746,7 +747,11 @@ export class CodexAdapter implements ProviderAdapter {
           model: command.model,
           approvalPolicy: mode.approvalPolicy,
           sandbox: mode.sandbox,
-          ...(toolset ? toolsOnlySettings(toolset, command.instructions) : {}),
+          ...(toolset
+            ? toolsOnlySettings(toolset, command.instructions)
+            : command.helperTools
+              ? helperToolSettings(command.helperTools)
+              : {}),
         };
         const resumeId = thread?.codexId ?? command.resumeId;
         const response = resumeId

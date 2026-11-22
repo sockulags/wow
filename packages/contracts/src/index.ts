@@ -1,3 +1,4 @@
+export * from './apply.js';
 export * from './approvals.js';
 export * from './asked.js';
 export * from './assistant.js';
@@ -9,6 +10,7 @@ export * from './commands.js';
 export * from './diff.js';
 export * from './files.js';
 export * from './free-slots.js';
+export * from './helpers.js';
 export * from './host-links.js';
 export * from './hosts.js';
 export * from './methods.js';

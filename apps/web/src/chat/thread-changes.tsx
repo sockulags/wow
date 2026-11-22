@@ -2,6 +2,7 @@ import { ThreadDiff, type RunDiffFile, type RunDiffStatus, type Turn } from '@wo
 import { useRouter } from '@tanstack/react-router';
 import {
   ArrowLeftIcon,
+  FolderInputIcon,
   GitCommitHorizontalIcon,
   GitCompareIcon,
   GitPullRequestIcon,
@@ -32,6 +33,7 @@ import {
   lineChanges,
   unshownReason,
 } from '@/workflows/changes';
+import { ApplyDialog, askApply } from './apply';
 import { CommitDialog, askCommit, commitStore, proposeCommitMessage } from './commit-dialog';
 import { skillComposerStore, threadSkillComposer } from './composer-store';
 import { errorMessage, useTopic } from './data';
@@ -272,6 +274,9 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
   const host = useHostLinkRules(threadId).repository?.host;
   const editor = useOpenInEditor();
   const { diff, error } = useThreadDiff(threadId);
+  // A thread in its own working copy can bring its changes home (parallel threads spec 1).
+  const ownCopy =
+    useTopic('threads')?.find((thread) => thread.id === threadId)?.workingCopy?.startSha != null;
   const turnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
   const selected = useStore(threadChangesStore, (state) => state.path);
   const switchId = useId();
@@ -329,6 +334,13 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
           <GitPullRequestIcon aria-hidden />
           {openRequestLabel(host === 'gitlab' ? 'gitlab' : 'github')}
         </Button>
+        {ownCopy && (
+          <Button size="xs" variant="outline" onClick={() => void askApply(connection, threadId)}>
+            <FolderInputIcon aria-hidden />
+            Apply to project folder…
+            <ShortcutHint shortcut="keybindings.applyToProject" />
+          </Button>
+        )}
       </div>
       {error !== undefined ? (
         <p role="alert" className="px-3 py-4 text-xs text-destructive">
@@ -403,6 +415,7 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
       )}
       <CommitDialog threadId={threadId} />
       <PullRequestDialog threadId={threadId} />
+      <ApplyDialog threadId={threadId} />
     </section>
   );
 }
@@ -415,6 +428,8 @@ export function threadChangesCommands(
   route: string,
   open: boolean,
   turnOnly: boolean,
+  // Whether the thread works in its own copy, so Apply is offered (parallel threads spec 1).
+  ownCopy = false,
 ): AppCommand[] {
   if (threadId === undefined) return [];
   const commands: AppCommand[] = [
@@ -444,6 +459,23 @@ export function threadChangesCommands(
       keywords: ['commit', 'git', 'changes', 'hooks'],
       keybinding: 'keybindings.commitChanges',
       run: (context) => withDialog(context, () => askCommit(context.connection, threadId)),
+    },
+    {
+      id: 'chat.applyToProject',
+      title: 'Apply to project folder…',
+      detail: ownCopy
+        ? "Write the thread's changes into the project folder, uncommitted"
+        : 'This thread works in the project folder; its changes are already there',
+      group: 'Chat',
+      keywords: ['apply', 'merge', 'bring back', 'project folder', 'working copy', 'worktree'],
+      keybinding: 'keybindings.applyToProject',
+      run: (context) => {
+        if (!ownCopy) {
+          notify.info('This thread works in the project folder; its changes are already there.');
+          return;
+        }
+        withDialog(context, () => askApply(context.connection, threadId));
+      },
     },
     {
       id: 'chat.openPullRequest',

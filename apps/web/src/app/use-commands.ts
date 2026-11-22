@@ -10,6 +10,7 @@ import { validateCalendarSearch } from '@/calendar/search';
 import { approvalCommands, approvalCardStore } from '@/chat/approval-card';
 import { chatCommands } from '@/chat/commands';
 import { changesShown, threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
+import { atWorkCommands } from '@/chat/at-work';
 import { sessionToolsCommands, toolsShown } from '@/panel/tools-tab';
 import { draftCopyStore, workingCopyCommands } from '@/chat/working-copy';
 import { questionCommands } from '@/chat/question-commands';
@@ -202,7 +203,13 @@ export function useCommands(gated = false): {
         tabsRoute,
         changesOpen,
         changesTurnOnly,
+        openThread?.workingCopy?.startSha != null,
       ),
+      ...atWorkCommands({
+        threads: threads ?? [],
+        openThreadId: openThread?.id,
+        route: tabsRoute,
+      }),
       ...sessionToolsCommands(
         openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,
         tabsRoute,

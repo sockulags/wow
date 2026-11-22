@@ -12,6 +12,7 @@ import * as t from '../db/schema.js';
 import type { Engine } from './engine.js';
 import { readOutlookStatus, skillOf } from './projector.js';
 import { decisionRows, decisionSources } from '../assistant/decisions.js';
+import { activitySources, threadActivityRows } from './thread-activity.js';
 
 // Reads the current rows of a topic. Thread-scoped topics only read one thread.
 export function snapshot(db: Db, params: SubscribeParams): unknown[] {
@@ -158,6 +159,8 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       }
       case 'decisions':
         return decisionRows(db);
+      case 'threadActivity':
+        return threadActivityRows(db);
       case 'briefings':
         return db.select().from(t.briefings).orderBy(desc(t.briefings.at)).limit(20).all();
       case 'assistantPermissionUses':
@@ -220,10 +223,13 @@ export class Subscriptions {
   }
 
   #changed(changed: ReadonlySet<SubscriptionTopic>): void {
-    // The decision queue is read from other topics, so it changes with them.
-    const topics = [...changed].some((topic) => decisionSources.has(topic as never))
-      ? new Set([...changed, 'decisions' as const])
-      : changed;
+    // The decision queue and the activity of threads at work are read from other topics, so they
+    // change with them.
+    const topics = new Set(changed);
+    if ([...changed].some((topic) => decisionSources.has(topic as never))) topics.add('decisions');
+    if ([...changed].some((topic) => activitySources.has(topic as never))) {
+      topics.add('threadActivity');
+    }
     const cache = new Map<string, unknown[]>();
     for (const [subscriptionId, subscription] of this.#open) {
       if (!topics.has(subscription.params.topic)) continue;

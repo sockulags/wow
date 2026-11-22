@@ -1,6 +1,6 @@
 import { settingValue, type SettingsState } from '@wow/client-runtime';
 import { useRouterState } from '@tanstack/react-router';
-import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import { KeyHint } from '@/components/hint';
 import {
@@ -47,6 +47,12 @@ export function CommandPalette({
   const recentCount = useSetting('appearance.paletteRecent');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [search, setSearch] = useState('');
+  const preset = useLayout((state) => state.paletteSearch);
+  useEffect(() => {
+    if (!open || preset === undefined) return;
+    setSearch(preset);
+    layout.setState({ paletteSearch: undefined });
+  }, [open, preset, layout]);
   usePaletteThreadSearch(open ? search : '');
   const setOpen = (paletteOpen: boolean) => {
     layout.setState({ paletteOpen });
