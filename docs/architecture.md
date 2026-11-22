@@ -185,7 +185,9 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
                  working copy, null for older rows (migration 0035_thread_working_copy);
                  changeCount(json: ChangeCount)? what the thread changed as of its last turn's
-                 end (migration 0043_thread_change_count)
+                 end (migration 0043_thread_change_count); tasks(json: {done, total})? how far
+                 its latest task list is, set by the projector as a `task_list` item is added
+                 (migration 0044_thread_tasks)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes);
@@ -1700,7 +1702,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
-  "Threads at work and a thread in the panel"), `chat.commitTimeoutMs`,
+  "Threads at work and a thread in the panel"), `chat.threadRowDetail` (see "Thread list,
+  unread and chat notifications"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -4247,6 +4250,15 @@ bell", "watch the tests", "run the tests once" and "plan the work"; its Codex de
 with a note without a message and goes on until stopped.
 
 ### Thread list, unread and chat notifications
+
+A row's second line (`chat/thread-row.ts`, chat overview spec 6 to 8) is, after "Helper of …"
+and the workflow's name where they apply: what the thread does or waits for (the decision
+queue's title for the thread, "Waits for you", "Running <the running call>" from the
+`threadActivity` topic, or "Working"), its task progress ("3/7" from `Thread.tasks` while tasks
+are open), its changes ("+42 −7" from `Thread.changeCount`), its branch when it has its own
+working copy or else its project or folder, and when it was last active. `chat.threadRowDetail`
+names the parts shown; the order stays. Each part is a `data-part` span, and the whole line is
+the row's hover title. Nothing counts on a clock of the list's own.
 
 The list has a filter field on top (`keybindings.threadFilter`, Ctrl+Shift+F anywhere, and
 `keybindings.threadFilterInList`, `/` while the list has the keyboard) and, when threads sit in

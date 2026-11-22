@@ -256,3 +256,116 @@ describe('the thread list (spec 66, 69, 70)', () => {
     expect(request).toHaveBeenCalledWith('threads.search', { query: 'teapot' });
   });
 });
+
+const detail = (title: string) => {
+  const row = screen
+    .getAllByTestId('thread-row-title')
+    .find((element) => element.textContent === title)
+    ?.closest('a');
+  const line = row ? within(row).getByTestId('thread-row-detail') : undefined;
+  return [...(line?.querySelectorAll('[data-part]') ?? [])].map((part) => [
+    part.getAttribute('data-part'),
+    part.textContent?.replace(/^ · /, ''),
+  ]);
+};
+
+describe('rows that say where a thread stands (chat overview spec 6, 7)', () => {
+  const working = thread('t1', 'Ring the bell', {
+    state: 'working',
+    projectId: 'p-tea',
+    branch: 'wow/ring-the-bell-t1',
+    workingCopy: {
+      path: '/work/copies/tea-t1',
+      state: 'ready',
+      startSha: 'a'.repeat(40),
+      defaultBranch: null,
+      note: null,
+      unpushed: null,
+      error: null,
+      branch: 'wow/ring-the-bell-t1',
+    },
+    tasks: { done: 3, total: 7 },
+    changeCount: { files: 5, added: 42, removed: 7 },
+  });
+  const waiting = thread('t2', 'Clean the build', { state: 'needs_you', projectId: 'p-tea' });
+  const topics = () => ({
+    projects: [project('p-tea', 'Tea')],
+    threads: [working, waiting],
+    threadActivity: [
+      {
+        threadId: 't1',
+        turnId: 't1:turn:0',
+        turnState: 'running',
+        startedAt: '2026-11-02T08:00:00.000Z',
+        endedAt: null,
+        toolCalls: 4,
+        runningTool: {
+          name: 'Bash',
+          input: {},
+          output: '',
+          status: 'running',
+          kind: 'command',
+          command: 'pnpm test',
+        },
+        lastText: null,
+      },
+    ],
+    decisions: [
+      {
+        id: 'approval:a1',
+        kind: 'approval',
+        at: '2026-11-02T08:00:00.000Z',
+        title: 'Wants to run rm -rf build',
+        where: 'Tea',
+        path: '/chat/t2',
+        threadId: 't2',
+        runId: null,
+        proposalId: null,
+        approvalId: 'a1',
+        questionId: null,
+        cardId: null,
+        holdsTurn: true,
+        cardStart: null,
+        fixed: [],
+        brief: null,
+        briefPending: false,
+      },
+    ],
+  });
+
+  it('says what it runs or waits for, its tasks, its changes, its branch and when', async () => {
+    const { runtime } = fake(topics());
+    await renderApp('/chat', runtime);
+    await listed();
+    expect(detail('Ring the bell')).toEqual([
+      ['activity', 'Running pnpm test'],
+      ['tasks', '3/7'],
+      ['changes', '+42 −7'],
+      ['place', 'wow/ring-the-bell-t1'],
+      ['time', expect.any(String)],
+    ]);
+    expect(detail('Clean the build')).toEqual([
+      ['activity', 'Wants to run rm -rf build'],
+      ['place', 'Tea'],
+      ['time', expect.any(String)],
+    ]);
+  });
+
+  it('leaves out the parts the setting turns off', async () => {
+    const { runtime } = fake(topics());
+    await renderApp('/chat', {
+      ...runtime,
+      settings: createSettingsStore(
+        createMemorySettingsSource(undefined, {
+          'providers.offerSetup': false,
+          'chat.threadRowDetail': ['activity', 'place'],
+        }),
+      ),
+    });
+    await listed();
+    expect(detail('Ring the bell')).toEqual([
+      ['activity', 'Running pnpm test'],
+      ['place', 'wow/ring-the-bell-t1'],
+    ]);
+  });
+});

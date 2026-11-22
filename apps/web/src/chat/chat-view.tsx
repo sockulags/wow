@@ -14,7 +14,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useStore } from 'zustand';
 import { eventToBinding, normalizeBinding } from '@/app/keybindings';
 import { openThreadOf } from '@/app/notifications';
-import { useConnectionState, useRuntime } from '@/app/runtime';
+import { useConnectionState, useRuntime, useSetting } from '@/app/runtime';
 import { useTopicState } from '@/app/topic-state';
 import { ShortcutHint } from '@/components/hint';
 import { DisconnectedState, EmptyState, TopicPlaceholder } from '@/components/states';
@@ -35,13 +35,8 @@ import {
 } from './thread-commands';
 import { useThreadSearch } from './thread-search';
 import { stateDotClass } from './thread-view';
+import { threadRowParts } from './thread-row';
 import { listTitle } from './view-model';
-
-const baseName = (path: string) =>
-  path
-    .replace(/[\\/]+$/, '')
-    .split(/[\\/]/)
-    .at(-1) || path;
 
 // The open thread is read as soon as it is on screen in a focused window, and again whenever a
 // turn ends or a request arrives while it is (spec 70). A second request in a thread that
@@ -106,6 +101,9 @@ function ThreadList() {
   const runs = useTopic('workflowRuns') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
+  const activity = useTopic('threadActivity') ?? [];
+  const decisions = useTopic('decisions') ?? [];
+  const rowParts = useSetting('chat.threadRowDetail');
   const { settings } = useRuntime();
   const { relative } = useDateFormat();
   const filter = useStore(threadListStore, (state) => state.filter);
@@ -263,17 +261,23 @@ function ThreadList() {
                   {nestHelpers(members, (member) => member, threads).map((nested) => {
                     const { entry: thread } = nested;
                     const workflow = workflowName(thread.runId);
-                    const place =
-                      projects.find((candidate) => candidate.id === thread.projectId)?.name ??
-                      baseName(thread.cwd);
-                    const detail = [
+                    // What the row says under its title (chat overview spec 6, 7).
+                    const parts = threadRowParts(
+                      {
+                        thread,
+                        activity: activity.find((entry) => entry.threadId === thread.id),
+                        waitsFor: decisions.find((decision) => decision.threadId === thread.id)
+                          ?.title,
+                        projects,
+                        relative,
+                      },
+                      rowParts,
+                    );
+                    const lead = [
                       nested.helperOf === undefined ? undefined : `Helper of ${nested.helperOf}`,
                       workflow,
-                      place,
-                      relative(thread.updatedAt),
-                    ]
-                      .filter(Boolean)
-                      .join(' · ');
+                    ].filter((part) => part !== undefined);
+                    const detail = [...lead, ...parts.map((part) => part.text)].join(' · ');
                     const unread = isUnread(thread);
                     return (
                       <li key={thread.id} className={cn(nested.depth === 1 && 'ml-4')}>
@@ -330,9 +334,26 @@ function ThreadList() {
                           </span>
                           <span
                             data-testid="thread-row-detail"
+                            title={detail}
                             className="truncate pl-3.5 text-2xs text-muted-foreground"
                           >
-                            {detail}
+                            {[...lead.map((text) => ({ part: 'lead', text })), ...parts].map(
+                              (part, index) => (
+                                <span
+                                  key={`${part.part}-${index}`}
+                                  data-part={part.part}
+                                  className={cn(
+                                    part.part === 'activity' &&
+                                      (thread.state === 'needs_you'
+                                        ? 'text-state-needs-you-text'
+                                        : 'text-foreground/80'),
+                                  )}
+                                >
+                                  {index > 0 && ' · '}
+                                  {part.text}
+                                </span>
+                              ),
+                            )}
                           </span>
                         </Link>
                       </li>

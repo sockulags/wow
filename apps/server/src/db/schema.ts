@@ -157,6 +157,8 @@ export const threads = sqliteTable(
     // What the thread changed as of its last turn's end (chat overview spec 4); null when not
     // measured.
     changeCount: json<ChangeCount>(),
+    // How far its latest task list is (chat overview spec 6).
+    tasks: json<{ done: number; total: number }>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },

@@ -748,8 +748,12 @@ Backlog item bodies and the publish preview use the same rendering.
 ### Managing threads
 
 The sidebar groups threads under **Needs you**, **Working**, **Idle** and **Done**, with pinned
-threads first (pin from the thread header). Each row's second line says the project and when the
-thread was last active. A thread whose turn failed sits under Idle with a marker. A thread started
+threads first (pin from the thread header). Each row's second line says where the thread stands:
+what it waits for ("Wants to run rm -rf build") or runs ("Running pnpm test"), how far its task
+list is ("3/7"), what it changed ("+42 −7"), its branch when it has its own working copy or else
+its project, and when it was last active. Hover the row for the whole line. Settings → Chat →
+**Second line of a thread in the list** (`chat.threadRowDetail`) chooses which of these parts
+show. A thread whose turn failed sits under Idle with a marker. A thread started
 by a workflow is titled by its step, with the workflow on the second line.
 
 The thread header shows the project (hover it for the folder) and the provider instance; the

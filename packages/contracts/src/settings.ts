@@ -17,6 +17,10 @@ import {
   type WorkflowTemplateStep,
 } from './workflow.js';
 
+// The parts of a thread row's second line (chat overview spec 6, 7), in the order shown.
+export const ThreadRowPart = z.enum(['activity', 'tasks', 'changes', 'place', 'time']);
+export type ThreadRowPart = z.infer<typeof ThreadRowPart>;
+
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
 
@@ -625,6 +629,22 @@ export const settingsRegistry = {
       "How many characters of a helper's answer wow sends back to the thread that started it. A longer answer is cut, and the agent reads the rest with read_helper.",
     default: 20_000,
     scope: 'global',
+  }),
+  'chat.threadRowDetail': defineSetting({
+    schema: z.array(ThreadRowPart),
+    group: 'chat',
+    label: 'Second line of a thread in the list',
+    description:
+      'What a row of the thread list says under its title, in this order: what the thread does or waits for, how far its task list is, what it changed, its branch or project, and when it was last active.',
+    default: [...ThreadRowPart.options],
+    scope: 'global',
+    options: {
+      activity: { label: 'What it does or waits for' },
+      tasks: { label: 'Task progress' },
+      changes: { label: 'What it changed' },
+      place: { label: 'Branch or project' },
+      time: { label: 'When it was last active' },
+    },
   }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),

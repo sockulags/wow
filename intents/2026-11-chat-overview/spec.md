@@ -61,9 +61,10 @@ It names their files as they are at 0.5.0.
 
 6. A thread row keeps its first line (state dot, title, marks). Its second line becomes, in this
    order and as far as it fits:
-   - **What it is doing**, as Threads at work words it: what it waits for ("Wants to run
-     `rm -rf build`", "Asks: Which port?"), what it runs ("Running `pnpm test` · 2:10"), or
-     nothing for a thread at rest.
+   - **What it is doing**: what it waits for, in the decision queue's words ("Wants to run
+     `rm -rf build`"), what it runs ("Running `pnpm test`", without a running clock, which only
+     Threads at work and the thread itself show), "Working" between calls, or nothing for a
+     thread at rest.
    - **Task progress**, "3/7", when its latest task list has open tasks.
    - **Changes**, "+42 −7" from spec 4, when the thread changed something.
    - **Place**: the branch for a thread with its own working copy, else the project or folder.

@@ -7,6 +7,7 @@ import {
   DomainEvent,
   TextItemPayload,
   ChangesAppliedItemPayload,
+  TaskListItemPayload,
   FilesRestoredItemPayload,
   isTurnSnapshot,
   type StoredSnapshot,
@@ -585,9 +586,19 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       for (const item of items) tx.insert(threadItems).values(item).run();
       return ['turns', 'threadItems'];
     }
-    case 'threadItem.added':
+    case 'threadItem.added': {
       tx.insert(threadItems).values(event.payload).run();
-      return ['threadItems'];
+      // The thread row says how far its latest task list is (chat overview spec 6).
+      if (event.payload.kind !== 'task_list') return ['threadItems'];
+      const list = TaskListItemPayload.safeParse(event.payload.payload);
+      if (!list.success) return ['threadItems'];
+      const done = list.data.tasks.filter((task) => task.status === 'completed').length;
+      tx.update(threads)
+        .set({ tasks: { done, total: list.data.tasks.length } })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return ['threadItems', ...threadTopics];
+    }
     case 'threadItem.appended': {
       const { itemId, field, delta, at } = event.payload;
       const row = tx

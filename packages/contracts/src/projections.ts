@@ -150,6 +150,12 @@ export const Thread = z.object({
   // What the thread changed as of its last turn's end (chat overview spec 4), for its row in the
   // thread list. Null when it could not be measured; absent in rows from before.
   changeCount: ChangeCount.nullable().optional(),
+  // How far the thread's latest task list is (chat overview spec 6): done and all tasks. Null or
+  // absent when it has none.
+  tasks: z
+    .object({ done: z.number().int().nonnegative(), total: z.number().int().nonnegative() })
+    .nullable()
+    .optional(),
   // The message waiting for the running turn to end; null or absent when none waits.
   queued: QueuedMessage.nullable().optional(),
   // When the thread came to its current state, so a thread that waits is ordered by when the wait
