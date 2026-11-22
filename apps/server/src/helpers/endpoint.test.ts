@@ -12,7 +12,7 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { providerInstances, threads, turns } from '../db/schema.js';
+import { providerInstances, threadItems, threads, turns } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 
@@ -42,6 +42,35 @@ const instance: ProviderInstance = {
   statusMessage: null,
   update: null,
   updateRun: null,
+};
+
+const codex: ProviderInstance = {
+  ...instance,
+  id: 'codex-work',
+  kind: 'codex',
+  name: 'Codex at work',
+  binaryPath: 'codex',
+  defaultModel: 'gpt-6.1-sol',
+  defaultEffort: 'medium',
+  defaultPermissionMode: 'auto',
+};
+
+// The invented agents: "wait" keeps the turn running until it is stopped.
+const script = (command: ProviderCommand) => {
+  if (command.type === 'interrupt')
+    return [{ type: 'turnInterrupted' as const, threadId: command.threadId }];
+  if (command.type !== 'startTurn') return [];
+  return [
+    {
+      type: 'textDelta' as const,
+      threadId: command.threadId,
+      itemId: `${command.threadId}-a`,
+      delta: 'Done',
+    },
+    ...(/wait/i.test(command.prompt)
+      ? []
+      : [{ type: 'turnCompleted' as const, threadId: command.threadId }]),
+  ];
 };
 
 const dispatch = (command: ServerCommand) =>
@@ -80,8 +109,11 @@ function turnEnds(threadId: string) {
   });
 }
 
-async function turnOf(threadId: string): Promise<Extract<ProviderCommand, { type: 'startTurn' }>> {
-  dispatch({ type: 'thread.sendMessage', threadId, text: 'Look at the timer' });
+async function turnOf(
+  threadId: string,
+  text = 'Look at the timer',
+): Promise<Extract<ProviderCommand, { type: 'startTurn' }>> {
+  dispatch({ type: 'thread.sendMessage', threadId, text });
   await turnEnds(threadId);
   await server.providerService.idle();
   const sent = adapters
@@ -93,6 +125,49 @@ async function turnOf(threadId: string): Promise<Extract<ProviderCommand, { type
     .at(-1);
   if (!sent) throw new Error(`no turn of ${threadId}`);
   return sent;
+}
+
+const startTurnsOf = (threadId: string) =>
+  adapters
+    .flatMap((adapter) => adapter.sent)
+    .filter(
+      (command): command is Extract<ProviderCommand, { type: 'startTurn' }> =>
+        command.type === 'startTurn' && command.threadId === threadId,
+    );
+
+const threadRow = (threadId: string) =>
+  server.database.db.select().from(threads).where(eq(threads.id, threadId)).get();
+
+// A tool's answer as the agent reads it.
+async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
+  const answer = (await client.callTool({ name, arguments: args })) as {
+    content: { type: string; text: string }[];
+    isError?: boolean;
+  };
+  return {
+    isError: answer.isError === true,
+    value: JSON.parse(answer.content[0]?.text ?? 'null') as Record<string, unknown>,
+  };
+}
+
+// Resolves once the helper's first turn has gone out to its provider.
+async function helperStarted(helperId: string) {
+  await new Promise<void>((resolve) => {
+    const check = () => {
+      const turn = server.database.db
+        .select()
+        .from(turns)
+        .where(eq(turns.threadId, helperId))
+        .get();
+      if (turn) {
+        unsubscribe();
+        resolve();
+      }
+    };
+    const unsubscribe = server.engine.onCommit(check);
+    check();
+  });
+  await server.providerService.idle();
 }
 
 const listTools = (token: string | null, url: string) =>
@@ -131,21 +206,19 @@ beforeEach(async () => {
     hooks: {
       providers: {
         claude: (row) => {
-          const adapter = new MockProviderAdapter(row.kind, (command) =>
-            command.type === 'startTurn'
-              ? [
-                  { type: 'textDelta', threadId: command.threadId, itemId: 'a', delta: 'Done' },
-                  { type: 'turnCompleted', threadId: command.threadId },
-                ]
-              : [],
-          );
+          const adapter = new MockProviderAdapter(row.kind, script);
+          adapters.push(adapter);
+          return adapter;
+        },
+        codex: (row) => {
+          const adapter = new MockProviderAdapter(row.kind, script);
           adapters.push(adapter);
           return adapter;
         },
       },
     },
   });
-  server.database.db.insert(providerInstances).values([instance]).run();
+  server.database.db.insert(providerInstances).values([instance, codex]).run();
   dispatch({ type: 'project.create', projectId: 'tea', name: 'Tea', cwd: root });
 });
 
@@ -174,7 +247,13 @@ describe('helper tools in a chat session (orchestration spec 1)', () => {
     const tools = (await turnOf('t1')).helperTools;
     if (!tools) throw new Error('no helper tools');
     const client = await connect(tools);
-    expect((await client.listTools()).tools).toEqual([]);
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+      'start_helper',
+      'list_helpers',
+      'read_helper',
+      'write_to_helper',
+      'stop_helper',
+    ]);
     await client.close();
     expect((await listTools(null, tools.url)).status).toBe(401);
     expect((await listTools('wrong', tools.url)).status).toBe(401);
@@ -203,5 +282,134 @@ describe('helper tools in a chat session (orchestration spec 1)', () => {
     create('t1', 'tea');
     server.database.db.update(threads).set({ runId: 'run-1' }).where(eq(threads.id, 't1')).run();
     expect((await turnOf('t1')).helperTools).toBeUndefined();
+  });
+});
+
+// A main thread on Claude in Accept edits, and a client of its helper tools.
+async function mainThread() {
+  create('t1', 'tea');
+  dispatch({ type: 'thread.configure', threadId: 't1', permissionMode: 'acceptEdits' });
+  const tools = (await turnOf('t1')).helperTools;
+  if (!tools) throw new Error('no helper tools');
+  return connect(tools);
+}
+
+describe('helper threads (orchestration spec 2 to 8)', () => {
+  it('starts a Codex helper from a Claude thread in its folder, with the brief and no wider mode', async () => {
+    const client = await mainThread();
+    const started = await call(client, 'start_helper', {
+      brief: 'Review the timer change\nLook at src/timer.ts only.',
+      instance: 'Codex at work',
+    });
+    expect(started).toMatchObject({
+      isError: false,
+      value: { title: 'Review the timer change', isolation: 'folder', started: true },
+    });
+    const helperId = String(started.value['id']);
+    await helperStarted(helperId);
+    await turnEnds(helperId);
+    expect(threadRow(helperId)).toMatchObject({
+      parentThreadId: 't1',
+      startedBy: 'helper',
+      providerInstanceId: 'codex-work',
+      cwd: root,
+      model: 'gpt-6.1-sol',
+      effort: 'medium',
+      // Accept edits on Claude reaches as far as Auto on Codex.
+      permissionMode: 'auto',
+    });
+    const [turn] = startTurnsOf(helperId);
+    expect(turn).toMatchObject({
+      prompt: 'Review the timer change\nLook at src/timer.ts only.',
+      cwd: root,
+    });
+    // A helper has no helpers of its own.
+    expect(turn?.helperTools).toBeUndefined();
+    const row = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 't1'))
+      .all()
+      .find((item) => item.kind === 'helper_started');
+    expect(row?.payload).toMatchObject({
+      helperThreadId: helperId,
+      title: 'Review the timer change',
+      instanceName: 'Codex at work',
+      providerKind: 'codex',
+      isolation: 'folder',
+    });
+    const listed = await call(client, 'list_helpers');
+    expect(listed.value['helpers']).toMatchObject([
+      { id: helperId, instance: 'Codex at work', provider: 'codex', state: 'idle' },
+    ]);
+    expect(listed.value['instances']).toEqual([
+      { name: 'claude-work', provider: 'claude', connected: true, defaultModel: 'opus' },
+      { name: 'Codex at work', provider: 'codex', connected: true, defaultModel: 'gpt-6.1-sol' },
+    ]);
+    expect((await call(client, 'read_helper', { id: helperId })).value).toMatchObject({
+      lastAnswer: 'Done',
+    });
+    await client.close();
+  });
+
+  it('writes to a working helper, stops it, and keeps to the limits', async () => {
+    const client = await mainThread();
+    dispatch({ type: 'setting.set', key: 'chat.helpersPerThread', scope: 'global', value: 1 });
+    const started = await call(client, 'start_helper', { brief: 'Wait for the build' });
+    const helperId = String(started.value['id']);
+    await helperStarted(helperId);
+    expect(threadRow(helperId)?.state).toBe('working');
+    const second = await call(client, 'start_helper', { brief: 'Another one' });
+    expect(second).toMatchObject({ isError: true });
+    expect(String(second.value['error'])).toContain('chat.helpersPerThread');
+    expect(
+      (await call(client, 'write_to_helper', { id: helperId, text: 'Also check the README' }))
+        .isError,
+    ).toBe(false);
+    // Queued for the turn's end, or handed to the running turn where the provider takes it.
+    const handed = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, helperId))
+      .all()
+      .some((item) => JSON.stringify(item.payload).includes('Also check the README'));
+    expect(handed || threadRow(helperId)?.queued?.text === 'Also check the README').toBe(true);
+    expect((await call(client, 'stop_helper', { id: helperId })).isError).toBe(false);
+    expect(
+      adapters.flatMap((adapter) => adapter.sent).filter((command) => command.type === 'interrupt'),
+    ).toEqual([{ type: 'interrupt', threadId: helperId }]);
+    expect((await call(client, 'read_helper', { id: 'someone-else' })).isError).toBe(true);
+    await client.close();
+  });
+
+  it('refuses its own copy outside Git, and every helper command from anyone but the tools', async () => {
+    const client = await mainThread();
+    const copy = await call(client, 'start_helper', { brief: 'Try it apart', isolation: 'copy' });
+    expect(copy.isError).toBe(true);
+    expect(
+      server.database.db
+        .select()
+        .from(threads)
+        .all()
+        .filter((row) => row.startedBy === 'helper'),
+    ).toEqual([]);
+    expect(() =>
+      dispatch({
+        type: 'helper.start',
+        threadId: 'h1',
+        parentThreadId: 't1',
+        title: 'Sneaky',
+        brief: 'Start anyway',
+        isolation: 'folder',
+      }),
+    ).toThrow(/helper tools/);
+    expect(() =>
+      server.engine.dispatch(
+        'from-assistant',
+        { type: 'helper.stop', threadId: 'h1', parentThreadId: 't1' },
+        'assistant',
+      ),
+    ).toThrow(/helper tools/);
+    await client.close();
   });
 });

@@ -13,7 +13,8 @@ const Timestamp = z.iso.datetime({ offset: true });
 
 // Who sent a command. Everything that arrives over the app's own connection is the user's; only
 // the assistant's tools send as the assistant.
-export const CommandOrigin = z.enum(['user', 'assistant']);
+// `helper`: a chat thread's agent through wow's helper tools (agent orchestration spec 2).
+export const CommandOrigin = z.enum(['user', 'assistant', 'helper']);
 export type CommandOrigin = z.infer<typeof CommandOrigin>;
 
 // What the server does with a command the assistant sends: apply it at once and keep its

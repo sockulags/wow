@@ -791,8 +791,16 @@ continues its provider session; **Resume** sends `chat.resumePrompt` to pick up 
 
 **Helper threads** (`chat.helpers`, per project, on by default) gives the agent of every chat
 thread wow's helper tools, beside its own tools and MCP servers: Claude Code and Codex both see
-one more MCP server named `wow`. Helpers themselves come in a later version; for now the server
-offers no tools. Turn the setting off for a project to keep `wow` out of its sessions; a Claude
+one more MCP server named `wow`. With it the agent can start a **helper**: another thread, on any
+connected Claude Code or Codex instance, that gets the agent's brief as its first message. Ask for
+one in your own words ("ask Codex to review this"), or the agent starts one when the task needs a
+second agent. A helper works in the same folder as its main thread, as Claude Code's subagents do,
+or in its own working copy when the agent asks for that. Its permission mode is never wider than
+the main thread's: on the other provider it gets the closest mode that reaches no further. Its
+approvals are yours, as in every thread. The agent can read how a helper stands and what it
+answered, write to it and stop it. A helper is an ordinary thread in the list. At most
+`chat.helpersPerThread` (3) helpers of one thread, and `chat.helpersLive` (6) in all, work at
+once. Turn the setting off for a project to keep `wow` out of its sessions; a Claude
 session then starts again on the same conversation, and a Codex thread leaves it out from its
 next start. A workflow step's thread and the Assistant never get it.
 

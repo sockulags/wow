@@ -154,7 +154,9 @@ export const Thread = z.object({
   workingCopy: WorkingCopy.nullable().optional(),
   // A thread the assistant started (chief of staff spec 10), and how many turns the assistant has
   // had to follow it (spec 11). Null or absent for every other thread.
-  startedBy: z.enum(['assistant']).nullable().optional(),
+  startedBy: z.enum(['assistant', 'helper']).nullable().optional(),
+  // A helper thread's main thread (agent orchestration spec 4); null or absent for every other.
+  parentThreadId: Id.nullable().optional(),
   followTurns: z.number().int().nonnegative().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
@@ -226,6 +228,8 @@ export const ThreadItemKind = z.enum([
   // The user applied a thread's changes to the project folder, or undid it (parallel threads
   // spec 8, 9). Threads stored before have none.
   'changes_applied',
+  // A helper thread the agent started, where it started it (agent orchestration spec 10).
+  'helper_started',
 ]);
 export type ThreadItemKind = z.infer<typeof ThreadItemKind>;
 

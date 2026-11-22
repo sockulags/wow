@@ -27,10 +27,12 @@ import {
 import { decideDelegation, decideFollow, isDelegationCommand } from '../assistant/delegation.js';
 import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
+import { decideHelper } from '../helpers/decide.js';
 import {
   CommandRejected,
   decide,
   isAssistantCommand,
+  isHelperCommand,
   isSetupCommand,
   type DecideContext,
   type ReadModel,
@@ -52,6 +54,17 @@ export function* decideInSteps(
   // What a held or inverse command is decided as once the user said so.
   const asUser: DecideContext = { ...context, origin: 'user' };
 
+  // Helper threads (agent orchestration spec 2): only a thread's agent through wow's helper tools.
+  if (isHelperCommand(command)) {
+    if (context.origin !== 'helper') {
+      throw new CommandRejected(
+        'rejected',
+        "Only a chat thread's agent sends this, through wow's helper tools.",
+      );
+    }
+    yield* decideHelper(command, read, context);
+    return;
+  }
   if (isDelegationCommand(command)) {
     if (context.origin !== 'assistant') {
       throw new CommandRejected('rejected', 'Only the assistant sends this.');

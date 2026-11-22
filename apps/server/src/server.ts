@@ -15,6 +15,7 @@ import { Chief } from './assistant/chief.js';
 import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
 import { HelperEndpoint, helperMcpPath } from './helpers/endpoint.js';
+import { HelperTools } from './helpers/helper-tools.js';
 import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
@@ -220,12 +221,24 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     logger,
     allowed: (threadId) => {
       const row = database.db.select().from(threads).where(eq(threads.id, threadId)).get();
-      if (!row || row.kind !== 'chat' || row.runId !== null) return false;
+      // A helper has no helpers of its own (agent orchestration spec 7).
+      if (!row || row.kind !== 'chat' || row.runId !== null || row.startedBy === 'helper') {
+        return false;
+      }
       return settings.get(
         'chat.helpers',
         row.projectId === null ? {} : { projectId: row.projectId },
       );
     },
+    provider: new HelperTools({
+      db: database.db,
+      engine,
+      logger,
+      git: () => ({
+        timeoutMs: settings.get('trackers.gitTimeoutMs'),
+        stopWaitMs: settings.get('advanced.gitStopWaitMs'),
+      }),
+    }),
   });
   const providerService = new ProviderService({
     db: database.db,

@@ -775,6 +775,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
         .onConflictDoNothing()
         .run();
       return ['decisions'];
+    case 'thread.helperStarted':
+      tx.update(threads)
+        .set({ startedBy: 'helper', parentThreadId: event.payload.parentThreadId })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return ['threads'];
     case 'thread.delegated':
       tx.update(threads)
         .set({ startedBy: 'assistant' })
@@ -1127,6 +1133,16 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(threads).where(eq(threads.providerSessionId, sessionId)).all(),
     projectThreads: (projectId) =>
       tx.select().from(threads).where(eq(threads.projectId, projectId)).all(),
+    helperThreads: (parentThreadId) =>
+      tx
+        .select()
+        .from(threads)
+        .where(
+          parentThreadId === undefined
+            ? eq(threads.startedBy, 'helper')
+            : eq(threads.parentThreadId, parentThreadId),
+        )
+        .all(),
     runningTurn: (threadId) =>
       tx
         .select()

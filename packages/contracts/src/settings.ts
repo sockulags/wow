@@ -599,6 +599,24 @@ export const settingsRegistry = {
     default: true,
     scope: 'project',
   }),
+  'chat.helpersPerThread': defineSetting({
+    schema: z.number().int().min(1).max(20),
+    group: 'chat',
+    label: 'Helpers of one thread at once',
+    description:
+      "How many helper threads one thread's agent may have working at the same time. Over it, starting another is refused with the reason.",
+    default: 3,
+    scope: 'global',
+  }),
+  'chat.helpersLive': defineSetting({
+    schema: z.number().int().min(1).max(50),
+    group: 'chat',
+    label: 'Helpers at once in all',
+    description:
+      'How many helper threads may be working at the same time across every thread. Over it, starting another is refused with the reason.',
+    default: 6,
+    scope: 'global',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

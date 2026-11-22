@@ -179,7 +179,8 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  list, false and true for older rows (migration 0027_thread_list); queued: the
                  message waiting for the running turn to end (migration 0028_queued_messages);
                  baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
-                 first turn (migration 0029_thread_changes); stateSince (0031); goBack(json:
+                 first turn (migration 0029_thread_changes); parentThreadId: a helper thread's
+                 main thread, with startedBy 'helper' (migration 0042_helper_threads); stateSince (0031); goBack(json:
                  GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
                  0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
                  working copy, null for older rows (migration 0035_thread_working_copy)
@@ -1689,7 +1690,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped, see "Helper tools in a chat session"),
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive` (see "Helper tools
+  in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
@@ -4340,7 +4342,32 @@ was opened with across turns; it is kept in memory only. A request is answered o
 `grant` made, compared in constant time, for the thread it was made for, and only while that
 thread may still have the tools (asked again on every request), so turning the setting off
 refuses the token at once. The assistant's token and the app's token open nothing here, and a
-thread's token does not open `/assistant/mcp`. Until helpers exist (U2) the tool list is empty.
+thread's token does not open `/assistant/mcp`. A helper thread (`startedBy: 'helper'`) gets no
+helper tools of its own.
+
+**Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
+(`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,
+`write_to_helper` and `stop_helper` to the thread whose token called. The reads come straight
+from the stored rows: each helper's state, what its running call runs, a question it waits on, a
+waiting approval named as the person's, and its last answer; `list_helpers` also names every
+provider instance with whether it is connected. `start_helper` resolves an instance by id or
+name, checks with `readSnapshotRepository` that the project is in Git for `isolation: 'copy'`,
+and dispatches `helper.start`; `write_to_helper` and `stop_helper` dispatch `helper.write` and
+`helper.stop`. They go to the engine with the origin `helper` (`CommandOrigin`), and
+`decideInSteps` refuses `helper.*` from any other origin. `helpers/decide.ts` (`decideHelper`)
+decides them in steps, as the assistant's delegation does: the main thread must be a chat
+thread with no `runId` that is not a helper; `chat.helpersPerThread` and `chat.helpersLive` count
+helpers that work (state `working` or a running turn). `helper.start` decides the user's
+`thread.create` on the named instance (refused unless its last test passed), with the main
+thread's model and effort on the same instance or the instance's defaults, the mode
+`helperPermissionMode` gives (contracts `helpers.ts`: the main thread's own mode on the same
+provider, else the widest of the other provider's modes whose reach, 0 read to 4 no sandbox, is
+not above the main thread's), and the main thread's `cwd`, or the project's with `ownWorkingCopy`
+for `copy`; then `thread.helperStarted` (sets `parentThreadId` and `startedBy: 'helper'`), a
+`helper_started` item (`HelperStartedItemPayload`) on the main thread's last turn, and the brief
+through `thread.sendMessage`. `helper.write` is `thread.sendMessage` and `helper.stop`
+`thread.interrupt`, for a helper of that main thread only. The read model's `helperThreads`
+lists a main thread's helpers, or all.
 
 - Claude (`ClaudeAdapter#withHelperTools`): the session's own options stay (settings sources, the
   user's tools, servers and launch arguments, the permission mode) and `mcpServers` gets `wow`
