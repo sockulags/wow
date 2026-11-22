@@ -101,6 +101,9 @@ Default keys (all changeable in Settings → Keybindings):
 | Up               | Chat, in an empty message box: edit your last message        |
 | End              | Chat: back to the newest output                              |
 | Shift+End        | Chat: go to "New since you looked"                           |
+| B                | Chat: mark or unmark the message that has the keyboard       |
+| Alt+PageUp / Dn  | Chat: previous marked message, next marked message           |
+| Ctrl+Shift+U     | Chat: show the outline                                       |
 | T, N, P          | Calendar: today, next, previous                              |
 | D, W             | Calendar: day view, week view                                |
 | C                | Calendar: new card on the day you are on                     |
@@ -879,6 +882,12 @@ Find, export, restore, fork and edit are in the main view only.
   of at the bottom. **Shift+End** ("Go to what is new" in the palette) goes back to the line; it
   goes away once you send a message or leave the thread. A thread you have not opened since this
   version opens at the bottom as before.
+- **Outline and marks**: Details → **Show outline** (**Ctrl+Shift+U**, "Show outline" in the
+  palette) opens a tab in the side panel that lists your messages, each with what its turn did,
+  and the answers you marked. Type in its filter to narrow it; click a row, or press Enter on it,
+  to go to that message. **B** on a message that has the keyboard (or **Mark** on hover) marks
+  it with a bookmark; press B again to take the mark off. **Alt+PageUp** and **Alt+PageDown** go
+  to the marked message before or after. A fork keeps the marks of what it copied.
 - **Moving around**: scrolled up while output arrives, a **New output** pill shows; it or **End**
   goes back down and follows again. End works from the message box too once the cursor is at the
   end of what you typed (before that, it moves the cursor there). **Alt+Up** and **Alt+Down** move from message to message, and

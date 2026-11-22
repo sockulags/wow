@@ -288,6 +288,8 @@ export const TextItemPayload = z.object({
   // An agent's text written by a subagent: the row id of the subagent call it belongs under
   // (agent workbench spec 44). Absent for the thread's own agent and for older items.
   parentItemId: Id.optional(),
+  // The user marked this message to find it again (chat overview spec 22). Absent: not marked.
+  marked: z.boolean().optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 

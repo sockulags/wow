@@ -104,6 +104,7 @@ type ThreadCommand = Extract<
       | 'thread.setArchived'
       | 'thread.markSeen'
       | 'thread.markUnread'
+      | 'thread.markItem'
       | 'thread.workingCopyReady'
       | 'thread.workingCopyFailed'
       | 'thread.workingCopyBranching'
@@ -1205,6 +1206,27 @@ export function decideThread(
           kind: 'thread.archived',
           aggregate: thread.id,
           payload: { threadId: thread.id, archived: command.archived },
+        },
+      ];
+    }
+    // A mark sits on the message itself, so a fork and an earlier version keep it (chat
+    // overview spec 22).
+    case 'thread.markItem': {
+      const thread = requireThread(read, command.threadId);
+      const item = read.threadItem(command.itemId);
+      if (!item || item.threadId !== thread.id) {
+        throw new CommandRejected('not_found', `No message ${command.itemId} in this thread`);
+      }
+      if (item.kind !== 'user' && item.kind !== 'assistant_text') {
+        throw new CommandRejected('rejected', 'Only a message can be marked.');
+      }
+      const markedNow = (item.payload as { marked?: unknown } | null)?.marked === true;
+      if (markedNow === command.marked) return [];
+      return [
+        {
+          kind: 'threadItem.patched',
+          aggregate: thread.id,
+          payload: { itemId: item.id, patch: { marked: command.marked } },
         },
       ];
     }

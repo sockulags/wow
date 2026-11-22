@@ -3592,6 +3592,15 @@ stored by the server; the web app only draws it.
   down) and keeps it until a turn starts or the thread is left. It is no item, so Find and the
   export do not see it. Shift+End (`keybindings.jumpToNew`, palette "Go to what is new", offered
   while `conversationStore.hasNew`) goes to it.
+- **Outline and marks** (chat overview spec 21 to 23). `thread.markItem {threadId, itemId,
+marked}` patches `marked` onto a user or assistant message's payload (`threadItem.patched`),
+  so the mark lives with the message: a fork copies it and an earlier version keeps it. The
+  conversation shows a bookmark sign and Mark / Unmark on hover; the handle it registers adds
+  `isMarked`, `markFocused` (B, `keybindings.markMessage`), `previousMark` / `nextMark`
+  (Alt+PageUp / Alt+PageDown) and `focusItem`. The panel tab `outline` (`chat/outline.tsx`,
+  Details → Show outline, `keybindings.threadOutline`) lists `outlineRows`: each user message of
+  a turn Edit did not replace, with its turn's summary, and the marked answers; a row calls
+  `focusItem` on the conversation on screen.
 - **Scroll and keys.** `useStickToBottom` in thread-view.tsx follows the stream; once the user
   scrolled up, new items show the "New output" pill, which or End (`keybindings.conversationEnd`,
   palette "Go to the newest output" while it shows) goes back down and follows again. End is a

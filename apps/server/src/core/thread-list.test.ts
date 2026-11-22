@@ -178,6 +178,13 @@ describe('chat notifications (spec 64, 65)', () => {
   });
 });
 
+const itemRows = () =>
+  snapshot(database.db, { topic: 'threadItems', threadId: 't1' }) as {
+    id: string;
+    kind: string;
+    payload: { marked?: boolean };
+  }[];
+
 describe('the thread list (spec 67 to 70)', () => {
   it('renames a thread, and refuses an empty title', () => {
     dispatch({ type: 'thread.rename', threadId: 't1', title: '  Kettle timer, part two ' });
@@ -280,6 +287,29 @@ describe('the thread list (spec 67 to 70)', () => {
     expect(thread()?.seenThrough).toBe(first);
     dispatch({ type: 'thread.markSeen', threadId: 't1' });
     expect(thread()?.seenThrough).toBe(3);
+  });
+
+  it('marks a message and takes the mark off, and refuses anything but a message (chat overview spec 22)', () => {
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hello' });
+    events('t1', { type: 'textDelta', threadId: 't1', itemId: 'a', delta: 'Hi' });
+    events('t1', {
+      type: 'toolCallStarted',
+      threadId: 't1',
+      itemId: 'tool',
+      name: 'Bash',
+      input: { command: 'ls' },
+    });
+    events('t1', { type: 'turnCompleted', threadId: 't1' });
+    const answer = itemRows().find((row) => row.kind === 'assistant_text');
+    const tool = itemRows().find((row) => row.kind === 'tool_call');
+    if (!answer || !tool) throw new Error('rows missing');
+    dispatch({ type: 'thread.markItem', threadId: 't1', itemId: answer.id, marked: true });
+    expect(itemRows().find((row) => row.id === answer.id)?.payload.marked).toBe(true);
+    dispatch({ type: 'thread.markItem', threadId: 't1', itemId: answer.id, marked: false });
+    expect(itemRows().find((row) => row.id === answer.id)?.payload.marked).toBe(false);
+    expect(() =>
+      dispatch({ type: 'thread.markItem', threadId: 't1', itemId: tool.id, marked: true }),
+    ).toThrow(/Only a message/);
   });
 
   it('finds threads by title, project name and a word only in a message, archived ones too', () => {

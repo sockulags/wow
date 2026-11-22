@@ -2526,6 +2526,26 @@ export const settingsRegistry = {
     'Scroll the conversation back to the bottom after you scrolled up, so it follows new output again.',
     'End',
   ),
+  'keybindings.threadOutline': keybinding(
+    'Chat: show the outline',
+    "Open the thread's outline in the side panel: your messages, what each turn did and the messages you marked.",
+    'Mod+Shift+U',
+  ),
+  'keybindings.markMessage': keybinding(
+    'Chat: mark the focused message',
+    'Mark the message that has the keyboard to find it again in the outline, or take its mark off.',
+    'B',
+  ),
+  'keybindings.previousMark': keybinding(
+    'Chat: previous marked message',
+    'Go to the marked message before the one that has the keyboard.',
+    'Alt+PageUp',
+  ),
+  'keybindings.nextMark': keybinding(
+    'Chat: next marked message',
+    'Go to the marked message after the one that has the keyboard.',
+    'Alt+PageDown',
+  ),
   'keybindings.jumpToNew': keybinding(
     'Chat: go to what is new',
     'Go to the line "New since you looked" in a thread you opened with output you had not read.',

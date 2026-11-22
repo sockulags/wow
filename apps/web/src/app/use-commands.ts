@@ -12,6 +12,7 @@ import { chatCommands } from '@/chat/commands';
 import { changesShown, threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
 import { atWorkCommands } from '@/chat/at-work';
 import { sessionToolsCommands, toolsShown } from '@/panel/tools-tab';
+import { outlineCommands, outlineShown } from '@/chat/outline';
 import { draftCopyStore, workingCopyCommands } from '@/chat/working-copy';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
@@ -98,6 +99,9 @@ export function useCommands(gated = false): {
     toolsShown(state, panelRoute(pathname, locationSearch), openThreadId),
   );
   const toolsLive = useTopic('threadTools', openThreadId)?.[0]?.live === true;
+  const outlineOpen = useLayout((state) =>
+    outlineShown(state, panelRoute(pathname, locationSearch), openThreadId),
+  );
   const draftCopy = useStore(draftCopyStore);
   // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
   const { zone: calendarZone } = useCalendarPrefs();
@@ -215,6 +219,11 @@ export function useCommands(gated = false): {
         tabsRoute,
         toolsOpen,
         toolsLive,
+      ),
+      ...outlineCommands(
+        openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,
+        tabsRoute,
+        outlineOpen,
       ),
       ...workingCopyCommands({
         openThread: openThread?.runId === null ? openThread : undefined,
@@ -403,6 +412,7 @@ export function useCommands(gated = false): {
     reasoningByDefault,
     toolsOpen,
     toolsLive,
+    outlineOpen,
   ]);
   const commands = useMemo(
     () => (gated ? all.filter((command) => gateCommand(command.id)) : all),

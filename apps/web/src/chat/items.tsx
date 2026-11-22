@@ -21,6 +21,8 @@ import {
   type Turn,
 } from '@wow/contracts';
 import {
+  BookmarkIcon,
+  BookmarkXIcon,
   BrainIcon,
   ChevronRightIcon,
   FoldVerticalIcon,
@@ -136,6 +138,10 @@ export interface ItemContext {
   // 2).
   readonly turnSummary?: TurnSummary | undefined;
   readonly onTurnChanges?: (() => void) | undefined;
+  // A message the user marked, and what marks or unmarks it (chat overview spec 22); absent
+  // where messages are not marked.
+  readonly marked?: boolean | undefined;
+  readonly onMark?: (() => void) | undefined;
   // The exchanges Edit replaced with this message, oldest first ("Earlier version", spec 62).
   readonly earlier?: readonly EarlierExchange[] | undefined;
 }
@@ -345,7 +351,8 @@ function UserMessage({
         </span>
       )}
       <div className="flex items-center gap-1">
-        {(context.onEdit || context.onFork || context.onRestore) && (
+        {context.marked && <MarkSign />}
+        {(context.onEdit || context.onFork || context.onRestore || context.onMark) && (
           <div
             data-testid="message-go-back"
             className="flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
@@ -368,6 +375,7 @@ function UserMessage({
                 Restore files to here
               </Button>
             )}
+            {context.onMark && <MarkButton marked={context.marked} onMark={context.onMark} />}
           </div>
         )}
         {context.at && (
@@ -440,7 +448,9 @@ function AssistantText({
           >
             <CopyButton text={payload.text} label="Copy" />
             <CopyButton text={shownText} label="Copy text" />
+            {context.onMark && <MarkButton marked={context.marked} onMark={context.onMark} />}
           </div>
+          {context.marked && <MarkSign />}
           {context.endedAt && (
             <time
               data-testid="message-time"
@@ -507,6 +517,27 @@ function Reasoning({ payload, context }: { payload: ReasoningItemPayload; contex
       </summary>
       <div className="mt-1 border-l border-border pl-3 whitespace-pre-wrap">{payload.text}</div>
     </details>
+  );
+}
+
+// A marked message carries the sign (chat overview spec 22); the button marks and unmarks.
+function MarkSign() {
+  return (
+    <BookmarkIcon
+      role="img"
+      aria-label="Marked"
+      data-testid="message-marked"
+      className="size-3.5 fill-current text-primary"
+    />
+  );
+}
+
+function MarkButton({ marked, onMark }: { marked: boolean | undefined; onMark: () => void }) {
+  return (
+    <Button size="xs" variant="ghost" data-testid="message-mark" onClick={onMark}>
+      {marked ? <BookmarkXIcon /> : <BookmarkIcon />}
+      {marked ? 'Unmark' : 'Mark'}
+    </Button>
   );
 }
 

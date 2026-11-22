@@ -6,6 +6,7 @@ import {
   GitCompareIcon,
   ImageIcon,
   InfoIcon,
+  ListTreeIcon,
   MessagesSquareIcon,
   WrenchIcon,
   XIcon,
@@ -29,6 +30,7 @@ function tabIcon(tab: Exclude<PanelTab, { kind: 'host' }>): LucideIcon {
   if (tab.kind === 'page') return BookOpenIcon;
   if (tab.kind === 'changes') return GitCompareIcon;
   if (tab.kind === 'tools') return WrenchIcon;
+  if (tab.kind === 'outline') return ListTreeIcon;
   if (tab.kind === 'thread') return MessagesSquareIcon;
   const kind = tab.file.read?.kind;
   const extension = fileLanguage(tab.file.path);

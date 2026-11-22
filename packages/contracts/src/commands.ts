@@ -328,6 +328,13 @@ export const Command = z.discriminatedUnion('type', [
   // The thread was opened, or the user asked to see it as new again (spec 70).
   z.object({ type: z.literal('thread.markSeen'), threadId: Id }),
   z.object({ type: z.literal('thread.markUnread'), threadId: Id }),
+  // Mark a message to find it again, or take the mark off (chat overview spec 22).
+  z.object({
+    type: z.literal('thread.markItem'),
+    threadId: Id,
+    itemId: Id,
+    marked: z.boolean(),
+  }),
   // `note` goes with a denial (agent workbench spec 37); `permissionMode` starts a plan in that
   // mode (spec 42). `allowAlways` stores the rule the approval offers (spec 38).
   z.object({

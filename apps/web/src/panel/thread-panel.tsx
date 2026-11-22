@@ -41,7 +41,7 @@ import { FactList, PanelSection, PanelTitle, panelLinkClass } from './details';
 import { threadUsage, usePanelRoute } from './model';
 import { openThreadTools, toolsSummary } from './tools-tab';
 import { cn } from '@/lib/utils';
-import { fullPathOf, openFile, openHostItem } from './viewer';
+import { fullPathOf, openFile, openHostItem, openOutline } from './viewer';
 
 // What a thread's messages mention (agent workbench spec 19): the file paths (inline code, a
 // relative link target, an `@` mention) and the host items (links on the thread's sites, bare
@@ -162,6 +162,14 @@ function SessionToolsLink({ threadId }: { readonly threadId: string }) {
         onClick={() => openThreadTools({ settings, layout }, threadId, pathname)}
       >
         Show session tools
+      </button>
+      <button
+        type="button"
+        data-testid="open-outline"
+        className={cn(panelLinkClass, 'self-start text-xs')}
+        onClick={() => openOutline({ settings, layout }, { threadId, from: pathname })}
+      >
+        Show outline
       </button>
     </PanelSection>
   );

@@ -129,17 +129,17 @@ It names their files as they are at 0.5.0.
 
 21. **Outline** is a tab of the side panel in a chat thread (Details → **Show outline**,
     `keybindings.threadOutline` Ctrl+Shift+U, palette "Show outline"). It lists, in order, one
-    row per user message (its first line and time) with the turn's summary (spec 1) under it,
-    and the marked answers. It also shows the divider of spec 17 when present. The filter at the
-    top narrows rows by text. Enter or click scrolls the conversation to the row's item and puts
-    the keyboard on it.
+    row per user message (its first line and time) with its turn's summary (spec 1) under it,
+    and the marked answers, each where it was said. A turn Edit replaced is left out. The filter
+    at the top narrows rows by text. Enter or a click scrolls the conversation to the row's
+    message and puts the keyboard on it.
 22. **B** on a message that has the keyboard (`keybindings.markMessage`, "Mark message" /
-    "Unmark message" in the palette, or its button on hover) marks an assistant answer or a user
-    message. A marked message shows a bookmark sign. Marks are kept on the server per thread and
-    survive restarts, forks and edits of other messages. A message that Edit replaced keeps its
-    mark under Earlier version.
-23. **Alt+Shift+Up / Down** (`keybindings.previousMark`, `keybindings.nextMark`) move between
-    marked messages.
+    "Unmark message" in the palette, or **Mark** / **Unmark** on hover) marks an assistant
+    answer or a user message. A marked message shows a bookmark sign. The mark is kept on the
+    message on the server, so it survives restarts, and a fork and an earlier version of an
+    edited message keep it.
+23. **Alt+PageUp / Alt+PageDown** (`keybindings.previousMark`, `keybindings.nextMark`) move
+    between marked messages. (Alt+Shift+Down is already "Next unread thread".)
 24. A step's thread in the panel and the Assistant have no outline and no marks.
 
 ### Plan limits (U7)
@@ -297,12 +297,13 @@ threadChanges}`. The engine patches the usage row (none is added) and emits
 
 ### U6 Outline and marks
 
-- Decided: commands `thread.markItem {threadId, itemId}` and `thread.unmarkItem`, event
-  `thread.itemMarked {threadId, itemId, marked}`, `Thread.marks?: Id[]`. A fork copies the marks
-  of the items it copies.
-- Decided: panel tab kind `outline {threadId}`. Settings `keybindings.threadOutline`
-  (Mod+Shift+U), `keybindings.markMessage` (B, on a message), `keybindings.previousMark`
-  (Alt+Shift+Up), `keybindings.nextMark` (Alt+Shift+Down).
+- Decided: command `thread.markItem {threadId, itemId, marked}`, refused for anything but a
+  user or assistant message; the engine patches `marked` onto the item's payload
+  (`TextItemPayload.marked`) with the ordinary `threadItem.patched`, so a fork's copied items
+  and earlier versions keep it. The assistant cannot mark.
+- Decided: panel tab kind `outline {threadId, from}` (`chat/outline.tsx`, `outlineRows`).
+  Settings `keybindings.threadOutline` (Mod+Shift+U), `keybindings.markMessage` (B, on a
+  message), `keybindings.previousMark` (Alt+PageUp), `keybindings.nextMark` (Alt+PageDown).
 
 ### U7 Plan limits
 
