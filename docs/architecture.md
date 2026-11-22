@@ -1381,7 +1381,8 @@ removal ask only about files.
 ### Plan runs
 
 A plan run works through a plan's ready units by itself (review loop spec 40 to 47). It starts
-ordinary runs, one per unit and one at a time, so gates, review, notifications and working
+ordinary runs, one per unit and up to `workflows.planRunParallel` at once (agent orchestration
+spec 13), so gates, review, notifications and working
 copies work for a unit's run as for any other. Nothing is merged: a unit counts as delivered
 only when the host shows its pull request merged.
 

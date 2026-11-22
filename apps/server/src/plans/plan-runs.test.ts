@@ -311,7 +311,7 @@ describe('starting a plan run (spec 40)', () => {
       workflowId: 'gated',
       units: [{ unitKey: 'U1', title: 'Count down', runId: 'pr1.U1', outcome: 'running' }],
     });
-    // One unit at a time: U3 is ready too and has no run.
+    // One unit at a time by default: U3 is ready too and has no run.
     expect(runs().map((row) => row.id)).toEqual(['pr1.U1']);
 
     const waiting = await runBecomes('pr1.U1', (row) => row.state === 'waiting');

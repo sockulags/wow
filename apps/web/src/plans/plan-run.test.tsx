@@ -290,7 +290,7 @@ describe('the plan run above the units', () => {
     const link = within(region).getByRole('link', { name: 'U1 Count down' });
     expect(link.getAttribute('href')).toBe('/workflows/runs/pr1.U1');
     expect(within(region).getByTestId('plan-run-unit-U1').textContent).toContain('Done');
-    // One unit at a time: no second plan run while this one is live.
+    // One plan run per plan: no second one while this one is live.
     const startButton = screen.getByRole('button', { name: 'Run ready units' });
     expect(startButton.hasAttribute('disabled')).toBe(true);
 

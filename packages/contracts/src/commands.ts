@@ -483,9 +483,9 @@ export const Command = z.discriminatedUnion('type', [
   // are read from the project's host; unfollowing forgets what was read for it.
   z.object({ type: z.literal('plan.follow'), planId: Id, followed: z.boolean() }),
   // "Run ready units": works through the plan's ready units with a workflow marked "For units",
-  // one run per unit and one at a time (review loop spec 40 to 47).
+  // one run per unit, up to `workflows.planRunParallel` at once (review loop spec 40 to 47).
   z.object({ type: z.literal('planRun.start'), planRunId: Id, planId: Id, workflowId: Id }),
-  // Stops the live unit run and starts no further unit (spec 45).
+  // Stops every live unit run and starts no further unit (spec 45).
   z.object({ type: z.literal('planRun.stop'), planRunId: Id }),
   // An event trigger (review loop spec 48): runs of the workflow start when polling first sees
   // the event on a pull request wow follows in the project. New triggers are on.
