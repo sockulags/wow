@@ -11,6 +11,8 @@ export interface ConversationHandle {
   previousMessage(): void;
   nextMessage(): void;
   toEnd(): void;
+  // Goes to the line "New since you looked" (chat overview spec 19).
+  toNew?(): void;
   copyFocused(): unknown;
   // A chat thread's conversation (the chat view, also for a step's thread opened there) finds
   // and exports (thread work spec 1, 6, 7); the Assistant view has neither (spec 9).
@@ -101,6 +103,8 @@ interface ConversationState {
   readonly handle: ConversationHandle | undefined;
   // The reader scrolled up while output came: "New output" shows, End returns.
   readonly scrolledUp: boolean;
+  // The conversation shows "New since you looked" (chat overview spec 17).
+  readonly hasNew?: boolean;
   // The message that has the keyboard, which C copies.
   readonly focusedMessage: string | undefined;
   // Per thread, whether Ctrl+O opened or closed all reasoning; absent, the setting decides. The
@@ -280,7 +284,7 @@ export function conversationCommands(
     ConversationState,
     'threadId' | 'handle' | 'scrolledUp' | 'focusedMessage' | 'goBack'
   > &
-    Partial<Pick<ConversationState, 'restore'>> & {
+    Partial<Pick<ConversationState, 'restore' | 'hasNew'>> & {
       readonly reasoningOpen: boolean;
     },
   openByDefault: boolean,
@@ -315,6 +319,18 @@ export function conversationCommands(
       keybinding: 'keybindings.toggleReasoning',
       run: () => toggleReasoning(threadId, openByDefault),
     },
+    ...(state.hasNew && handle.toNew
+      ? [
+          {
+            id: 'chat.toNew',
+            title: 'Go to what is new',
+            group: 'Chat' as const,
+            keywords: ['new', 'unread', 'since', 'left off'],
+            keybinding: 'keybindings.jumpToNew' as const,
+            run: () => handle.toNew?.(),
+          },
+        ]
+      : []),
     ...(state.scrolledUp
       ? [
           {

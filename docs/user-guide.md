@@ -100,6 +100,7 @@ Default keys (all changeable in Settings → Keybindings):
 | F                | Chat: fork from the message that has the keyboard            |
 | Up               | Chat, in an empty message box: edit your last message        |
 | End              | Chat: back to the newest output                              |
+| Shift+End        | Chat: go to "New since you looked"                           |
 | T, N, P          | Calendar: today, next, previous                              |
 | D, W             | Calendar: day view, week view                                |
 | C                | Calendar: new card on the day you are on                     |
@@ -873,6 +874,11 @@ Find, export, restore, fork and edit are in the main view only.
   after. **Ctrl+O** opens or closes all reasoning in the thread; `chat.reasoningOpen` opens it by
   default.
 - **Times**: each message shows when its turn started, each answer when its turn ended.
+- **New since you looked**: open a thread that is bold (it has output you have not read) and it
+  starts at a line **New since you looked**, before what came after you last had it open, instead
+  of at the bottom. **Shift+End** ("Go to what is new" in the palette) goes back to the line; it
+  goes away once you send a message or leave the thread. A thread you have not opened since this
+  version opens at the bottom as before.
 - **Moving around**: scrolled up while output arrives, a **New output** pill shows; it or **End**
   goes back down and follows again. End works from the message box too once the cursor is at the
   end of what you typed (before that, it moves the cursor there). **Alt+Up** and **Alt+Down** move from message to message, and

@@ -2526,6 +2526,11 @@ export const settingsRegistry = {
     'Scroll the conversation back to the bottom after you scrolled up, so it follows new output again.',
     'End',
   ),
+  'keybindings.jumpToNew': keybinding(
+    'Chat: go to what is new',
+    'Go to the line "New since you looked" in a thread you opened with output you had not read.',
+    'Shift+End',
+  ),
   'keybindings.nextBoldThread': keybinding(
     'Chat: next bold thread',
     'Open the next thread whose title is bold: one that ended a turn or started to need you since you last opened it.',

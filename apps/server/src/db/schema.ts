@@ -135,6 +135,8 @@ export const threads = sqliteTable(
     backgroundTasks: json<BackgroundTask[]>().notNull().default([]),
     archived: bool().notNull().default(false),
     seen: bool().notNull().default(true),
+    // The newest item's index when the user last saw it (chat overview spec 17).
+    seenThrough: integer(),
     queued: json<QueuedMessage>(),
     // Where a chat thread's Changes are measured from (agent workbench spec 34): the commit its
     // folder was on at the first turn, and what already differed then. Null for a thread stored

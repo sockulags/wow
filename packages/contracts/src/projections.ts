@@ -147,6 +147,9 @@ export const Thread = z.object({
   // False once a turn ended or the thread started to need the user since it was last opened
   // (spec 70). The server keeps it, so every window and the tray agree. Absent means seen.
   seen: z.boolean().optional(),
+  // The index of the newest item when the user last saw the thread (chat overview spec 17), so
+  // the next time it opens unread it starts at what came after. Null or absent before.
+  seenThrough: z.number().int().min(-1).nullable().optional(),
   // What the thread changed as of its last turn's end (chat overview spec 4), for its row in the
   // thread list. Null when it could not be measured; absent in rows from before.
   changeCount: ChangeCount.nullable().optional(),

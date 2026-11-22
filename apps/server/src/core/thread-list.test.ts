@@ -265,6 +265,23 @@ describe('the thread list (spec 67 to 70)', () => {
     expect(thread()?.updatedAt).toBe(new Date(start).toISOString());
   });
 
+  it('keeps where the user left off when the thread is seen (chat overview spec 17)', () => {
+    expect(thread()?.seenThrough).toBeNull();
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Hello' });
+    events('t1', { type: 'textDelta', threadId: 't1', itemId: 'a', delta: 'Hi' });
+    events('t1', { type: 'turnCompleted', threadId: 't1' });
+    dispatch({ type: 'thread.markSeen', threadId: 't1' });
+    const first = thread()?.seenThrough;
+    expect(first).toBe(1);
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'More' });
+    events('t1', { type: 'textDelta', threadId: 't1', itemId: 'b', delta: 'Sure' });
+    events('t1', { type: 'turnCompleted', threadId: 't1' });
+    // Unread again: where the user left off stays until they see it.
+    expect(thread()?.seenThrough).toBe(first);
+    dispatch({ type: 'thread.markSeen', threadId: 't1' });
+    expect(thread()?.seenThrough).toBe(3);
+  });
+
   it('finds threads by title, project name and a word only in a message, archived ones too', () => {
     dispatch({ type: 'project.create', projectId: 'p-garden', name: 'Garden', cwd: dir });
     later(1);

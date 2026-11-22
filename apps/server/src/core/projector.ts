@@ -378,7 +378,11 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return threadTopics;
     case 'thread.seenChanged':
       tx.update(threads)
-        .set({ seen: event.payload.seen })
+        .set(
+          event.payload.through === undefined
+            ? { seen: event.payload.seen }
+            : { seen: event.payload.seen, seenThrough: event.payload.through },
+        )
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;

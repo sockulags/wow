@@ -380,13 +380,37 @@ function useStickToBottom(dependency: unknown) {
     setNewOutput(false);
     if (element) element.scrollTop = element.scrollHeight;
   }, []);
-  return { container, onScroll, newOutput, toEnd };
+  // The reader is somewhere else than the bottom on purpose ("New since you looked").
+  const hold = useCallback(() => {
+    pinned.current = false;
+  }, []);
+  return { container, onScroll, newOutput, toEnd, hold };
+}
+
+// Where "New since you looked" goes (chat overview spec 17, 18, 20): captured as a thread is
+// opened while it is unread, from where the server says the user left off, and gone once a turn
+// starts after that (the user sent a message) or the thread is left.
+function useNewSince(thread: Thread, shown: boolean) {
+  const capture = () => ({
+    threadId: thread.id,
+    after:
+      shown && thread.seen === false && thread.seenThrough != null ? thread.seenThrough : undefined,
+    working: thread.state === 'working',
+    scrolled: false,
+  });
+  const [since, setSince] = useState(capture);
+  if (since.threadId !== thread.id) setSince(capture());
+  else if (since.after !== undefined && !since.working && thread.state === 'working') {
+    setSince({ ...since, after: undefined });
+  }
+  return [since, setSince] as const;
 }
 
 // What the palette and the keys ask of the conversation on screen, as it is at the time.
 interface ConversationActions {
   moveMessage(step: -1 | 1): void;
   toEnd(): void;
+  toNew(): void;
   openFind(kind: FindRequest['kind']): void;
   copyMarkdown(): Promise<unknown>;
   saveMarkdown(): Promise<unknown>;
@@ -538,7 +562,9 @@ export function ThreadConversation({
   }, [threadId]);
   const { models } = useModels(instance?.id);
   const { when } = useDateFormat();
-  const { container, onScroll, newOutput, toEnd } = useStickToBottom(items);
+  const { container, onScroll, newOutput, toEnd, hold } = useStickToBottom(items);
+  const [since, setSince] = useNewSince(thread, !compact && !extras);
+  const newSinceLine = useRef<HTMLLIElement>(null);
   const list = useRef<HTMLOListElement>(null);
   const ownComposer = useRef<ComposerHandle>(null);
   const composer = extras?.composerRef ?? ownComposer;
@@ -661,6 +687,7 @@ export function ThreadConversation({
       previousMessage: () => nav.current?.moveMessage(-1),
       nextMessage: () => nav.current?.moveMessage(1),
       toEnd: () => nav.current?.toEnd(),
+      toNew: () => nav.current?.toNew(),
       copyFocused: () => {
         const id = conversationStore.getState().focusedMessage;
         const focused = latestItems.current?.find((item) => item.id === id);
@@ -1068,6 +1095,32 @@ export function ThreadConversation({
       ),
     [top, groupTools, afters, words],
   );
+  // The first entry after where the user left off, which "New since you looked" sits before.
+  const newSinceAt =
+    since.after === undefined
+      ? -1
+      : entries.findIndex((entry) => {
+          const first = entry.kind === 'item' ? entry.item : entry.items[0];
+          return first !== undefined && first.index > (since.after ?? 0);
+        });
+  const toNew = useCallback(() => {
+    const line = newSinceLine.current;
+    if (!line) return;
+    hold();
+    line.scrollIntoView({ block: 'start' });
+  }, [hold]);
+  // It opens there once, instead of at the bottom (spec 17).
+  useLayoutEffect(() => {
+    if (newSinceAt === -1 || since.scrolled) return;
+    toNew();
+    setSince((state) => ({ ...state, scrolled: true }));
+  }, [newSinceAt, since.scrolled, toNew, setSince]);
+  useEffect(() => {
+    if (compact) return;
+    conversationStore.setState((state) =>
+      state.threadId === threadId ? { hasNew: newSinceAt !== -1 } : state,
+    );
+  }, [compact, threadId, newSinceAt]);
   const instanceName = instance?.name ?? thread.providerInstanceId;
   const markdown = () =>
     conversationMarkdown({
@@ -1106,7 +1159,7 @@ export function ThreadConversation({
           description: errorMessage(error),
         }),
     );
-  nav.current = { moveMessage, toEnd, openFind, copyMarkdown, saveMarkdown };
+  nav.current = { moveMessage, toEnd, toNew, openFind, copyMarkdown, saveMarkdown };
   const findSource = useMemo<FindSource>(
     () => ({
       entries,
@@ -1235,6 +1288,18 @@ export function ThreadConversation({
                     turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
                   return (
                     <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
+                      {index === newSinceAt && (
+                        <li ref={newSinceLine} data-testid="new-since">
+                          <div
+                            role="separator"
+                            className="flex items-center gap-2 text-2xs font-medium text-primary"
+                          >
+                            <span aria-hidden className="h-px flex-1 bg-primary/50" />
+                            New since you looked
+                            <span aria-hidden className="h-px flex-1 bg-primary/50" />
+                          </div>
+                        </li>
+                      )}
                       {entry.kind === 'item' &&
                       words.get(entry.item.id) === null ? null : entry.kind === 'item' ? (
                         <ConversationItem

@@ -1299,7 +1299,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('thread.seenChanged'),
     aggregate: Id,
-    payload: z.object({ threadId: Id, seen: z.boolean() }),
+    // `through`: the newest item's index when the user saw the thread (chat overview spec 17).
+    payload: z.object({
+      threadId: Id,
+      seen: z.boolean(),
+      through: z.number().int().min(-1).optional(),
+    }),
   }),
   z.object({
     kind: z.literal('turn.started'),

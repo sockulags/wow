@@ -1213,7 +1213,8 @@ export function decideThread(
       const thread = requireThread(read, command.threadId);
       const seen = command.type === 'thread.markSeen';
       if ((thread.seen ?? true) === seen) return [];
-      return [seenChanged(thread.id, seen)];
+      // Where the user left off, for "New since you looked" next time (chat overview spec 17).
+      return [seenChanged(thread.id, seen, seen ? read.nextItemIndex(thread.id) - 1 : undefined)];
     }
     case 'approval.answer':
       return answerApproval(command, read, context);
@@ -1443,10 +1444,10 @@ export function decideThread(
   }
 }
 
-const seenChanged = (threadId: string, seen: boolean): DomainEvent => ({
+const seenChanged = (threadId: string, seen: boolean, through?: number): DomainEvent => ({
   kind: 'thread.seenChanged',
   aggregate: threadId,
-  payload: { threadId, seen },
+  payload: through === undefined ? { threadId, seen } : { threadId, seen, through },
 });
 
 const settingValue = (key: string, read: ReadModel, context: DecideContext): unknown => {

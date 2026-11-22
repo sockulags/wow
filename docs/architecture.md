@@ -3584,6 +3584,14 @@ stored by the server; the web app only draws it.
   remounts every row so one opened by hand follows too.
 - **Times.** A user row shows its turn's start, the turn's last `assistant_text` its `endedAt`
   (`turnEndRows`), always visible (`message-time`).
+- **New since you looked** (chat overview spec 17 to 20). `thread.markSeen` stores
+  `Thread.seenThrough`, the newest item's index then (`thread.seenChanged` `through`, migration
+  0045_thread_seen_through). `useNewSince` in thread-view.tsx captures it as a chat thread opens
+  in the main view while `seen` is false, and the conversation draws the line before the first
+  entry after it, opens there once (`useStickToBottom`'s `hold` keeps the stream from pulling it
+  down) and keeps it until a turn starts or the thread is left. It is no item, so Find and the
+  export do not see it. Shift+End (`keybindings.jumpToNew`, palette "Go to what is new", offered
+  while `conversationStore.hasNew`) goes to it.
 - **Scroll and keys.** `useStickToBottom` in thread-view.tsx follows the stream; once the user
   scrolled up, new items show the "New output" pill, which or End (`keybindings.conversationEnd`,
   palette "Go to the newest output" while it shows) goes back down and follows again. End is a
