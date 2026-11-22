@@ -17,6 +17,10 @@ export interface ThreadListState {
   readonly renaming: string | undefined;
   // Raised by the filter command; the list focuses its filter field when it changes.
   readonly focusRequest: number;
+  // The rows picked with Ctrl+click, Shift+click or Space (chat overview spec 15), and the row a
+  // Shift+click extends from.
+  readonly picked: readonly string[];
+  readonly anchor: string | undefined;
 }
 
 export const threadListStore = createStore<ThreadListState>(() => ({
@@ -24,6 +28,8 @@ export const threadListStore = createStore<ThreadListState>(() => ({
   projectId: undefined,
   renaming: undefined,
   focusRequest: 0,
+  picked: [],
+  anchor: undefined,
 }));
 
 // The server's message-text hits for what is typed in the palette (spec 69), written by

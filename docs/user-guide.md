@@ -764,7 +764,16 @@ active for 14 days is archived by itself (**Archive done threads after**, `chat.
 0 never does); pinned threads and workflow steps' threads are never archived this way. **Group
 the thread list by** (`chat.threadListGroupBy`, or "Group threads by project" and "Group threads
 by state" in the palette) groups the list by project instead, each project's threads ordered as
-needs you, working, then by last activity. A thread whose turn failed sits under Idle with a marker. A thread started
+needs you, working, then by last activity.
+
+Right-click a row, or press the context-menu key or Shift+F10 on it, for **Open**, **Open in
+panel**, **Pin**, **Mark done** or **Reopen**, **Archive**, **Rename** and **Mark unread**.
+Hovering a row shows **Pin** and **Archive** at its right. To act on several threads at once,
+Ctrl+click rows (or press Space on them), or Shift+click and Shift+Up/Down to pick a run of rows;
+a bar over the list says how many are picked and offers Pin, Unpin, Mark done, Reopen, Archive
+and Unarchive. Each applies to the picked threads that allow it and says which it skipped and
+why, such as "Skipped 1 is working." Archiving several offers **Undo**. Escape clears the
+pick. A thread whose turn failed sits under Idle with a marker. A thread started
 by a workflow is titled by its step, with the workflow on the second line.
 
 The thread header shows the project (hover it for the folder) and the provider instance; the

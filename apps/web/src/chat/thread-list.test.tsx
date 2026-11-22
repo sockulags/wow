@@ -461,3 +461,93 @@ describe('a list that stays tidy (chat overview spec 9, 10, 12)', () => {
     expect(rowTitles()).toEqual(['Water the plants', 'Ask about water', 'Steep', 'Loose folder']);
   });
 });
+
+const rowLink = (title: string) => {
+  const element = screen
+    .getAllByTestId('thread-row-title')
+    .find((candidate) => candidate.textContent === title)
+    ?.closest('a');
+  if (!element) throw new Error(`no row ${title}`);
+  return element;
+};
+
+describe('actions on the row and on several rows (chat overview spec 13 to 16)', () => {
+  it('has a menu on right-click whose Pin pins the thread', async () => {
+    const { runtime, request } = fake({ projects: [], threads: [thread('t1', 'Kettle timer')] });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    await listed();
+    await user.pointer({ keys: '[MouseRight]', target: rowLink('Kettle timer') });
+    const menu = await screen.findByTestId('thread-row-menu');
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Open', 'Open in panel', 'Pin', 'Mark done', 'Archive', 'Rename', 'Mark unread']);
+    await user.click(within(menu).getByRole('menuitem', { name: 'Pin' }));
+    expect(sentCommands(request)).toContainEqual({
+      type: 'thread.setPinned',
+      threadId: 't1',
+      pinned: true,
+    });
+  });
+
+  it('archives two picked rows together and brings both back with Undo', async () => {
+    const { runtime, request } = fake({
+      projects: [],
+      threads: [thread('t1', 'Kettle timer'), thread('t2', 'Tea list'), thread('t3', 'Bell')],
+    });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    await listed();
+    await user.keyboard('{Control>}');
+    await user.click(rowLink('Kettle timer'));
+    await user.click(rowLink('Tea list'));
+    await user.keyboard('{/Control}');
+    const bar = screen.getByTestId('picked-bar');
+    expect(bar.textContent).toContain('2 picked');
+    await user.click(within(bar).getByRole('button', { name: 'Archive' }));
+    expect(
+      sentCommands(request).filter((command) => command.type === 'thread.setArchived'),
+    ).toEqual([
+      { type: 'thread.setArchived', threadId: 't1', archived: true },
+      { type: 'thread.setArchived', threadId: 't2', archived: true },
+    ]);
+    expect(screen.queryByTestId('picked-bar')).toBeNull();
+    await user.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(
+      sentCommands(request).filter((command) => command.type === 'thread.setArchived'),
+    ).toEqual([
+      { type: 'thread.setArchived', threadId: 't1', archived: true },
+      { type: 'thread.setArchived', threadId: 't2', archived: true },
+      { type: 'thread.setArchived', threadId: 't1', archived: false },
+      { type: 'thread.setArchived', threadId: 't2', archived: false },
+    ]);
+  });
+
+  it('skips a working thread for Mark done and says why; Escape clears the pick', async () => {
+    const { runtime, request } = fake({
+      projects: [],
+      threads: [thread('t1', 'Kettle timer'), thread('t2', 'Tea list', { state: 'working' })],
+    });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    await listed();
+    // Working comes before Idle, so the working thread is the first row.
+    rowLink('Tea list').focus();
+    await user.keyboard('{Shift>}{ArrowDown}{/Shift}');
+    expect(screen.getByTestId('picked-bar').textContent).toContain('2 picked');
+    await user.click(
+      within(screen.getByTestId('picked-bar')).getByRole('button', { name: 'Mark done' }),
+    );
+    expect(sentCommands(request).filter((command) => command.type === 'thread.setDone')).toEqual([
+      { type: 'thread.setDone', threadId: 't1', done: true },
+    ]);
+    expect(await screen.findByText('Skipped 1 is working.')).toBeTruthy();
+    rowLink('Tea list').focus();
+    await user.keyboard(' ');
+    expect(screen.getByTestId('picked-bar').textContent).toContain('1 picked');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('picked-bar')).toBeNull();
+  });
+});

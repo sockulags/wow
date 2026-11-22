@@ -98,18 +98,11 @@ It names their files as they are at 0.5.0.
 
 ### Actions on the row (U4)
 
-13. Right-click on a row, the context-menu key or Shift+F10 on a focused row opens a menu:
-    - Open
-    - Open in panel
-    - Pin or Unpin
-    - Rename
-    - Mark done or Reopen
-    - Mark unread
-    - Archive or Unarchive
-    - Copy conversation as Markdown
-
-    Each item is the palette command of the same name, offered or refused for the same reasons.
-
+13. Right-click on a row, or the context-menu key or Shift+F10 on a focused row, opens a menu:
+    Open, Open in panel, Pin or Unpin, Mark done or Reopen, Archive or Unarchive, Rename and
+    Mark unread, each only where the thread takes it. Each item sends the command the palette
+    sends for that thread. Copy conversation as Markdown stays in the thread's own header and
+    palette, since it needs the thread's whole conversation.
 14. Hovering or focusing a row shows two buttons at its right: **Pin** and **Archive**, or
     **Unarchive** on an archived row. They do not take the keyboard from the list.
 15. Ctrl+click and Space on a focused row add it to a selection or take it out. Shift+click and

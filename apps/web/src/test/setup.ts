@@ -13,6 +13,7 @@ window.scrollTo = () => undefined;
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.releasePointerCapture ??= () => undefined;
+Element.prototype.setPointerCapture ??= () => undefined;
 
 // A timer a test leaves behind (a toast's exit, a debounce) would fire after the test file's
 // window is gone and fail the run from another file. Every timer started is cleared once the test

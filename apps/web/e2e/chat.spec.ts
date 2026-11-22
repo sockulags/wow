@@ -254,6 +254,28 @@ test.describe('chat', () => {
     expect(asked).toEqual(['/last']);
   });
 
+  test('archives two picked threads together and brings them back with Undo @chat-overview-15 @chat-overview-16', async ({
+    page,
+  }) => {
+    await startThread(page, 'Pick me first');
+    await expect(conversation(page).getByText('You said: Pick me first')).toBeVisible();
+    await startThread(page, 'Pick me second');
+    await expect(conversation(page).getByText('You said: Pick me second')).toBeVisible();
+    const list = threadList(page);
+    const first = list.getByRole('link', { name: /Pick me first/ });
+    const second = list.getByRole('link', { name: /Pick me second/ });
+    await first.click({ modifiers: ['ControlOrMeta'] });
+    await second.click({ modifiers: ['ControlOrMeta'] });
+    const bar = page.getByTestId('picked-bar');
+    await expect(bar).toContainText('2 picked');
+    await bar.getByRole('button', { name: 'Archive' }).click();
+    await expect(first).toHaveCount(0);
+    await expect(second).toHaveCount(0);
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect(first).toBeVisible();
+    await expect(second).toBeVisible();
+  });
+
   test('marks a thread done, reopens it, and a new message reopens it too', async ({ page }) => {
     await startThread(page, 'Wrap this up');
     await expect(conversation(page).getByTestId('item-assistant_text')).toContainText(

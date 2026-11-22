@@ -37,6 +37,7 @@ import {
 } from './thread-commands';
 import { useThreadSearch } from './thread-search';
 import { stateDotClass } from './thread-view';
+import { PickedBar, RowButtons, ThreadRowMenu } from './row-menu';
 import { threadRowParts } from './thread-row';
 import { listTitle } from './view-model';
 
@@ -98,6 +99,14 @@ function AtWorkLink() {
   );
 }
 
+const idOf = (row: HTMLElement | undefined) => row?.dataset['threadId'];
+const togglePick = (threadId: string) =>
+  threadListStore.setState((state) => ({
+    picked: state.picked.includes(threadId)
+      ? state.picked.filter((id) => id !== threadId)
+      : [...state.picked, threadId],
+    anchor: threadId,
+  }));
 const flatThreads = (section: ThreadSection): Thread[] => [
   ...section.threads,
   ...section.sections.flatMap(flatThreads),
@@ -111,6 +120,7 @@ function ThreadList() {
   const activity = useTopic('threadActivity') ?? [];
   const decisions = useTopic('decisions') ?? [];
   const rowParts = useSetting('chat.threadRowDetail');
+  const pickedRows = useStore(threadListStore, (state) => state.picked);
   const openThreadId = useRouterState({
     select: (state) => /^\/chat\/([^/]+)$/.exec(state.location.pathname)?.[1],
   });
@@ -146,7 +156,23 @@ function ThreadList() {
   const move = (by: number) => {
     const all = rows();
     const at = all.findIndex((row) => row === document.activeElement);
-    all[Math.max(0, Math.min(all.length - 1, at + by))]?.focus();
+    const next = all[Math.max(0, Math.min(all.length - 1, at + by))];
+    next?.focus();
+    return next;
+  };
+  // Picking rows (chat overview spec 15): Ctrl+click and Space add or take out one, Shift+click
+  // and Shift+arrows pick every row from the anchor to there, in the order the list shows them.
+  const pickTo = (threadId: string) => {
+    const ids = rows().flatMap((row) => idOf(row) ?? []);
+    const { anchor } = threadListStore.getState();
+    const from = ids.indexOf(anchor ?? threadId);
+    const to = ids.indexOf(threadId);
+    if (from === -1 || to === -1) return togglePick(threadId);
+    const span = ids.slice(Math.min(from, to), Math.max(from, to) + 1);
+    threadListStore.setState((state) => ({
+      picked: [...new Set([...state.picked, ...span])],
+      anchor: state.anchor ?? threadId,
+    }));
   };
   const onListKey = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target === filterField.current) return;
@@ -157,11 +183,31 @@ function ThreadList() {
       filterField.current?.focus();
       return;
     }
+    if (!(event.target instanceof HTMLElement) || !event.target.matches(rowSelector)) return;
+    const here = idOf(event.target);
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (!(event.target instanceof HTMLElement) || !event.target.matches(rowSelector)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault();
+      if (event.shiftKey && here !== undefined) {
+        if (threadListStore.getState().anchor === undefined) {
+          threadListStore.setState({ anchor: here });
+        }
+        const next = idOf(move(event.key === 'ArrowDown' ? 1 : -1));
+        if (next !== undefined) pickTo(next);
+        return;
+      }
       move(event.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (event.key === ' ' && here !== undefined) {
+      event.preventDefault();
+      togglePick(here);
+      return;
+    }
+    if (event.key === 'Escape' && threadListStore.getState().picked.length > 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      threadListStore.setState({ picked: [], anchor: undefined });
     }
   };
 
@@ -186,75 +232,93 @@ function ThreadList() {
     const detail = [...lead, ...parts.map((part) => part.text)].join(' · ');
     const unread = isUnread(thread);
     return (
-      <li key={thread.id} className={cn(nested.depth === 1 && 'ml-4')}>
-        <Link
-          to="/chat/$threadId"
-          params={{ threadId: thread.id }}
-          data-thread-row=""
-          className="flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"
-          activeProps={{ className: 'bg-sidebar-accent', 'aria-current': 'page' }}
-        >
-          <span className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className={cn('size-1.5 shrink-0 rounded-full', stateDotClass[thread.state])}
-            />
-            <span
-              data-testid="thread-row-title"
-              className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold')}
-            >
-              {listTitle(thread, workflow)}
-            </span>
-            {unread && (
-              <span
-                role="img"
-                aria-label="Unread"
-                data-testid="thread-unread"
-                className="size-2 shrink-0 rounded-full bg-primary"
-              />
+      <li key={thread.id} className={cn('group/row relative', nested.depth === 1 && 'ml-4')}>
+        <ThreadRowMenu thread={thread}>
+          <Link
+            to="/chat/$threadId"
+            params={{ threadId: thread.id }}
+            data-thread-row=""
+            data-thread-id={thread.id}
+            data-picked={pickedRows.includes(thread.id) || undefined}
+            aria-description={pickedRows.includes(thread.id) ? 'Picked' : undefined}
+            className={cn(
+              'flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring',
+              pickedRows.includes(thread.id) && 'bg-primary/15 ring-1 ring-primary/40',
             )}
-            {thread.startedBy === 'assistant' && (
-              <SparklesIcon
-                aria-label="Started by the assistant"
-                data-testid="thread-row-assistant"
-                className="size-3.5 shrink-0 text-muted-foreground"
-              />
-            )}
-            {thread.pinned && (
-              <PinIcon
-                aria-label="Pinned"
-                className="size-3.5 shrink-0 fill-current text-muted-foreground"
-              />
-            )}
-            {thread.state === 'failed' && (
-              <span className="shrink-0 text-2xs text-state-failed">Failed</span>
-            )}
-            {isArchived(thread) && (
-              <span className="shrink-0 text-2xs text-muted-foreground">Archived</span>
-            )}
-          </span>
-          <span
-            data-testid="thread-row-detail"
-            title={detail}
-            className="truncate pl-3.5 text-2xs text-muted-foreground"
+            activeProps={{ className: 'bg-sidebar-accent', 'aria-current': 'page' }}
+            onClick={(event) => {
+              if (event.ctrlKey || event.metaKey) {
+                event.preventDefault();
+                togglePick(thread.id);
+              } else if (event.shiftKey) {
+                event.preventDefault();
+                pickTo(thread.id);
+              }
+            }}
           >
-            {[...lead.map((text) => ({ part: 'lead', text })), ...parts].map((part, index) => (
+            <span className="flex items-center gap-2">
               <span
-                key={`${part.part}-${index}`}
-                data-part={part.part}
-                className={cn(
-                  part.part === 'activity' &&
-                    (thread.state === 'needs_you'
-                      ? 'text-state-needs-you-text'
-                      : 'text-foreground/80'),
-                )}
+                aria-hidden
+                className={cn('size-1.5 shrink-0 rounded-full', stateDotClass[thread.state])}
+              />
+              <span
+                data-testid="thread-row-title"
+                className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold')}
               >
-                {index > 0 && ' · '}
-                {part.text}
+                {listTitle(thread, workflow)}
               </span>
-            ))}
-          </span>
-        </Link>
+              {unread && (
+                <span
+                  role="img"
+                  aria-label="Unread"
+                  data-testid="thread-unread"
+                  className="size-2 shrink-0 rounded-full bg-primary"
+                />
+              )}
+              {thread.startedBy === 'assistant' && (
+                <SparklesIcon
+                  aria-label="Started by the assistant"
+                  data-testid="thread-row-assistant"
+                  className="size-3.5 shrink-0 text-muted-foreground"
+                />
+              )}
+              {thread.pinned && (
+                <PinIcon
+                  aria-label="Pinned"
+                  className="size-3.5 shrink-0 fill-current text-muted-foreground"
+                />
+              )}
+              {thread.state === 'failed' && (
+                <span className="shrink-0 text-2xs text-state-failed">Failed</span>
+              )}
+              {isArchived(thread) && (
+                <span className="shrink-0 text-2xs text-muted-foreground">Archived</span>
+              )}
+            </span>
+            <span
+              data-testid="thread-row-detail"
+              title={detail}
+              className="truncate pl-3.5 text-2xs text-muted-foreground"
+            >
+              {[...lead.map((text) => ({ part: 'lead', text })), ...parts].map((part, index) => (
+                <span
+                  key={`${part.part}-${index}`}
+                  data-part={part.part}
+                  className={cn(
+                    part.part === 'activity' &&
+                      (thread.state === 'needs_you'
+                        ? 'text-state-needs-you-text'
+                        : 'text-foreground/80'),
+                  )}
+                >
+                  {index > 0 && ' · '}
+                  {part.text}
+                </span>
+              ))}
+            </span>
+          </Link>
+        </ThreadRowMenu>
+        <RowButtons thread={thread} />
       </li>
     );
   };
@@ -395,6 +459,7 @@ function ThreadList() {
           </ToggleGroup>
         )}
       </div>
+      <PickedBar threads={threads ?? []} />
       <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {threads === undefined ? (
           <TopicPlaceholder status={status} compact rows={4} />

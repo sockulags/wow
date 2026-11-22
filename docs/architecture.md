@@ -4274,6 +4274,16 @@ group is folded, and a folded group still lists the thread on screen. On every s
 is done, not pinned, not a step's and not active for `chat.doneArchiveDays` days (0: never).
 The palette has "Group threads by state" and "Group threads by project".
 
+Each row is the trigger of a shadcn `ContextMenu` (`chat/row-menu.tsx`, chat overview spec 13 to 16) with Open, Open in panel, the row's actions from `chat/row-actions.ts` (`rowMenuActions`:
+pin, unpin, mark done, reopen, archive, unarchive, each where `refusal` finds no reason against
+it), Rename and Mark unread; Pin and Archive also sit at the row's right on hover or focus, out of
+the tab order. Ctrl+click and Space pick or unpick a row, Shift+click and Shift+arrows pick from
+the anchor (`threadListStore.picked`, `anchor`), Escape clears. While rows are picked, the
+`PickedBar` over the list offers the actions at least one of them takes; `runBulk` sends one
+ordinary command per thread that takes it, says what it skipped and why ("Skipped 1 is
+working."), and an archive offers Undo, which unarchives the same threads. There is no bulk
+command on the server.
+
 The list has a filter field on top (`keybindings.threadFilter`, Ctrl+Shift+F anywhere, and
 `keybindings.threadFilterInList`, `/` while the list has the keyboard) and, when threads sit in
 more than one project, a chip per project. The filter matches titles and project names in the
