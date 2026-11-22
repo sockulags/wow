@@ -1281,6 +1281,15 @@ export const settingsRegistry = {
       },
     },
   }),
+  'workflows.planRunParallel': defineSetting({
+    schema: z.number().int().min(1).max(10),
+    group: 'workflows',
+    label: 'Units at once in a plan run',
+    description:
+      "How many units' runs a plan run keeps going at the same time, each in its own working copy. 1 runs the units one after another.",
+    default: 1,
+    scope: 'project',
+  }),
   'workflows.verdictApprovedLine': defineSetting({
     schema: z.string().trim().min(1),
     group: 'workflows',

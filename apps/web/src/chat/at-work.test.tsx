@@ -1,4 +1,4 @@
-import type { Decision, Project, Thread, ThreadActivity } from '@wow/contracts';
+import type { Decision, Project, Thread, ThreadActivity, WorkflowRun } from '@wow/contracts';
 import {
   createMemorySettingsSource,
   createSettingsStore,
@@ -12,7 +12,7 @@ import { createStore } from 'zustand';
 import { createLayoutStore, type Runtime } from '@/app/runtime';
 import { panelTabsOf } from '@/panel/viewer';
 import { renderApp } from '@/test/render';
-import { atWorkCommands, atWorkRows } from './at-work';
+import { atWorkCommands, atWorkRows, where } from './at-work';
 import { createDraftStore } from './draft';
 
 // Threads at work (parallel threads spec 11 to 13) and a thread in the side panel (spec 15, 16),
@@ -190,6 +190,28 @@ describe('Threads at work (spec 11 to 13)', () => {
     expect(screen.getAllByTestId('panel-tab').map((element) => element.textContent)).toContain(
       'Kettle timer',
     );
+  });
+});
+
+describe('a plan run unit at work (agent orchestration spec 15)', () => {
+  it('names the unit a step thread works on', () => {
+    const run = {
+      id: 'pr1.U3',
+      unit: {
+        planRunId: 'pr1',
+        planId: 'tea:2026-01-tea-timer',
+        intentId: '2026-01-tea-timer',
+        unitKey: 'U3',
+        title: 'Show the time left',
+      },
+    } as WorkflowRun;
+    const step = thread('pr1.U3.deliver', 'Deliver', {
+      runId: 'pr1.U3',
+      stepId: 'deliver',
+      branch: 'wow/pr1-u3',
+    });
+    expect(where(step, [project], [run])).toBe('Tea · Unit U3 · wow/pr1-u3');
+    expect(where(thread('mug', 'Mug handle'), [project], [run])).toBe('Tea · tea');
   });
 });
 

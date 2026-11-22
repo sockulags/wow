@@ -2,6 +2,7 @@ import {
   isLivePlanRunState,
   type PlanIntent,
   type PlanRun,
+  type ThreadActivity,
   type Workflow,
   type WorkflowRun,
 } from '@wow/contracts';
@@ -12,6 +13,8 @@ import { useStore } from 'zustand';
 import { useDispatch, useTopic } from '@/chat/data';
 import { ChoiceSelect } from '@/components/choice-select';
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { WorkingIndicator } from '@/chat/items';
+import { runningToolLabel } from '@/chat/view-model';
 import { WithTooltip } from '@/components/hint';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,6 +23,7 @@ import {
   planRunStateLabels,
   planRunStateVariants,
   planRunUnitLabel,
+  planRunUnitStep,
   runReadyUnitsBlocked,
   shownPlanRun,
   unitWorkflows,
@@ -32,14 +36,44 @@ import {
   startPlanRun,
 } from './plan-run';
 
+// What the step's thread of a live unit runs now (agent orchestration spec 15).
+function UnitActivity({
+  run,
+  activity,
+}: {
+  run: WorkflowRun | undefined;
+  activity: readonly ThreadActivity[];
+}) {
+  const threadId = run?.steps[run.currentStep]?.threadId;
+  const row = activity.find((entry) => entry.threadId === threadId);
+  if (!row || row.turnState !== 'running') return null;
+  return (
+    <div data-testid="plan-run-unit-activity" className="basis-full pl-4">
+      <WorkingIndicator
+        startedAt={row.startedAt ?? undefined}
+        facts={{
+          tool:
+            row.runningTool === null
+              ? undefined
+              : runningToolLabel(row.runningTool, run?.workingCopy?.path ?? ''),
+          toolCalls: row.toolCalls,
+          tokens: undefined,
+        }}
+      />
+    </div>
+  );
+}
+
 function PlanRunCard({
   planRun,
   workflow,
   runs,
+  activity,
 }: {
   planRun: PlanRun;
   workflow: Workflow | undefined;
   runs: readonly WorkflowRun[];
+  activity: readonly ThreadActivity[];
 }) {
   const { when } = useDateFormat();
   return (
@@ -82,7 +116,9 @@ function PlanRunCard({
       )}
       {planRun.waitingFor.length > 0 && (
         <div className="flex flex-col gap-0.5 text-xs">
-          <p className="text-muted-foreground">Waits for the hosts to show a change:</p>
+          <p className="text-muted-foreground">
+            {planRun.state === 'running' ? 'Meanwhile:' : 'Waits for the hosts to show a change:'}
+          </p>
           <ul data-testid="plan-run-waiting" className="list-disc pl-5">
             {planRun.waitingFor.map((sentence) => (
               <li key={sentence}>{sentence}</li>
@@ -92,27 +128,30 @@ function PlanRunCard({
       )}
       {planRun.units.length > 0 && (
         <ol data-testid="plan-run-units" className="flex flex-col gap-0.5 text-xs">
-          {planRun.units.map((unit) => (
-            <li
-              key={unit.runId}
-              data-testid={`plan-run-unit-${unit.unitKey}`}
-              className="flex flex-wrap items-baseline gap-2"
-            >
-              <Link
-                to="/workflows/runs/$runId"
-                params={{ runId: unit.runId }}
-                className="rounded-sm underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          {planRun.units.map((unit) => {
+            const run = runs.find((candidate) => candidate.id === unit.runId);
+            const step = unit.outcome === 'running' ? planRunUnitStep(run) : undefined;
+            return (
+              <li
+                key={unit.runId}
+                data-testid={`plan-run-unit-${unit.unitKey}`}
+                className="flex flex-wrap items-baseline gap-2"
               >
-                <span className="font-mono">{unit.unitKey}</span> {unit.title}
-              </Link>
-              <span className="text-muted-foreground">
-                {planRunUnitLabel(
-                  unit,
-                  runs.find((run) => run.id === unit.runId),
-                )}
-              </span>
-            </li>
-          ))}
+                <Link
+                  to="/workflows/runs/$runId"
+                  params={{ runId: unit.runId }}
+                  className="rounded-sm underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="font-mono">{unit.unitKey}</span> {unit.title}
+                </Link>
+                <span className="text-muted-foreground">
+                  {planRunUnitLabel(unit, run)}
+                  {step === undefined ? '' : ` · ${step}`}
+                </span>
+                {unit.outcome === 'running' && <UnitActivity run={run} activity={activity} />}
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>
@@ -127,6 +166,7 @@ export function PlanRunSection({ intent }: { intent: PlanIntent }) {
   const planRuns = useTopic('planRuns');
   const workflows = useTopic('workflows');
   const runs = useTopic('workflowRuns');
+  const activity = useTopic('threadActivity');
   const view = useStore(planRunStore);
   const [chosen, setChosen] = useState('');
   const [busy, setBusy] = useState(false);
@@ -192,12 +232,13 @@ export function PlanRunSection({ intent }: { intent: PlanIntent }) {
           planRun={planRun}
           workflow={workflows.find((candidate) => candidate.id === planRun.workflowId)}
           runs={runs ?? []}
+          activity={activity ?? []}
         />
       )}
       <ConfirmDialog
         open={planRun !== undefined && view.stopping === planRun.id}
         title="Stop this plan run?"
-        description="The unit's run that is going stops as a run does: its turn is interrupted and its threads and working copy stay. No further unit starts."
+        description="The units' runs that are going stop as a run does: their turns are interrupted and their threads and working copies stay. No further unit starts."
         confirmLabel="Stop"
         onConfirm={() => void confirmStopPlanRun(send, intent.id)}
         onCancel={cancelStopPlanRun}

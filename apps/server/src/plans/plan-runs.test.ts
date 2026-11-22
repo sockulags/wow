@@ -606,6 +606,77 @@ describe('stopping a plan run (spec 45)', () => {
   });
 });
 
+// Agent orchestration spec 13 and 14: U1 and U3 are ready at once; U2 depends on U1.
+describe('units in parallel (workflows.planRunParallel)', () => {
+  beforeEach(() => set('workflows.planRunParallel', 2, 'project:tea'));
+
+  it('starts both ready units at once, each in its own working copy, and stops both', async () => {
+    await follow();
+    start('gated');
+    expect(planRun()?.units.map((unit) => [unit.unitKey, unit.outcome])).toEqual([
+      ['U1', 'running'],
+      ['U3', 'running'],
+    ]);
+    const one = await runBecomes('pr1.U1', (row) => row.state === 'waiting');
+    const three = await runBecomes('pr1.U3', (row) => row.state === 'waiting');
+    expect(one.workingCopy?.path).toBeTruthy();
+    expect(three.workingCopy?.path).toBeTruthy();
+    expect(one.workingCopy?.path).not.toBe(three.workingCopy?.path);
+
+    dispatch({ type: 'planRun.stop', planRunId: 'pr1' });
+    expect(run('pr1.U1')?.state).toBe('stopped');
+    expect(run('pr1.U3')?.state).toBe('stopped');
+    expect(planRun()?.units.map((unit) => unit.outcome)).toEqual(['stopped', 'stopped']);
+  });
+
+  it('with stop, starts nothing after a failure and fails once the other unit run has ended', async () => {
+    agent = (prompt) => (prompt.includes('Unit: U1 ') ? 'fail' : opensPullRequest(prompt));
+    await follow();
+    start('gated');
+    await runBecomes('pr1.U1', (row) => row.state === 'failed');
+    await runBecomes('pr1.U3', (row) => row.state === 'waiting');
+    const winding = await planRunBecomes((row) => row.message !== null);
+    expect(winding).toMatchObject({
+      state: 'running',
+      message: 'The run for U1 failed, so no further unit was started',
+      waitingFor: ['Waits for the run of U3 to end'],
+    });
+
+    dispatch({ type: 'workflowRun.continue', runId: 'pr1.U3' });
+    const failed = await planRunBecomes((row) => row.state === 'failed');
+    expect(failed.units.map((unit) => [unit.unitKey, unit.outcome])).toEqual([
+      ['U1', 'failed'],
+      ['U3', 'done'],
+    ]);
+    expect(failed.message).toBe('The run for U1 failed, so no further unit was started');
+    expect(
+      runs()
+        .map((row) => row.id)
+        .toSorted(),
+    ).toEqual(['pr1.U1', 'pr1.U3']);
+  });
+
+  it('with skip, goes on after a failure while the other unit runs', async () => {
+    set('workflows.planRunOnFailure', 'skip', 'project:tea');
+    agent = (prompt) => (prompt.includes('Unit: U1 ') ? 'fail' : opensPullRequest(prompt));
+    await follow();
+    start('gated');
+    await runBecomes('pr1.U1', (row) => row.state === 'failed');
+    await runBecomes('pr1.U3', (row) => row.state === 'waiting');
+    await server.hosts.idle();
+    expect(planRun()).toMatchObject({ state: 'running', message: null });
+    dispatch({ type: 'workflowRun.continue', runId: 'pr1.U3' });
+    const waiting = await planRunBecomes(
+      (row) => row.state === 'waiting' && !row.waitingFor.some((s) => s.startsWith('No pull')),
+    );
+    expect(waiting.waitingFor).toEqual([
+      'The run for U1 failed',
+      'U2 waits for U1 to merge',
+      'U3 waits for its pull request to merge',
+    ]);
+  });
+});
+
 describe('refusing a plan run (spec 46, 47)', () => {
   it('refuses a stale plan and names the stale file', async () => {
     await writePlan({ 'spec.md': specMd(2) });
@@ -636,7 +707,7 @@ describe('refusing a plan run (spec 46, 47)', () => {
     await follow();
     start('gated');
     expect(refusal(() => start('deliver', 'pr2'))).toBe(
-      'A plan run is already going on this plan, and a plan runs one unit at a time',
+      'A plan run is already going on this plan, and a plan has one plan run at a time',
     );
     expect(planRun('pr2')).toBeUndefined();
     dispatch({ type: 'planRun.stop', planRunId: 'pr1' });

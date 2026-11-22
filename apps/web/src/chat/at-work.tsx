@@ -1,4 +1,4 @@
-import type { Decision, Project, Thread, ThreadActivity } from '@wow/contracts';
+import type { Decision, Project, Thread, ThreadActivity, WorkflowRun } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { ActivityIcon, PlusIcon } from 'lucide-react';
@@ -78,10 +78,19 @@ export function atWorkRows(
   );
 }
 
-function where(thread: Thread, projects: readonly Project[]): string {
+// The project, the unit a plan run's step thread works on (agent orchestration spec 15), and the
+// branch or folder.
+export function where(
+  thread: Thread,
+  projects: readonly Project[],
+  runs: readonly WorkflowRun[] = [],
+): string {
   const project = projects.find((candidate) => candidate.id === thread.projectId);
+  const unit = runs.find((run) => run.id === thread.runId)?.unit;
   const place = thread.branch ?? thread.cwd.split(/[\\/]/).findLast((part) => part !== '') ?? '';
-  return [project?.name, place].filter((part) => part !== undefined && part !== '').join(' · ');
+  return [project?.name, unit ? `Unit ${unit.unitKey}` : undefined, place]
+    .filter((part) => part !== undefined && part !== '')
+    .join(' · ');
 }
 
 function RowLine({ row }: { readonly row: AtWorkRow }) {
@@ -126,6 +135,7 @@ export function ThreadsAtWork() {
   const activity = useTopic('threadActivity');
   const decisions = useTopic('decisions') ?? [];
   const projects = useTopic('projects') ?? [];
+  const runs = useTopic('workflowRuns') ?? [];
   const list = useRef<HTMLDivElement>(null);
   if (threads === undefined || activity === undefined) return null;
   const rows = atWorkRows(threads, activity, decisions);
@@ -218,7 +228,7 @@ export function ThreadsAtWork() {
                 <span className="truncate text-2xs font-normal text-muted-foreground">
                   {[
                     row.helperOf === undefined ? undefined : `Helper of ${row.helperOf}`,
-                    where(row.thread, projects),
+                    where(row.thread, projects, runs),
                   ]
                     .filter(Boolean)
                     .join(' · ')}

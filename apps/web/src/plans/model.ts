@@ -224,6 +224,10 @@ export function planRunUnitLabel(unit: PlanRunUnit, run: WorkflowRun | undefined
   return { done: 'Done', failed: 'Failed', stopped: 'Stopped' }[unit.outcome];
 }
 
+// The step a live unit's run is at, by its id in the workflow.
+export const planRunUnitStep = (run: WorkflowRun | undefined): string | undefined =>
+  run?.steps[run.currentStep]?.stepId;
+
 // A plan file's path inside its project's folder: the intents folder, the intent, the file.
 export const planFilePath = (directory: string, intentId: string, name: string): string =>
   `${directory.replace(/[\\/]+$/, '')}/${intentId}/${name}`;

@@ -845,9 +845,9 @@ export const PlanIntent = z.object({
 });
 export type PlanIntent = z.infer<typeof PlanIntent>;
 
-// A plan run works through a plan's ready units, one ordinary run per unit and one at a time
-// (review loop spec 40 to 47). `running` while a unit's run is live, `waiting` while units remain
-// and none is ready, `done` when every unit is delivered, `failed` when a unit's run failed or
+// A plan run works through a plan's ready units, one ordinary run per unit, up to
+// `workflows.planRunParallel` at once (review loop spec 40 to 47, agent orchestration spec 13).
+// `running` while a unit's run is live, `waiting` while units remain and none is ready, `done` when every unit is delivered, `failed` when a unit's run failed or
 // was stopped and `workflows.planRunOnFailure` is `stop`, `stopped` by the user.
 export const PlanRunState = z.enum(['running', 'waiting', 'done', 'failed', 'stopped']);
 export type PlanRunState = z.infer<typeof PlanRunState>;
