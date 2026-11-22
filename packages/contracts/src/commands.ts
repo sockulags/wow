@@ -11,6 +11,7 @@ import {
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
   ChangeCount,
+  ReportedLimit,
   AppNotification,
   Approval,
   BacklogItem,
@@ -59,6 +60,7 @@ import {
   ApprovalDecision,
   BackgroundTask,
   ProviderEvent,
+  ProviderLimit,
   ProviderKind,
   ProviderTestResult,
   ProviderUpdate,
@@ -838,6 +840,12 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   // The apply service wrote a thread's changes into the project folder, or undid that (parallel
   // threads spec 8, 9): the line on the thread's last turn.
+  // The provider service passes on the plan limits a session reported (chat overview spec 25).
+  z.object({
+    type: z.literal('providerInstance.limitsReported'),
+    providerInstanceId: Id,
+    limits: z.array(ProviderLimit),
+  }),
   // The snapshot service measured what a chat thread's turn changed, and what the thread has
   // changed as of then (chat overview spec 1, 4); null where it could not tell.
   z.object({
@@ -1425,6 +1433,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   }),
   // The `changes_applied` line (parallel threads spec 8); with `undoOf`, that apply is marked
   // undone.
+  // An instance's plan limits after a report, every window it has (chat overview spec 26).
+  z.object({
+    kind: z.literal('providerInstance.limitsReported'),
+    aggregate: Id,
+    payload: z.object({ providerInstanceId: Id, limits: z.array(ReportedLimit) }),
+  }),
   // A thread's change count as of its last turn's end (chat overview spec 4).
   z.object({
     kind: z.literal('thread.changeCounted'),

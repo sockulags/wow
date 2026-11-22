@@ -22,6 +22,7 @@ import type {
   ProviderTestResult,
   QuestionReply,
   SessionTools,
+  ProviderLimit,
   TaskStatus,
   ToolImage,
 } from '@wow/contracts';
@@ -212,6 +213,43 @@ const toProviderModel = (model: ModelInfo): ProviderModel => ({
   description: model.description,
   efforts: model.supportedEffortLevels ?? [],
 });
+
+// Claude Code's rate limit info in wow's words (chat overview spec 25). `utilization` is a share
+// of the window, given either as a fraction or as a percent; `resetsAt` is seconds since the
+// epoch (milliseconds are taken as they are).
+const windows: Readonly<Record<string, Pick<ProviderLimit, 'window' | 'label'>>> = {
+  five_hour: { window: 'fiveHour', label: null },
+  seven_day: { window: 'week', label: null },
+  seven_day_opus: { window: 'weekModel', label: 'Opus' },
+  seven_day_sonnet: { window: 'weekModel', label: 'Sonnet' },
+  seven_day_overage_included: { window: 'other', label: 'Weekly, with extra usage' },
+  overage: { window: 'other', label: 'Extra usage' },
+};
+
+function planLimit(info: {
+  readonly status: string;
+  readonly resetsAt?: number | undefined;
+  readonly rateLimitType?: string | undefined;
+  readonly utilization?: number | undefined;
+}): ProviderLimit | undefined {
+  const named = windows[info.rateLimitType ?? ''];
+  if (!named) return undefined;
+  const used =
+    info.utilization === undefined || !Number.isFinite(info.utilization)
+      ? null
+      : Math.min(100, Math.max(0, info.utilization <= 1 ? info.utilization * 100 : info.utilization));
+  const resets =
+    info.resetsAt === undefined || !Number.isFinite(info.resetsAt)
+      ? null
+      : new Date(info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt).toISOString();
+  return {
+    ...named,
+    usedPercent: used,
+    resetsAt: resets,
+    state:
+      info.status === 'rejected' ? 'reached' : info.status === 'allowed_warning' ? 'warning' : 'ok',
+  };
+}
 
 // The pictures of a tool's result (chat overview spec 31): image blocks with base64 data, such
 // as a screenshot an MCP browser tool took or a picture the Read tool opened.
@@ -680,6 +718,13 @@ export class ClaudeAdapter implements ProviderAdapter {
   async #handle(session: Session, message: SDKMessage): Promise<void> {
     const threadId = session.threadId;
     switch (message.type) {
+      // A claude.ai plan's limit as Claude Code reports it (chat overview spec 25). API keys and
+      // other providers send none, and nothing is asked for.
+      case 'rate_limit_event': {
+        const limit = planLimit(message.rate_limit_info);
+        if (limit) this.#emit({ type: 'limits', threadId, limits: [limit] });
+        return;
+      }
       case 'system':
         // The assistant's session (the app's tools only) has no Tools tab (spec 43).
         if (message.subtype === 'init' && !session.toolsOnly) {

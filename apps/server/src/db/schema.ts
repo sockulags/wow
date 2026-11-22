@@ -1,6 +1,7 @@
 import type {
   AssistantChangeRecord,
   ChangeCount,
+  ReportedLimit,
   AssistantChangeState,
   AssistantPermissionKind,
   AssistantPlace,
@@ -166,6 +167,12 @@ export const threads = sqliteTable(
   },
   (table) => [index('threads_project_idx').on(table.projectId)],
 );
+
+// The plan limits each provider instance last reported, one per window (chat overview spec 26).
+export const providerLimits = sqliteTable('provider_limits', {
+  providerInstanceId: text().primaryKey(),
+  limits: json<ReportedLimit[]>().notNull(),
+});
 
 export const turns = sqliteTable(
   'turns',

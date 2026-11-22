@@ -11,6 +11,7 @@ import {
   ProviderUpdate,
   ProviderUpdateRun,
   ImagesOmitted,
+  ProviderLimit,
   TaskStatus,
   ThreadState,
   ToolFacts,
@@ -751,6 +752,8 @@ export const NotificationKind = z.enum([
   'finished',
   'briefing',
   'reminder',
+  // A plan limit crossed the warning or was reached (chat overview spec 29).
+  'limit',
 ]);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
@@ -937,6 +940,16 @@ export type EventRecord = z.infer<typeof EventRecord>;
 // turn only, so the overview needs no thread's items: the running tool call as its payload (the
 // web names it as the working line does), how many calls the turn made, and the last line of its
 // last answer, cut at `chat.activityTextMaxLength`.
+// The plan limits a provider instance last reported, one per window, each with when it was
+// reported (chat overview spec 26).
+export const ReportedLimit = ProviderLimit.extend({ reportedAt: Timestamp });
+export type ReportedLimit = z.infer<typeof ReportedLimit>;
+export const ProviderLimits = z.object({
+  providerInstanceId: Id,
+  limits: z.array(ReportedLimit),
+});
+export type ProviderLimits = z.infer<typeof ProviderLimits>;
+
 export const ThreadActivity = z.object({
   threadId: Id,
   turnId: Id.nullable(),

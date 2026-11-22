@@ -683,6 +683,15 @@ export const settingsRegistry = {
     default: 4,
     scope: 'global',
   }),
+  'chat.limitWarnPercent': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'chat',
+    label: 'Warn about a plan limit at (%)',
+    description:
+      "From how much of a plan limit window used the composer shows it in amber and wow tells you once per window. Only what the provider reports counts; Claude Code reports a claude.ai plan's limits.",
+    default: 80,
+    scope: 'global',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

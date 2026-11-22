@@ -1,3 +1,4 @@
+import { decideLimits, isLimitsCommand } from './provider-limits.js';
 import {
   projectCodeHost,
   SecretRef,
@@ -21,6 +22,7 @@ import {
   type EventTrigger,
   type Project,
   type ProviderInstance,
+  type ReportedLimit,
   type ResumePointRef,
   type StoredSnapshot,
   type Question,
@@ -67,6 +69,8 @@ export interface ReadModel {
   providerInstance(id: string): ProviderInstance | undefined;
   // Every instance, in the order they were made.
   providerInstances(): ProviderInstance[];
+  // The plan limits an instance last reported, one per window (chat overview spec 26).
+  providerLimits(id: string): ReportedLimit[];
   // Chat and step threads that use the instance, and how many turns run on it (the assistant's
   // turn included).
   instanceUsage(id: string): { readonly threads: number; readonly runningTurns: number };
@@ -242,6 +246,7 @@ export function decide(
   context: DecideContext,
 ): DomainEvent[] {
   if (isProjectCommand(command)) return decideProject(command, read, context);
+  if (isLimitsCommand(command)) return decideLimits(command, read, context);
   if (isProviderInstanceCommand(command)) return decideProviderInstance(command, read);
   if (isThreadCommand(command)) return decideThread(command, read, context);
   if (isTriggerCommand(command)) return decideTrigger(command, read, context);

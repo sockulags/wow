@@ -59,6 +59,7 @@ import {
   planRuns,
   projects,
   providerInstances,
+  providerLimits,
   questions,
   settings,
   skills,
@@ -541,6 +542,14 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       }
       return ['threadItems'];
     }
+    case 'providerInstance.limitsReported': {
+      const { providerInstanceId, limits } = event.payload;
+      tx.insert(providerLimits)
+        .values({ providerInstanceId, limits })
+        .onConflictDoUpdate({ target: providerLimits.providerInstanceId, set: { limits } })
+        .run();
+      return ['providerLimits'];
+    }
     case 'thread.changeCounted':
       tx.update(threads)
         .set({ changeCount: event.payload.changeCount })
@@ -991,6 +1000,9 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(providerInstances)
         .orderBy(sql`rowid`)
         .all(),
+    providerLimits: (id) =>
+      tx.select().from(providerLimits).where(eq(providerLimits.providerInstanceId, id)).get()
+        ?.limits ?? [],
     instanceUsage: (id) => ({
       // The assistant thread does not hold an instance: it moves to another one (spec 27).
       threads:

@@ -1,3 +1,4 @@
+import { LimitChip } from './limits';
 import {
   nextPermissionMode,
   type PermissionModeTone,
@@ -427,6 +428,7 @@ export function ModelBar({
           ))}
         </BarList>
       )}
+      <LimitChip providerInstanceId={providerInstanceId} />
     </div>
   );
 }

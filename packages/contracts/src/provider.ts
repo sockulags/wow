@@ -186,6 +186,22 @@ export type ToolKind = z.infer<typeof ToolKind>;
 export const AgentState = z.enum(['starting', 'running', 'done', 'failed', 'stopped', 'missing']);
 export type AgentState = z.infer<typeof AgentState>;
 
+// How much of a plan limit is used, as the provider reports it (chat overview spec 25): which
+// window (Claude's five-hour and weekly ones, a weekly one per model family, or another the
+// provider names in `label`), the share used, when it resets and how the provider rates it.
+export const LimitWindow = z.enum(['fiveHour', 'week', 'weekModel', 'other']);
+export type LimitWindow = z.infer<typeof LimitWindow>;
+export const LimitState = z.enum(['ok', 'warning', 'reached']);
+export type LimitState = z.infer<typeof LimitState>;
+export const ProviderLimit = z.object({
+  window: LimitWindow,
+  label: z.string().min(1).nullable(),
+  usedPercent: z.number().min(0).max(100).nullable(),
+  resetsAt: z.iso.datetime({ offset: true }).nullable(),
+  state: LimitState,
+});
+export type ProviderLimit = z.infer<typeof ProviderLimit>;
+
 // A picture in a tool's result, as the adapter got it (chat overview spec 31): its bytes, or the
 // path of a file the tool showed (Codex's image view), which the server reads within its limits.
 export const ToolImage = z.union([
@@ -289,6 +305,9 @@ export const ProviderEvent = z.discriminatedUnion('type', [
   // The provider started a turn by itself (after background work ended); it ends with the usual
   // turnCompleted, turnFailed or turnInterrupted.
   z.object({ type: z.literal('turnStartedByProvider'), ...ThreadScoped }),
+  // Plan limits the provider reported during the thread's session (chat overview spec 25). Not
+  // a thread item: the server keeps them per provider instance.
+  z.object({ type: z.literal('limits'), ...ThreadScoped, limits: z.array(ProviderLimit) }),
   // Every background task still running, after a change: the list replaces the one before.
   z.object({
     type: z.literal('backgroundTasks'),

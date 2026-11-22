@@ -54,6 +54,7 @@ import {
   Skill,
   Thread,
   ThreadActivity,
+  ProviderLimits,
   ThreadItem,
   TrackerService,
   Trigger,
@@ -122,6 +123,8 @@ export const subscriptionTopics = {
   decisions: { row: Decision, threadScoped: false },
   // What each thread at work does now (parallel threads spec 11, 12).
   threadActivity: { row: ThreadActivity, threadScoped: false },
+  // The plan limits each provider instance last reported (chat overview spec 26).
+  providerLimits: { row: ProviderLimits, threadScoped: false },
   // The assistant's briefings, newest first (chief of staff spec 20 to 23).
   briefings: { row: Briefing, threadScoped: false },
   // Setup files applied here, in the order applied, with their Undo state.

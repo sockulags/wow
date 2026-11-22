@@ -1,3 +1,4 @@
+import { LimitList, useInstanceLimits } from '@/chat/limits';
 import {
   DetectedProvider,
   SecretRef,
@@ -192,6 +193,10 @@ function InstanceRow({
           {instance.statusMessage}
         </p>
       )}
+      <div className="flex flex-col gap-1">
+        <h4 className="text-xs font-medium text-muted-foreground">Plan limits</h4>
+        <InstanceLimits providerInstanceId={instance.id} />
+      </div>
       {(instance.update || instance.updateRun) && <UpdateOffer instance={instance} />}
       {error && (
         <p role="alert" className="text-xs text-destructive">
@@ -286,4 +291,9 @@ export function ProvidersSection() {
       )}
     </section>
   );
+}
+
+// What the instance last reported of its plan's limits (chat overview spec 28).
+function InstanceLimits({ providerInstanceId }: { readonly providerInstanceId: string }) {
+  return <LimitList limits={useInstanceLimits(providerInstanceId)} />;
 }

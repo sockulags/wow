@@ -15,6 +15,7 @@ import {
   type ProviderAdapter,
   type ImagesOmitted,
   type ProviderCommand,
+  type ProviderLimit,
   type ToolImage,
   type ToolStoredImage,
   type ProviderInstance,
@@ -981,6 +982,11 @@ export class ProviderService {
       this.#toolsReported(parsed.data.threadId, parsed.data.tools, 'turn');
       return;
     }
+    // Nor are plan limits, which belong to the thread's provider instance (chat overview spec 26).
+    if (parsed.data.type === 'limits') {
+      this.#limitsReported(parsed.data.threadId, parsed.data.limits);
+      return;
+    }
     const stored = this.#withStoredImages(parsed.data);
     const batch = this.#pending.get(stored.threadId);
     if (batch) batch.push(stored);
@@ -988,6 +994,24 @@ export class ProviderService {
     if (this.#flushScheduled || this.#stopped) return;
     this.#flushScheduled = true;
     setImmediate(() => this.#flush());
+  }
+
+  #limitsReported(threadId: string, limits: readonly ProviderLimit[]): void {
+    const instance = this.#deps.db
+      .select({ providerInstanceId: threads.providerInstanceId })
+      .from(threads)
+      .where(eq(threads.id, threadId))
+      .get()?.providerInstanceId;
+    if (instance === undefined || limits.length === 0) return;
+    try {
+      this.#deps.engine.dispatch(`limits:${randomUUID()}`, {
+        type: 'providerInstance.limitsReported',
+        providerInstanceId: instance,
+        limits: [...limits],
+      });
+    } catch (error) {
+      this.#deps.logger.warn('the plan limits were not stored', describeError(error));
+    }
   }
 
   // A tool's pictures are stored before the event is: the item names them by id (chat overview

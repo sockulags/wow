@@ -527,6 +527,61 @@ describe('@wow/provider-claude', () => {
     ]);
   });
 
+  it("passes a plan's rate limit on as a limit in wow's words (chat overview spec 25)", async () => {
+    const limit = (info: Record<string, unknown>): FakeStep => ({
+      message: {
+        type: 'rate_limit_event',
+        rate_limit_info: info,
+        uuid: 'rl',
+        session_id: 'sess-1',
+      } as unknown as SDKMessage,
+    });
+    const h = harness([
+      [
+        limit({
+          status: 'allowed_warning',
+          rateLimitType: 'five_hour',
+          utilization: 0.84,
+          resetsAt: 1_795_400_000,
+        }),
+        limit({ status: 'rejected', rateLimitType: 'seven_day_opus', utilization: 100 }),
+        limit({ status: 'allowed', rateLimitType: 'something_new' }),
+        result(0),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.events.filter((event) => event.type === 'limits')).toEqual([
+      {
+        type: 'limits',
+        threadId: 't1',
+        limits: [
+          {
+            window: 'fiveHour',
+            label: null,
+            usedPercent: 84,
+            resetsAt: new Date(1_795_400_000_000).toISOString(),
+            state: 'warning',
+          },
+        ],
+      },
+      {
+        type: 'limits',
+        threadId: 't1',
+        limits: [
+          {
+            window: 'weekModel',
+            label: 'Opus',
+            usedPercent: 100,
+            resetsAt: null,
+            state: 'reached',
+          },
+        ],
+      },
+    ]);
+  });
+
   it('starts Claude Code with the instance binary, config directory, env and launch args', async () => {
     const h = harness([[result(0.01)]]);
     const done = h.next('turnCompleted');
