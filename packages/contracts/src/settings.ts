@@ -590,6 +590,15 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
+  'chat.snapshotReadsAtOnce': defineSetting({
+    schema: z.number().int().min(1).max(1024),
+    group: 'chat',
+    label: 'Files looked at at once in a snapshot',
+    description:
+      "How many of a thread's files wow looks at side by side while it takes a snapshot. More is faster on a fast disk; fewer leaves more room for other programs.",
+    default: 32,
+    scope: 'global',
+  }),
   'chat.snapshotKeepDays': defineSetting({
     schema: z.number().int().min(1).max(3650),
     group: 'chat',

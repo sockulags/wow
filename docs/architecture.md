@@ -1688,7 +1688,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.exportReasoning` (see "Find in the conversation and copy it"), `chat.ownWorkingCopy`,
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
-  `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotKeepDays`,
+  `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
   `chat.editRestoresFiles` (see "Restore files when going back"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
@@ -3681,13 +3681,15 @@ not the Assistant) at each turn's start and end, so the user can put them back.
   the user's repository, and both only read: no object, ref, index entry, stash or HEAD change is
   ever written there.
 - **Taking one.** `take(threadId, turnId, 'start' | 'end')`: the listed files (over
-  `chat.snapshotMaxFiles` gives none), `lstat` each: a link is kept as its own text (mode
+  `chat.snapshotMaxFiles` gives none), `lstat` each, `chat.snapshotReadsAtOnce` side by side: a link is kept as its own text (mode
   120000, never followed), a file over `chat.snapshotMaxFileBytes` is left out and named with its
   size in `omitted`, a name with a line break or one this system cannot write back is left out
   too. Files whose size, time and mode match the store's `wow-manifest.json` and whose time is
   before the last read began (Git's "racily clean" rule, measured with a scratch file's time) keep
   their blob; the rest go through `hash-object --no-filters -w --stdin-paths` (exact bytes, CRLF
-  kept, no filter). `update-index --index-info` and `write-tree` make the tree; a ref
+  kept, no filter). `update-index --index-info` and `write-tree` make the tree, which the
+  manifest names as `tree`; each snapshot logs its file count, how many were hashed and its time.
+  A ref
   `refs/turns/<sha of turn id>-<start|end>` keeps it. The executable bit is read where the system
   has one; on Windows a file keeps the mode it had in the last snapshot. The result is recorded
   with the internal `thread.snapshotTaken {threadId, turnId, at, snapshot}` (event
@@ -3741,8 +3743,9 @@ removed, failed, undoOf?, undoneBy?, edit?, at}` on the thread's last turn, and 
   could not be written fails the turn with the reason and nothing is sent. Its line has
   `edit: true` and no Undo.
 - **Expiry.** `expire()` (at start and after each end snapshot) drops each snapshot older than
-  `chat.snapshotKeepDays` by the server's clock: its ref and old restore trees go, the manifest is
-  removed, `git prune --expire=now` runs in the store, and `thread.snapshotsDropped {threadId,
+  `chat.snapshotKeepDays` by the server's clock: its ref and old restore trees go,
+  `git prune --expire=now` runs in the store, the manifest is removed only when its `tree` is no
+  longer in the store (a manifest without one is removed; a kept tree keeps all its blobs), and `thread.snapshotsDropped {threadId,
 turnIds, before}` sets those snapshots to `{missing}`, so the turns stop offering Restore.
   Turns stored before have none and offer none (spec 44).
 - **Web.** `chat/restore.tsx`: `restoreStore` with `askRestore` (reads the preview),

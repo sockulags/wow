@@ -1246,6 +1246,21 @@ export async function pruneSnapshotStore(
   return pruned.ok ? { ok: true } : { ok: false, message: pruned.message };
 }
 
+// Whether the store still holds a tree, and so every blob in it (a prune keeps what a ref reaches
+// whole). Any failure answers false: the caller then reads every file again, which is only slower.
+export async function snapshotTreeKept(
+  store: string,
+  tree: string,
+  options: GitRunOptions,
+): Promise<boolean> {
+  const found = await runStoreGit(
+    ['cat-file', '-e', `${tree}^{tree}`],
+    { cwd: store, store, maxBytes: 4096 },
+    options,
+  );
+  return found.ok;
+}
+
 // Every file of a snapshot tree, with its size.
 export async function readSnapshotTree(
   store: string,

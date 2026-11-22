@@ -41,6 +41,7 @@ import {
   readSnapshotBlobs,
   readSnapshotRepository,
   readSnapshotTree,
+  snapshotTreeKept,
   updateSnapshotRefs,
   writeSnapshotTree,
   type GitRunOptions,
@@ -95,8 +96,25 @@ interface ManifestEntry {
 interface Manifest {
   // When that snapshot began reading, in the file system's clock as seen through a scratch file.
   readonly readAt: number;
+  // The tree that snapshot made. Its blobs are safe to reuse only while the store holds it; a
+  // manifest written before this was kept has none and is read as if absent after a prune.
+  readonly tree?: string;
   readonly files: Readonly<Record<string, ManifestEntry>>;
 }
+
+// One listed path after its `lstat`: kept from the manifest, to hash, or left out.
+type Looked =
+  | { readonly kind: 'skip' }
+  | { readonly kind: 'omit'; readonly file: OmittedFile }
+  | { readonly kind: 'keep'; readonly entry: SnapshotEntry; readonly known: ManifestEntry }
+  | {
+      readonly kind: 'hash';
+      readonly path: string;
+      readonly source: string;
+      readonly mode: string;
+      readonly size: number;
+      readonly mtimeMs: number;
+    };
 
 interface Plan {
   readonly write: string[];
@@ -321,6 +339,7 @@ export class FolderSnapshots {
 
   // Reads the folder into the store: the tree, unreferenced until a ref keeps it.
   async #takeIn(folder: string, store: string): Promise<Taken> {
+    const began = Date.now();
     const deadline = this.#deadline();
     const timeoutMs = this.#deps.settings.get('chat.snapshotTimeoutMs');
     const outOfTime = {
@@ -366,29 +385,32 @@ export class FolderSnapshots {
         [];
       const next: Record<string, ManifestEntry> = {};
       let links = 0;
-      for (const relative of listed.paths) {
-        if (Date.now() >= deadline) return outOfTime;
+      const look = async (relative: string): Promise<Looked> => {
         // A name git cannot take on stdin, or one this system cannot write back, is left out.
         if (relative.includes('\n') || unsafeSnapshotPath(relative, this.#deps.platform)) {
-          omitted.push({ path: relative, size: 0 });
-          continue;
+          return { kind: 'omit', file: { path: relative, size: 0 } };
         }
         const file = fullPath(folder, relative);
         const found = await lstat(file).catch(() => undefined);
         // Deleted since git listed it, a submodule or a nested repository's folder.
-        if (!found || found.isDirectory()) continue;
+        if (!found || found.isDirectory()) return { kind: 'skip' };
         if (found.isSymbolicLink()) {
           // Kept as the link's own text and never followed.
-          const target = await readlink(file, { encoding: 'buffer' });
           const source = path.join(scratch, `link-${(links += 1)}`);
+          const target = await readlink(file, { encoding: 'buffer' });
           await writeFile(source, target);
-          hash.push({ path: relative, source, mode: '120000', size: target.length, mtimeMs: -1 });
-          continue;
+          return {
+            kind: 'hash',
+            path: relative,
+            source,
+            mode: '120000',
+            size: target.length,
+            mtimeMs: -1,
+          };
         }
-        if (!found.isFile()) continue;
+        if (!found.isFile()) return { kind: 'skip' };
         if (found.size > maxBytes) {
-          omitted.push({ path: relative, size: found.size });
-          continue;
+          return { kind: 'omit', file: { path: relative, size: found.size } };
         }
         const known = manifest?.files[relative];
         // Windows has no executable bit; the mode the file had in the last snapshot stays.
@@ -406,11 +428,37 @@ export class FolderSnapshots {
           known.mode === mode &&
           found.mtimeMs < manifest.readAt
         ) {
-          entries.push({ mode, id: known.id, path: relative });
-          next[relative] = known;
-          continue;
+          return { kind: 'keep', entry: { mode, id: known.id, path: relative }, known };
         }
-        hash.push({ path: relative, source: file, mode, size: found.size, mtimeMs: found.mtimeMs });
+        return {
+          kind: 'hash',
+          path: relative,
+          source: file,
+          mode,
+          size: found.size,
+          mtimeMs: found.mtimeMs,
+        };
+      };
+      // Several at once: one `lstat` after another is most of a large folder's time on Windows.
+      const batch = this.#deps.settings.get('chat.snapshotReadsAtOnce');
+      for (let start = 0; start < listed.paths.length; start += batch) {
+        if (Date.now() >= deadline) return outOfTime;
+        const looked = await Promise.all(listed.paths.slice(start, start + batch).map(look));
+        for (const one of looked) {
+          if (one.kind === 'omit') omitted.push(one.file);
+          else if (one.kind === 'keep') {
+            entries.push(one.entry);
+            next[one.entry.path] = one.known;
+          } else if (one.kind === 'hash') {
+            hash.push({
+              path: one.path,
+              source: one.source,
+              mode: one.mode,
+              size: one.size,
+              mtimeMs: one.mtimeMs,
+            });
+          }
+        }
       }
       const hashed = await hashSnapshotFiles(
         store,
@@ -433,8 +481,13 @@ export class FolderSnapshots {
         this.#git(deadline),
       );
       if (!tree.ok) return Date.now() >= deadline ? outOfTime : { missing: tree.message };
-      const kept: Manifest = { readAt, files: next };
+      const kept: Manifest = { readAt, tree: tree.tree, files: next };
       await writeFile(path.join(store, 'wow-manifest.json'), JSON.stringify(kept));
+      this.#deps.logger.info('snapshot taken', {
+        files: entries.length,
+        hashed: hash.length,
+        ms: Date.now() - began,
+      });
       return {
         tree: tree.tree,
         files: entries.length,
@@ -984,10 +1037,14 @@ export class FolderSnapshots {
           this.#deps.logger.warn('old snapshots were not dropped', deleted.message);
           return false;
         }
-        // The kept blob ids may be among what goes, so the next snapshot reads every file.
-        await rm(path.join(store, 'wow-manifest.json'), { force: true });
         const pruned = await pruneSnapshotStore(store, git);
         if (!pruned.ok) this.#deps.logger.warn('the snapshot store was not pruned', pruned.message);
+        // The manifest stays while its tree does, so a folder in daily use is not read whole
+        // again each time a turn ages out; when the tree went, its blobs may have gone with it.
+        const manifest = await this.#manifest(store);
+        if (!manifest?.tree || !(await snapshotTreeKept(store, manifest.tree, git))) {
+          await rm(path.join(store, 'wow-manifest.json'), { force: true });
+        }
         return true;
       });
       if (!done) continue;

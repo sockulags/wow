@@ -372,6 +372,40 @@ describe('snapshots of a turn (spec 19)', () => {
     );
   });
 
+  it('reads the folder in several groups and keeps every file and link apart', async () => {
+    dispatch({ type: 'setting.set', key: 'chat.snapshotReadsAtOnce', scope: 'global', value: 2 });
+    dispatch({ type: 'setting.set', key: 'chat.snapshotMaxFileBytes', scope: 'global', value: 64 });
+    for (const n of [1, 2, 3, 4, 5]) await writeFile(file(`docs/page ${n}.md`), `Page ${n}\n`);
+    await writeFile(file('big.bin'), 'x'.repeat(100));
+    await symlink('../first', file('docs/one'));
+    await symlink('../second', file('docs/two'));
+    send('Make the bell ring twice: edit the bell');
+    await turnEnds(0);
+    const start = turnRows()[0]?.startSnapshot as { tree: string; omitted: unknown[] };
+    expect(start.omitted).toEqual([{ path: 'big.bin', size: 100 }]);
+    expect(treeFiles(start.tree)).toEqual(
+      [
+        '.gitignore',
+        'docs/old.md',
+        'docs/one',
+        'docs/page 1.md',
+        'docs/page 2.md',
+        'docs/page 3.md',
+        'docs/page 4.md',
+        'docs/page 5.md',
+        'docs/two',
+        'src/bell.ts',
+      ].toSorted(),
+    );
+    expect(git(storeOf(), 'cat-file', '-p', `${start.tree}:docs/page 4.md`)).toBe('Page 4');
+    expect(git(storeOf(), 'cat-file', '-p', `${start.tree}:docs/one`)).toBe(
+      path.join('..', 'first'),
+    );
+    expect(git(storeOf(), 'cat-file', '-p', `${start.tree}:docs/two`)).toBe(
+      path.join('..', 'second'),
+    );
+  });
+
   it('says why there is none for a folder outside Git, and the turn still goes', async () => {
     const plain = path.join(root, 'plain folder');
     await mkdir(plain);
@@ -730,6 +764,25 @@ describe('refusals (spec 23, 26, 44)', () => {
       message: expect.stringContaining('dropped'),
     });
     expect(git(storeOf(), 'for-each-ref')).toBe('');
+    // Nothing keeps the last tree any more, so its blobs may be gone: every file is read again.
+    expect(existsSync(path.join(storeOf(), 'wow-manifest.json'))).toBe(false);
+  });
+
+  it('keeps what the last snapshot read when only older turns are dropped', async () => {
+    send('Make the bell ring twice: edit the bell');
+    await turnEnds(0);
+    now += 31 * dayMs;
+    send('Now add the notes');
+    await turnEnds(1);
+    expect(topicTurns().map((turn) => turn.restorable)).toEqual([false, true]);
+    const manifest = JSON.parse(
+      await readFile(path.join(storeOf(), 'wow-manifest.json'), 'utf8'),
+    ) as { tree?: string; files: Record<string, { id: string }> };
+    expect(manifest.tree).toBe(tree(turnRows()[1]?.endSnapshot));
+    // Every blob the manifest names survived the prune, so the next snapshot can reuse it.
+    for (const { id } of Object.values(manifest.files)) {
+      expect(git(storeOf(), 'cat-file', '-t', id)).toBe('blob');
+    }
   });
 
   it('waits for an end snapshot in flight when the server stops and starts no work after it', async () => {
