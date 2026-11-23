@@ -701,6 +701,15 @@ export const settingsRegistry = {
     default: 200_000,
     scope: 'global',
   }),
+  'chat.mentionMaxChars': defineSetting({
+    schema: z.number().int().min(500).max(200_000),
+    group: 'chat',
+    label: 'Longest thread or item put in a message (characters)',
+    description:
+      "How much of another thread's last answer or a backlog item's text `@` puts into a message; longer text is cut with a line saying so.",
+    default: 20_000,
+    scope: 'global',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

@@ -203,19 +203,16 @@ It names their files as they are at 0.5.0.
     Claude is left for later), and so is a file over the limit or one that is not text. A file
     inside the thread's folder is not turned into an `@` mention: the browser does not tell wow
     where a dropped file lies; `@` names such files.
-36. **Threads and backlog items** (U10): the `@` list has two more sections after the files.
-    - **Threads**: other threads, newest first, matched by title.
-    - **Backlog**: open backlog items, matched by title.
+36. **Threads and backlog items** (U10): the `@` list of a chat thread's composer has two more
+    sections after the files: **Threads** (other chat threads, newest first, matched by title;
+    never the thread itself, a workflow step's or the Assistant's) and **Backlog** (backlog
+    items not done, matched by title). A pick puts a fenced block into the message text:
+    - for a thread: its title, project and its last answer of its own agent;
+    - for a backlog item: its title, state, tags and body;
 
-    A pick becomes a chip. When the message is sent, wow adds a block after the text for each:
-    - for a thread: its title, project and its last answer (or, with `chat.mentionThreadWhole`
-      on, the thread as its Markdown export without tool output), cut at
-      `chat.mentionMaxChars` (20 000) with a line saying so;
-    - for a backlog item: its title, state, tags and body.
-
-    The sent message's chip shows what was added. The thread named is not changed or told.
-    Workflow step threads and the Assistant thread are not offered. A thread or item deleted
-    before sending is dropped from the message with a notice.
+    cut at `chat.mentionMaxChars` (20 000) with a line saying so. The block is in the text, so
+    the user sees and can edit exactly what the agent gets, and the sent message shows it. The
+    thread named is not changed or told.
 
 37. **Host items** (U11, waits on intent open question 1): the `@` list gets a third section,
     **Issues and tickets**. It holds the items wow has already read for the project's hosts:
@@ -332,10 +329,9 @@ ProviderLimit[]}` in `packages/contracts/src/provider.ts`. Topic `providerLimits
 
 ### U10 Mentions of threads and backlog items
 
-- Decided: `SentMention {kind: 'thread' | 'backlog', id, title, text}` on the message, `text`
-  being exactly what was added. The server builds `text` when the message is sent, never the
-  client.
-- Decided: settings `chat.mentionMaxChars` (20 000), `chat.mentionThreadWhole` (false).
+- Decided: the composer builds the block when the item is picked (`chat/mention-blocks.ts`),
+  reading the named thread's items once; no contract and no server change. Setting
+  `chat.mentionMaxChars` (20 000).
 
 ### U11 Mentions of host items
 

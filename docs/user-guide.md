@@ -739,6 +739,15 @@ up to 200 KB are taken (**Largest text file in a message**, `chat.attachTextMaxB
 cannot go into a message yet, and neither can a file that is not text; the composer says why.
 Nothing is copied into the thread's folder. To point the agent at a file in its folder, use `@`.
 
+### Another thread or a backlog item in a message
+
+Type `@` in a chat thread's composer and, after the files, the list offers **Threads** (your
+other threads, newest first) and **Backlog** (items that are not done), matched by what you type.
+Pick one and its text goes into your message as a quoted block: for a thread its title, project
+and last answer; for a backlog item its title, state, tags and body. You can edit the block
+before you send. Up to 20 000 characters go in (**Longest thread or item put in a message**,
+`chat.mentionMaxChars`); a longer text is cut and says so. The other thread is not changed.
+
 ### Skills
 
 Type `/` at the start of a message or after a space to list skills with their descriptions,

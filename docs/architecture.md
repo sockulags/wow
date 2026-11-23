@@ -1705,7 +1705,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
   `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
   notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.limitWarnPercent` (see
-  "Plan limits"), `chat.attachTextMaxBytes` (see "Images in the composer"), `chat.commitTimeoutMs`,
+  "Plan limits"), `chat.attachTextMaxBytes`, `chat.mentionMaxChars` (see "Images in the
+  composer"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3371,6 +3372,13 @@ A dropped or pasted file that is no image (chat overview spec 35) does not go to
 composer as a fenced block headed by its name, fenced past any backticks inside, up to
 `chat.attachTextMaxBytes`. A PDF, a file over the limit and one with NUL or undecodable bytes
 are refused in the composer's error line.
+
+The `@` list also offers other chat threads and backlog items not done or dropped (chat overview spec 36,
+`chat/mention-blocks.ts`: `threadMatches`, `backlogMatches`), five of each. A pick puts a fenced
+block into the text: a thread's title, project and last answer of its own agent (its
+`threadItems` read once with a subscription that closes after the first rows), or a backlog
+item's title, state, tags and body, cut at `chat.mentionMaxChars`. Nothing goes to the named
+thread.
 
 Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attachments.ts`.
 
