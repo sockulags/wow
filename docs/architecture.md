@@ -1699,7 +1699,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `workflows.followTemplate`, `workflows.newTemplate` (see "Workflows as text"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helpersPerTree`, `chat.helperBranch`, `chat.mergeBrief`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
@@ -1721,7 +1721,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - outlook: `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - scheduler: `scheduler.tickSeconds`, `scheduler.missedPolicy`, `scheduler.notifications`,
   `scheduler.paused`, `scheduler.toastSeconds`
-- workflows: `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`,
+- workflows: `workflows.followTemplate`, `workflows.newTemplate` (see "Workflows as text"), `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`,
   `workflows.unitPromptTemplate`, `workflows.planRunOnFailure`, `workflows.planRunParallel` (the
   last three are project-scoped, see "Plan runs"), `workflows.verdictApprovedLine`, `workflows.alwaysStopSkills`,
   `workflows.gateChecksTimeoutMinutes` (project-scoped, see "Gates that pass by themselves"),

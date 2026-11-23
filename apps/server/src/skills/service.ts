@@ -196,9 +196,15 @@ export class SkillsService {
     const generation = this.#ownGeneration;
     const projectDirs = this.#projectDirs();
     const roots = await this.#roots(projectDirs);
-    // Workflow files are listed with the skills (orchestrator threads spec 19, 20).
+    // Workflow files are listed with the skills (orchestrator threads spec 19, 20). Only their
+    // folders that are there are watched: a project without `.wow/workflows` must not cost a scan
+    // per turn, and a file made in Settings › Workflows asks for a scan itself.
     const flows = workflowRoots(this.#deps.wowHome, projectDirs);
-    await this.#watch([...roots, ...flows], projectDirs);
+    const present: SkillRoot[] = [];
+    for (const flow of flows) {
+      if ((await stat(flow.dir).catch(() => undefined))?.isDirectory()) present.push(flow);
+    }
+    await this.#watch([...roots, ...present], projectDirs);
     const scanned = await scanSkills(roots);
     const workflows = await scanWorkflows(flows);
     const problems = [...scanned.problems, ...workflows.problems];
