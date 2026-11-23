@@ -748,6 +748,13 @@ and last answer; for a backlog item its title, state, tags and body. You can edi
 before you send. Up to 20 000 characters go in (**Longest thread or item put in a message**,
 `chat.mentionMaxChars`); a longer text is cut and says so. The other thread is not changed.
 
+Issues, pull requests, tickets and pages can go in the same way, but only for a project where you
+turn on **Issues and tickets in @** (`chat.mentionHostItems`, off by default): their text was
+written by others and could try to steer the agent. The list then has **Issues and tickets**:
+the items wow has read for the thread (its chips and what you opened in its panel); wow fetches
+none for this. Each pick asks whether to send the text; on yes it goes in as quoted text marked
+as written by others.
+
 ### Skills
 
 Type `/` at the start of a message or after a space to list skills with their descriptions,
@@ -1250,7 +1257,7 @@ never checks it on a timer. What it read is kept, so the chip shows its state ("
 2 checks failed") after a restart, and the tab says when it was fetched. If the host refuses or
 fails, the tab shows its reason and keeps what it read before; when even the first read failed,
 opening the tab again asks the host again. Links to hosts without a token
-stay plain links. Nothing read from a host is sent to the agent.
+stay plain links. Nothing read from a host is sent to the agent unless you pick it with `@` (see "Another thread or a backlog item in a message").
 
 "Open issue, PR or ticket…" in the palette takes a web address or a key. A link you paste into
 the composer shows its chip above the text with "Open in panel". The thread's Details tab lists

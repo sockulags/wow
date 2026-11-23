@@ -1705,8 +1705,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
   `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
   notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.limitWarnPercent` (see
-  "Plan limits"), `chat.attachTextMaxBytes`, `chat.mentionMaxChars` (see "Images in the
-  composer"), `chat.commitTimeoutMs`,
+  "Plan limits"), `chat.attachTextMaxBytes`, `chat.mentionMaxChars`, `chat.mentionHostItems`
+  (project-scoped) (see "Images in the composer"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3379,6 +3379,12 @@ block into the text: a thread's title, project and last answer of its own agent 
 `threadItems` read once with a subscription that closes after the first rows), or a backlog
 item's title, state, tags and body, cut at `chat.mentionMaxChars`. Nothing goes to the named
 thread.
+
+With the project setting `chat.mentionHostItems` on, the list also offers the thread's
+`hostItemReads` that hold data (chat overview spec 37, `hostMatches`). This is the one place host
+text reaches an agent, so a pick asks with `window.confirm` every time, and `hostBlock` quotes the
+item as last read, page HTML reduced to its text, in a block that says it was written by others
+and is information, not instructions. wow fetches nothing for it.
 
 Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attachments.ts`.
 

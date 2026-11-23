@@ -710,6 +710,15 @@ export const settingsRegistry = {
     default: 20_000,
     scope: 'global',
   }),
+  'chat.mentionHostItems': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Issues and tickets in @',
+    description:
+      'Offer the issues, pull requests, tickets and pages wow has read for a thread in its @ list. Their text is written by others; wow asks before each message whether to send it to the agent as quoted text.',
+    default: false,
+    scope: 'project',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

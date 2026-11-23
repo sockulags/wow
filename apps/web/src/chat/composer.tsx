@@ -1,8 +1,12 @@
-import type { BacklogItem, Thread, ThreadItem } from '@wow/contracts';
+import type { BacklogItem, HostItemRead, Thread, ThreadItem } from '@wow/contracts';
 import {
   backlogBlock,
   backlogMatches,
   backlogValue,
+  hostBlock,
+  hostMatches,
+  hostTitle,
+  hostValue,
   lastAnswer,
   threadBlock,
   threadMatches,
@@ -167,6 +171,7 @@ function FilePicker({
   matches,
   threads = [],
   backlog = [],
+  hosts = [],
   note,
   active,
   below,
@@ -178,6 +183,7 @@ function FilePicker({
   matches: readonly string[];
   threads?: readonly Thread[];
   backlog?: readonly BacklogItem[];
+  hosts?: readonly HostItemRead[];
   note: string | undefined;
   active: string | undefined;
   onPick(path: string): void;
@@ -235,6 +241,24 @@ function FilePicker({
                   onSelect={() => onPick(backlogValue(item.id))}
                 >
                   <span className="truncate">{item.title}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {hosts.length > 0 && (
+            <CommandGroup heading="Issues and tickets">
+              {hosts.map((read) => (
+                <CommandItem
+                  key={read.id}
+                  value={hostValue(read.id)}
+                  data-testid="mention-host"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onPointerMove={() => onHover(hostValue(read.id))}
+                  onSelect={() => onPick(hostValue(read.id))}
+                >
+                  <span className="truncate">
+                    {read.item.id} · {hostTitle(read)}
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -591,10 +615,21 @@ export function Composer({
       ? threadMatches(allThreads, fileQuery.query, imageTarget.threadId, 5)
       : [];
   const backlogPicks = fileQuery && imageTarget ? backlogMatches(backlog, fileQuery.query, 5) : [];
+  // Issues and tickets wow read for this thread, only with the project's setting on (chat
+  // overview spec 37).
+  const ownProject = allThreads.find((thread) => thread.id === imageTarget?.threadId)?.projectId;
+  const hostOn =
+    (useTopic('settings') ?? []).find(
+      (row) => row.key === 'chat.mentionHostItems' && row.scope === `project:${ownProject ?? ''}`,
+    )?.value === true;
+  const hostReads = useTopic('hostItemReads', imageTarget?.threadId) ?? [];
+  const hostPicks =
+    fileQuery && imageTarget && hostOn ? hostMatches(hostReads, fileQuery.query, 5) : [];
   const listValues = [
     ...fileMatches,
     ...threadPicks.map((thread) => threadValue(thread.id)),
     ...backlogPicks.map((item) => backlogValue(item.id)),
+    ...hostPicks.map((read) => hostValue(read.id)),
   ];
   const fileIndex = Math.min(fileActive, Math.max(0, listValues.length - 1));
   const activeFile = listValues[fileIndex];
@@ -726,6 +761,15 @@ export function Composer({
       update(withBlock, withBlock.length, undefined, undefined);
       textarea.current?.focus();
     };
+    const host = hostReads.find((candidate) => hostValue(candidate.id) === value);
+    if (host) {
+      // Text from a host is written by others: it goes in only on a yes, each time.
+      const yes = window.confirm(
+        `The text of ${host.item.id} was written on ${host.hostName} by others. Send it to the agent as quoted text?`,
+      );
+      if (yes) put(hostBlock(host, mentionMax));
+      return;
+    }
     const item = backlog.find((candidate) => backlogValue(candidate.id) === value);
     if (item) {
       put(backlogBlock(item, mentionMax));
@@ -748,7 +792,7 @@ export function Composer({
 
   // A picked file is a chip; the typed `@word` goes (spec 56).
   const pickFile = (path: string) => {
-    if (path.startsWith('thread:') || path.startsWith('backlog:')) {
+    if (path.startsWith('thread:') || path.startsWith('backlog:') || path.startsWith('host:')) {
       pickMention(path);
       return;
     }
@@ -1194,6 +1238,7 @@ export function Composer({
             matches={fileMatches}
             threads={threadPicks}
             backlog={backlogPicks}
+            hosts={hostPicks}
             note={fileNote}
             active={activeFile}
             onPick={pickFile}

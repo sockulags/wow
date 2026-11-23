@@ -2,7 +2,7 @@
 intent: 2026-11-chat-overview
 rev: 1
 built_on: spec@1
-status: accepted
+status: done
 source: files
 ---
 

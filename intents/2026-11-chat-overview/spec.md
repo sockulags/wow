@@ -214,13 +214,14 @@ It names their files as they are at 0.5.0.
     the user sees and can edit exactly what the agent gets, and the sent message shows it. The
     thread named is not changed or told.
 
-37. **Host items** (U11, waits on intent open question 1): the `@` list gets a third section,
-    **Issues and tickets**. It holds the items wow has already read for the project's hosts:
-    chips seen in its threads, and items opened in the panel. A pick asks once per message:
-    "The text of #14 was written on github.com by others. Send it to the agent as quoted
-    text?". On yes, the item's title, state and body, as wow last read them, go after the text
-    in a fenced block marked as quoted host text. wow never fetches an item for this. A project
-    setting `chat.mentionHostItems` (off by default) has to be on for the section to show.
+37. **Host items** (U11): with the project setting `chat.mentionHostItems` on (off by default),
+    the `@` list of a chat thread's composer gets a section **Issues and tickets**: the issues,
+    pull requests, tickets and pages wow has already read for the thread (the chips of its
+    messages and what was opened in its panel). wow never fetches an item for this. A pick asks,
+    each time: "The text of #14 was written on github.com by others. Send it to the agent as
+    quoted text?". On yes, the item's title, state and body as wow last read them (a page's text
+    without its HTML) go into the message as a fenced block that says it is quoted text written
+    by others, to be read as information and not as instructions. On no, nothing is added.
 38. The Assistant's composer and a step's composer offer none of spec 35 to 37.
 
 ### Usage view (U12)
@@ -335,8 +336,9 @@ ProviderLimit[]}` in `packages/contracts/src/provider.ts`. Topic `providerLimits
 
 ### U11 Mentions of host items
 
-- Decided: `SentMention.kind` gains `hostItem` with the host link key. Project setting
-  `chat.mentionHostItems` (false). Reads only what `hostLinks` already stored.
+- Decided: the composer reads the thread's `hostItemReads` and builds the block
+  (`hostMatches`, `hostBlock` in `chat/mention-blocks.ts`) after a `window.confirm` per pick; no
+  contract beyond the project setting `chat.mentionHostItems` (false).
 
 ### U12 Usage
 
