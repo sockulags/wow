@@ -1,4 +1,5 @@
 import {
+  fillTemplate,
   QuestionReply,
   TextItemPayload,
   ToolCallItemPayload,
@@ -80,7 +81,7 @@ export class HelperTools implements HelperToolProvider {
     this.#deps = deps;
     this.#tools = {
       start_helper: {
-        description: `Starts a helper thread: another agent, on any connected Claude Code or Codex instance (list_helpers names them), that gets your brief as its first message. ${when} Write the brief as you would for a colleague: the goal, what you know, what to leave alone and what to report. By default it works in your folder, as a subagent does; "folder" names another one (absolute, or relative to yours), such as another repository the task touches. Isolation "copy" gives it its own working copy on a new branch of the Git repository that holds that folder. It runs on its own and its answer comes back to you; read_helper shows how it stands and what it answered. When two or more of your helpers worked in their own copies of one repository, have their work merged with merge_helpers before you report. Its approvals are the person's.`,
+        description: `Starts a helper thread: another agent, on any connected Claude Code or Codex instance (list_helpers names them), that gets your brief as its first message. ${when} Write the brief as you would for a colleague: the goal, what you know, what to leave alone and what to report. By default it works in your folder, as a subagent does; "folder" names another one (absolute, or relative to yours), such as another repository the task touches. Isolation "copy" gives it its own working copy on a new branch of the Git repository that holds that folder; tell it to commit its work there, since only commits are on its branch. It runs on its own and its answer comes back to you; read_helper shows how it stands and what it answered. When two or more of your helpers worked in their own copies of one repository, have their work merged with merge_helpers before you report. Its approvals are the person's.`,
         input: z
           .object({
             brief: z.string().trim().min(1),
@@ -101,13 +102,13 @@ export class HelperTools implements HelperToolProvider {
       },
       read_helper: {
         description:
-          'Reads one of your helpers: its state, what it runs now, a question it waits on, the last thing it answered, and where its work is: its folder, the repository, its branch and how many commits it made there.',
+          'Reads one of your helpers: its state, what it runs now, a question it waits on, the last thing it answered, and where its work is: its folder, the repository, its branch and how many commits it made there (`ahead`; work it did not commit is not on its branch).',
         input: z.object({ id }).strict(),
         run: (threadId, args: { id: string }) => this.#read(threadId, args.id),
       },
       merge_helpers: {
         description:
-          'Has the work of two or more of your helpers, each in its own copy of the same repository, merged into one branch: starts a merge helper in a new copy of that repository that merges their branches in the order you give, resolves conflicts and reports. Use it when helpers worked side by side on one task, before you report, so the person reviews one branch; then tell them the merge helper holds the result. The helpers must be done working.',
+          'Has the work of two or more of your helpers, each in its own copy of the same repository, merged into one branch: starts a merge helper in a new copy of that repository that merges their branches in the order you give, resolves conflicts and reports. Use it when helpers worked side by side on one task, before you report, so the person reviews one branch; then tell them the merge helper holds the result. The helpers must be done working, and only what they committed is merged: brief a copy helper to commit its work, and check `ahead` with read_helper. The answer gives the commits on each branch.',
         input: z
           .object({
             ids: z.array(id).min(2),
@@ -364,24 +365,31 @@ export class HelperTools implements HelperToolProvider {
   async #whereWork(helper: typeof threads.$inferSelect) {
     const git = this.#deps.git();
     const copy = helper.workingCopy;
-    const repository =
-      copy?.repository ??
-      (copy ? this.#projectFolder(helper.projectId) : undefined) ??
-      (await readMainWorktree(helper.cwd, git));
+    const repository = await this.#repositoryOf(helper);
     const branch = (await readCurrentBranch(helper.cwd, git)) ?? helper.branch;
     const ahead = copy?.startSha ? await readCommitsAhead(helper.cwd, copy.startSha, git) : null;
     return {
       folder: helper.cwd,
       repository: repository ?? null,
       branch: branch ?? null,
-      ownCopy: copy !== null && copy.state !== 'removed',
+      ownCopy: liveCopy(helper),
       ...(ahead === null ? {} : { ahead }),
     };
   }
 
-  #projectFolder(projectId: string | null): string | undefined {
-    if (projectId === null) return undefined;
-    return this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get()?.cwd;
+  // The main worktree of the repository a helper works in. A copy made since U1 records it; an
+  // older copy is of its project's repository, and a helper in a folder is in that folder's. Read
+  // through Git and realpath, so two names of one repository compare equal.
+  async #repositoryOf(helper: typeof threads.$inferSelect): Promise<string | undefined> {
+    if (helper.workingCopy?.repository) return helper.workingCopy.repository;
+    const project =
+      helper.projectId === null
+        ? undefined
+        : this.#deps.db.select().from(projects).where(eq(projects.id, helper.projectId)).get()?.cwd;
+    const folder = helper.workingCopy ? project : helper.cwd;
+    if (folder === undefined) return undefined;
+    const main = await readMainWorktree(folder, this.#deps.git());
+    return main === undefined ? undefined : realpath(main).catch(() => main);
   }
 
   // A merge helper (spec 12): a helper of the caller in a new copy of the repository the named
@@ -400,13 +408,18 @@ export class HelperTools implements HelperToolProvider {
     if (ids.length < 2) {
       throw new CommandRejected('rejected', 'Name at least two different helpers to merge.');
     }
+    const git = this.#deps.git();
     const mine = this.#helpers(threadId);
-    const named = ids.map((helperId) => {
+    const named: {
+      helper: typeof threads.$inferSelect;
+      branch: string;
+      repository: string | undefined;
+      ahead: number | null;
+    }[] = [];
+    for (const helperId of ids) {
       const helper = mine.find((row) => row.id === helperId);
       if (!helper) throw new CommandRejected('not_found', `You have no helper ${helperId}.`);
-      const copy = helper.workingCopy;
-      const branch = copy?.branch ?? helper.branch;
-      if (!copy || copy.state === 'removed' || copy.state === 'failed' || !branch) {
+      if (!liveCopy(helper)) {
         throw new CommandRejected(
           'rejected',
           `"${helper.title}" has no working copy of its own, so it has no branch to merge; its work is in the folder it shares.`,
@@ -418,9 +431,18 @@ export class HelperTools implements HelperToolProvider {
           `"${helper.title}" is still working. Wait for it to finish, or stop it.`,
         );
       }
-      const repository = copy.repository ?? this.#projectFolder(helper.projectId);
-      return { helper, branch, repository };
-    });
+      // The branch it is on now: its agent may have made and checked out a branch of its own.
+      const branch = await readCurrentBranch(helper.cwd, git);
+      if (branch === null) {
+        throw new CommandRejected(
+          'rejected',
+          `"${helper.title}" is on no branch in its copy, so there is no branch to merge. Ask it to commit its work on a branch.`,
+        );
+      }
+      const start = helper.workingCopy?.startSha;
+      const ahead = start ? await readCommitsAhead(helper.cwd, start, git) : null;
+      named.push({ helper, branch, repository: await this.#repositoryOf(helper), ahead });
+    }
     const repositories = [...new Set(named.map((each) => each.repository))];
     const [repository] = repositories;
     if (repositories.length !== 1 || repository === undefined) {
@@ -429,13 +451,15 @@ export class HelperTools implements HelperToolProvider {
         'These helpers work in copies of different repositories; merge helpers of one repository at a time.',
       );
     }
-    const brief = this.#deps
-      .mergeBrief()
-      .replaceAll('{{branches}}', named.map(({ branch }) => `- ${branch}`).join('\n'))
-      .replaceAll(
-        '{{helpers}}',
-        named.map(({ helper }) => `- "${helper.title}" (id ${helper.id})`).join('\n'),
-      );
+    const template = this.#deps.mergeBrief();
+    const values = {
+      branches: named.map(({ branch }) => `- ${branch}`).join('\n'),
+      helpers: named.map(({ helper }) => `- "${helper.title}" (id ${helper.id})`).join('\n'),
+    };
+    // An edited brief that forgot the branches still names them.
+    const brief = template.includes('{{branches}}')
+      ? fillTemplate(template, values)
+      : `${fillTemplate(template, values)}\n\nBranches, in this order:\n${values.branches}`;
     const started = await this.#start(threadId, {
       brief,
       title:
@@ -446,6 +470,17 @@ export class HelperTools implements HelperToolProvider {
       folder: repository,
       isolation: 'copy',
     });
-    return { ...started, merges: named.map(({ branch }) => branch) };
+    // What each branch holds, so the caller sees a helper that committed nothing.
+    return {
+      ...started,
+      merges: named.map(({ branch }) => branch),
+      commits: Object.fromEntries(named.map(({ branch, ahead }) => [branch, ahead])),
+    };
   }
 }
+
+// A copy of its own that is there to work in, or will be.
+const liveCopy = (helper: typeof threads.$inferSelect) =>
+  helper.workingCopy !== null &&
+  helper.workingCopy.state !== 'removed' &&
+  helper.workingCopy.state !== 'failed';

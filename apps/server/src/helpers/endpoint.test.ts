@@ -770,13 +770,21 @@ const copyMade = (threadId: string) =>
   });
 
 // A copy helper of the main thread whose turn has ended, and an invented commit in its copy.
-async function copyHelper(client: Client, folder: string, brief: string, file: string) {
+async function copyHelper(
+  client: Client,
+  folder: string,
+  brief: string,
+  file: string,
+  ownBranch?: string,
+) {
   const started = await call(client, 'start_helper', { brief, folder, isolation: 'copy' });
   const helperId = String(started.value['id']);
   await copyMade(helperId);
   await helperStarted(helperId);
   await turnEnds(helperId);
   const cwd = threadRow(helperId)?.cwd ?? '';
+  // As a delivery skill does: its agent makes a branch of its own and commits there.
+  if (ownBranch) runGit(cwd, 'checkout', '-q', '-b', ownBranch);
   await writeFile(path.join(cwd, file), `${brief}\n`);
   runGit(cwd, 'add', '.');
   runGit(
@@ -789,7 +797,7 @@ async function copyHelper(client: Client, folder: string, brief: string, file: s
     '-qm',
     brief,
   );
-  return { helperId, cwd, branch: threadRow(helperId)?.branch ?? '?' };
+  return { helperId, cwd, branch: ownBranch ?? threadRow(helperId)?.branch ?? '?' };
 }
 
 describe("bringing helpers' work together (orchestrator threads spec 6, 11, 12)", () => {
@@ -797,7 +805,10 @@ describe("bringing helpers' work together (orchestrator threads spec 6, 11, 12)"
     const bell = await repository('bell');
     const client = await mainThread();
     const ring = await copyHelper(client, bell, 'Ring the bell', 'ring.md');
-    const polish = await copyHelper(client, bell, 'Polish the bell', 'polish.md');
+    const polish = await copyHelper(client, bell, 'Polish the bell', 'polish.md', 'polish/shine');
+    expect((await call(client, 'read_helper', { id: polish.helperId })).value).toMatchObject({
+      branch: 'polish/shine',
+    });
     expect((await call(client, 'read_helper', { id: ring.helperId })).value).toMatchObject({
       folder: ring.cwd,
       repository: bell,
@@ -808,7 +819,11 @@ describe("bringing helpers' work together (orchestrator threads spec 6, 11, 12)"
     const merged = await call(client, 'merge_helpers', { ids: [ring.helperId, polish.helperId] });
     expect(merged).toMatchObject({
       isError: false,
-      value: { isolation: 'copy', merges: [ring.branch, polish.branch] },
+      value: {
+        isolation: 'copy',
+        merges: [ring.branch, 'polish/shine'],
+        commits: { [ring.branch]: 1, 'polish/shine': 1 },
+      },
     });
     const mergeId = String(merged.value['id']);
     await copyMade(mergeId);
@@ -873,6 +888,9 @@ describe("bringing helpers' work together (orchestrator threads spec 6, 11, 12)"
     expect(await refusal([ring.helperId, 'someone-else'])).toContain('You have no helper');
     expect(await refusal([ring.helperId, shared])).toContain('no working copy of its own');
     expect(await refusal([ring.helperId, busy])).toContain('still working');
+    const loose = await copyHelper(client, bell, 'Loosen the bell', 'loose.md');
+    runGit(loose.cwd, 'checkout', '-q', '--detach');
+    expect(await refusal([ring.helperId, loose.helperId])).toContain('on no branch');
     expect(await refusal([ring.helperId, climb.helperId])).toContain('different repositories');
     expect(
       server.database.db

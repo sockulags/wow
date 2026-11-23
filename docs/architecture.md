@@ -4508,17 +4508,22 @@ makes, recovers and settles the worktree from it, and Apply brings its changes h
 
 **Bringing helpers' work together** (orchestrator threads U2, spec 6, 11 to 13). `read_helper`
 also answers where a helper's work is (`HelperTools#whereWork`): its folder, the repository's main
-worktree (`WorkingCopy.repository`, the project's folder for an older copy, else
-`readMainWorktree` of its folder), the branch it is on (`readCurrentBranch`, else the thread's
-branch), whether it has a copy of its own, and for a copy `ahead`, the commits since the copy's
-`startSha` (`readCommitsAhead`, `git rev-list --count`). `merge_helpers {ids, title?, instance?,
-model?, effort?}` starts a merge helper through the same path as `start_helper`: a copy helper of
-the caller, in a new copy of the repository the named helpers' copies belong to, whose brief is
-`chat.mergeBrief` with `{{branches}}` (one `- <branch>` line each, in the order given) and
-`{{helpers}}` filled in. It refuses, with the reason, fewer than two different helpers, a helper
-that is not the caller's, one without a live copy, one that works, and copies of more than one
-repository. wow runs no merge: the merge helper's agent merges with Git in its own copy, so its
-Changes show the result and Apply brings it home to the repository. A merge helper, rather than
+worktree (`#repositoryOf`: `WorkingCopy.repository`, else `readMainWorktree` of the project's
+folder for an older copy or of its folder, through `realpath`, so two names of one repository
+compare equal), the branch it is on (`readCurrentBranch`, else the thread's branch), whether it
+has a live copy (not removed or failed), and for a copy `ahead`, the commits since the copy's
+`startSha` (`readCommitsAhead`, `git rev-list --count`). Only committed work is on a branch, so
+the tool texts tell the agent to brief a copy helper to commit and to check `ahead`.
+`merge_helpers {ids, title?, instance?, model?, effort?}` starts a merge helper through the same
+path as `start_helper`: a copy helper of the caller, in a new copy of the repository the named
+helpers' copies belong to. It merges the branch each helper is on now, which its agent may have
+made itself, and its brief is `chat.mergeBrief` filled by `fillTemplate` with `{{branches}}` (one
+`- <branch>` line each, in the order given) and `{{helpers}}`; a brief edited without
+`{{branches}}` gets the list after it. The answer gives the commits on each branch, so a helper
+that committed nothing shows a 0. It refuses, with the reason, fewer than two different helpers,
+a helper that is not the caller's, one without a live copy, one on no branch, one that works, and
+copies of more than one repository. wow runs no merge: the merge helper's agent merges with Git in
+its own copy, so its Changes show the result and Apply brings it home to the repository. A merge helper, rather than
 a worktree for the main thread, because a provider session stays in the folder it started in and
 a Codex session writes only there (spec Decisions).
 
