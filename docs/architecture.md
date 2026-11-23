@@ -4560,7 +4560,7 @@ the assistant's own folder is kept empty; sending again does not get past it. A 
 starts on `chat.defaultInstance` and, on that instance, `chat.defaultModel` (both global, empty
 by default), before the project's, the last thread's and the instance's own; the pickers change
 them before the first message. A new thread does not carry over the folder wow gave the last
-thread (`ownThreadFolder`). The helper endpoint's provider in `server.ts` adds
+thread, nor one its helpers or forks work in (`givenFolder`). The helper endpoint's provider in `server.ts` adds
 `AssistantTools.forThread(threadId)` to the helper tools of a thread with no parent: every
 assistant tool but the delegation, brief and memory tools (`mainThreadLeavesOut`), with the
 readers' `threadId` set so `ask_questions` looks at that thread's running turn. The commands go to

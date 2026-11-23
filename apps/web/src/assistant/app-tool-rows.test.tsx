@@ -19,7 +19,7 @@ import { createStore } from 'zustand';
 import { describe, expect, it, vi } from 'vitest';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
-import { ownThreadFolder } from '@/chat/new-thread';
+import { givenFolder, ownThreadFolder } from '@/chat/new-thread';
 import { ThreadConversation } from '@/chat/thread-view';
 
 // The app tools in a main thread (orchestrator threads spec 24): what a call of wow's tools made
@@ -199,5 +199,16 @@ describe('a new thread after one without a project (spec 1)', () => {
     );
     expect(ownThreadFolder({ id: 'other', cwd: '/home/ada/.wow/threads/bare' })).toBe(false);
     expect(ownThreadFolder({ id: 'chosen', cwd: '/home/ada/tea' })).toBe(false);
+  });
+
+  it("does not carry over a bare thread's folder from its helper or its fork either", () => {
+    const bare = { id: 'bare', cwd: '/home/ada/.wow/threads/bare' };
+    const helper = { id: 'helper', cwd: '/home/ada/.wow/threads/bare' };
+    const fork = { id: 'fork', cwd: String.raw`\home\ada\.wow\threads\bare` };
+    const chosen = { id: 'chosen', cwd: '/home/ada/tea' };
+    const threads = [bare, helper, fork, chosen];
+    expect(givenFolder(helper.cwd, threads)).toBe(true);
+    expect(givenFolder(fork.cwd, threads)).toBe(true);
+    expect(givenFolder(chosen.cwd, threads)).toBe(false);
   });
 });
