@@ -644,6 +644,21 @@ export const settingsRegistry = {
     default: 'wow/helper/{{id}}',
     scope: 'global',
   }),
+  'chat.mergeBrief': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .max(4000)
+      .meta({ widget: 'template', placeholders: ['branches', 'helpers'] }),
+    group: 'chat',
+    label: "A merge helper's brief",
+    description:
+      "What a merge helper is told when an agent asks for helpers' work to be merged. {{branches}} is the list of branches in the order to merge them, and {{helpers}} the helpers they come from.",
+    default:
+      'Merge these branches into your own branch, in this order, with Git (git merge, one at a time):\n{{branches}}\nThey hold the work of these helpers:\n{{helpers}}\nResolve each conflict so that both sides keep what they meant to do; when you cannot tell, keep both and say so. Commit the result. Then report which branches merged cleanly, which conflicted, and how you resolved each conflict.',
+    scope: 'global',
+  }),
   'chat.helperAnswerMaxLength': defineSetting({
     schema: z.number().int().min(200).max(200_000),
     group: 'chat',

@@ -261,6 +261,43 @@ const ringTwice = (cwd: string) => {
   rmSync(at(cwd, 'old.md'));
 };
 
+describe("a merge helper's copy of another repository (orchestrator threads spec 13)", () => {
+  it('shows the merged commits and brings them home to that repository, not the project', async () => {
+    const other = path.join(root, 'tea pot');
+    git(root, 'clone', '-q', '-c', 'core.autocrlf=false', path.join(root, 'the remote.git'), other);
+    agent = (cwd) => {
+      writeFileSync(at(cwd, 'notes.md'), 'Kettle notes, merged\n');
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-q', '-m', 'Invented merge result');
+    };
+    dispatch({
+      type: 'thread.create',
+      threadId: 't1',
+      providerInstanceId: 'claude-work',
+      projectId: 'mug',
+      cwd: other,
+      title: 'Merge the helpers',
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'default',
+      ownWorkingCopy: true,
+      copyFrom: other,
+      branch: 'wow/helper/abc123',
+    });
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Merge them' });
+    await turnEnds();
+    await server.workspaces.settled();
+    const projectBefore = projectHistory();
+    const shown = await preview();
+    expect(shown).toMatchObject({ status: 'ok', projectFolder: other });
+    expect(outcomes(shown)).toEqual({ 'notes.md': ['write', null] });
+    expect(errorOf(await apply(shown))).toBeUndefined();
+    expect(await read(other, 'notes.md')).toBe('Kettle notes, merged\n');
+    expect(await read(project, 'notes.md')).toBe('Kettle notes\n');
+    expect(projectHistory()).toEqual(projectBefore);
+  });
+});
+
 describe('Apply to project folder (parallel threads spec 1 to 10)', () => {
   it('writes, adds and deletes what the thread changed and leaves the history alone (spec 2, 3, 7, 8)', async () => {
     await threadTurn(ringTwice);

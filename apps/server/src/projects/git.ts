@@ -766,6 +766,18 @@ export async function readCurrentBranch(
   return branch.ok ? branch.stdout.trim() || null : null;
 }
 
+// How many commits the folder's HEAD has that `base` does not (orchestrator threads spec 6);
+// null when Git cannot say.
+export async function readCommitsAhead(
+  folder: string,
+  base: string,
+  options: GitRunOptions,
+): Promise<number | null> {
+  const counted = await runGit(folder, ['rev-list', '--count', `${base}..HEAD`], options);
+  const count = counted.ok ? Number.parseInt(counted.stdout.trim(), 10) : Number.NaN;
+  return Number.isInteger(count) ? count : null;
+}
+
 // Windows refuses paths over 260 characters unless git is told to use long ones.
 const longPaths = ['-c', 'core.longpaths=true'];
 

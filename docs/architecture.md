@@ -1700,7 +1700,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
   `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
-  `chat.helpersPerTree`, `chat.helperBranch`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
+  `chat.helpersPerTree`, `chat.helperBranch`, `chat.mergeBrief`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
   `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
@@ -4505,6 +4505,22 @@ when that thread is done. `thread.create` carries it as `copyFrom` with a branch
 `chat.helperBranch` (`wow/helper/{{id}}`); `ownCopyOf` makes the copy without a project if need be,
 and `WorkingCopy.repository` records the repository. The workspaces service (`#copySource`)
 makes, recovers and settles the worktree from it, and Apply brings its changes home to it.
+
+**Bringing helpers' work together** (orchestrator threads U2, spec 6, 11 to 13). `read_helper`
+also answers where a helper's work is (`HelperTools#whereWork`): its folder, the repository's main
+worktree (`WorkingCopy.repository`, the project's folder for an older copy, else
+`readMainWorktree` of its folder), the branch it is on (`readCurrentBranch`, else the thread's
+branch), whether it has a copy of its own, and for a copy `ahead`, the commits since the copy's
+`startSha` (`readCommitsAhead`, `git rev-list --count`). `merge_helpers {ids, title?, instance?,
+model?, effort?}` starts a merge helper through the same path as `start_helper`: a copy helper of
+the caller, in a new copy of the repository the named helpers' copies belong to, whose brief is
+`chat.mergeBrief` with `{{branches}}` (one `- <branch>` line each, in the order given) and
+`{{helpers}}` filled in. It refuses, with the reason, fewer than two different helpers, a helper
+that is not the caller's, one without a live copy, one that works, and copies of more than one
+repository. wow runs no merge: the merge helper's agent merges with Git in its own copy, so its
+Changes show the result and Apply brings it home to the repository. A merge helper, rather than
+a worktree for the main thread, because a provider session stays in the folder it started in and
+a Codex session writes only there (spec Decisions).
 
 **Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
 (`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,
