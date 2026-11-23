@@ -1057,18 +1057,19 @@ describe("bringing helpers' work together (orchestrator threads spec 6, 11, 12)"
   });
 });
 
-describe('main threads without a project, with the app tools (orchestrator threads spec 1, 24, 26)', () => {
-  const createBare = (threadId: string) =>
-    dispatch({
-      type: 'thread.create',
-      threadId,
-      providerInstanceId: 'claude-work',
-      title: `Thread ${threadId}`,
-      model: 'opus',
-      effort: 'high',
-      permissionMode: 'default',
-    });
+// A thread with neither a project nor a folder.
+const createBare = (threadId: string) =>
+  dispatch({
+    type: 'thread.create',
+    threadId,
+    providerInstanceId: 'claude-work',
+    title: `Thread ${threadId}`,
+    model: 'opus',
+    effort: 'high',
+    permissionMode: 'default',
+  });
 
+describe('main threads without a project, with the app tools (orchestrator threads spec 1, 24, 26)', () => {
   it('gives a thread with no project or folder an empty folder of its own in wow home', async () => {
     createBare('bare');
     const folder = path.join(root, 'wow home', 'threads', 'bare');
