@@ -731,6 +731,14 @@ folder (`~/.wow/images`, one folder per thread) and sends them only to the threa
 Assistant and a workflow step's thread take no images. A message with pictures written while a turn runs waits for the turn's
 end, also on Claude Code.
 
+### Text files in a message
+
+Drop or paste a text file (a log, a config, notes) on the composer and its text goes into the
+message as a quoted block named by the file, where you can still edit it before you send. Files
+up to 200 KB are taken (**Largest text file in a message**, `chat.attachTextMaxBytes`). A PDF
+cannot go into a message yet, and neither can a file that is not text; the composer says why.
+Nothing is copied into the thread's folder. To point the agent at a file in its folder, use `@`.
+
 ### Skills
 
 Type `/` at the start of a message or after a space to list skills with their descriptions,

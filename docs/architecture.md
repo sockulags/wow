@@ -1705,7 +1705,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
   `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
   notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.limitWarnPercent` (see
-  "Plan limits"), `chat.commitTimeoutMs`,
+  "Plan limits"), `chat.attachTextMaxBytes` (see "Images in the composer"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3365,6 +3365,12 @@ server's Codex lists), and the e2e cases "picks model, effort and mode from the 
 in `app-assistant.spec.ts` (run in the `assistant` project, since it uses that copy).
 
 ### Images in the composer
+
+A dropped or pasted file that is no image (chat overview spec 35) does not go to the server:
+`textFileBlock` (`chat/text-files.ts`) reads it in the browser and puts its text into the
+composer as a fenced block headed by its name, fenced past any backticks inside, up to
+`chat.attachTextMaxBytes`. A PDF, a file over the limit and one with NUL or undecodable bytes
+are refused in the composer's error line.
 
 Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attachments.ts`.
 

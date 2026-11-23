@@ -195,20 +195,14 @@ It names their files as they are at 0.5.0.
 
 ### More in a message (U9, U10, U11)
 
-35. **Files** (U9): dropping, pasting or picking a file other than an image ("Attach a file to
-    the message…" in the palette) puts it in the message as a chip with its name and size.
-    - A file inside the thread's folder becomes an `@` mention of its relative path, as the `@`
-      list makes it.
-    - A text file (UTF-8 without NUL, up to `chat.attachTextMaxBytes`, 200 KB) is stored as an
-      attachment. When sent, it goes in after the message text as a fenced block headed by its
-      name.
-    - A PDF up to `chat.attachDocumentMaxBytes` (10 MB) goes to Claude Code as a document of the
-      message. For Codex, which takes none, it is refused with that reason.
-    - Anything else, and anything over the limits, is refused with the reason and not added.
-
-    The sent message shows the chips. A click shows the text that was sent, or opens the PDF in
-    the system viewer. Retry sends them again. Nothing is written into the thread's folder.
-
+35. **Files** (U9): dropping or pasting a file other than an image on a chat composer puts a
+    text file (UTF-8 without NUL, up to `chat.attachTextMaxBytes`, 200 KB) into the message text
+    as a fenced block headed by its name, where the user can still edit it before sending. The
+    message carries it as written; nothing is stored or written into the thread's folder. A PDF
+    is refused with the reason that wow cannot put one in a message yet (a document block for
+    Claude is left for later), and so is a file over the limit or one that is not text. A file
+    inside the thread's folder is not turned into an `@` mention: the browser does not tell wow
+    where a dropped file lies; `@` names such files.
 36. **Threads and backlog items** (U10): the `@` list has two more sections after the files.
     - **Threads**: other threads, newest first, matched by title.
     - **Backlog**: open backlog items, matched by title.
@@ -332,11 +326,9 @@ ProviderLimit[]}` in `packages/contracts/src/provider.ts`. Topic `providerLimits
 
 ### U9 Files
 
-- Decided: `AttachmentMediaType` gains `text/plain` and `application/pdf`. `AttachmentId`
-  allows `txt` and `pdf`. `SentFile {id, mediaType, name, size}` sits beside `SentImage` on the
-  message. Text is sniffed by the server (UTF-8, no NUL).
-- Decided: settings `chat.attachTextMaxBytes` (200 000), `chat.attachDocumentMaxBytes`
-  (10 000 000).
+- Decided: the composer reads the file (`chat/text-files.ts`, `textFileBlock`) and puts the block
+  into the text; no new contract, no server change. Setting `chat.attachTextMaxBytes`
+  (200 000).
 
 ### U10 Mentions of threads and backlog items
 

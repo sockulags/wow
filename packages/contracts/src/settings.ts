@@ -692,6 +692,15 @@ export const settingsRegistry = {
     default: 80,
     scope: 'global',
   }),
+  'chat.attachTextMaxBytes': defineSetting({
+    schema: z.number().int().min(1_000).max(5_000_000),
+    group: 'chat',
+    label: 'Largest text file in a message (bytes)',
+    description:
+      'A text file dropped or pasted on the composer goes into the message as a quoted block, up to this size; a larger one is refused with the reason.',
+    default: 200_000,
+    scope: 'global',
+  }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
     group: 'chat',

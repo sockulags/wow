@@ -1,3 +1,4 @@
+import { textFileBlock } from './text-files';
 import {
   ambiguousOwnSkill,
   ownSkillFolder,
@@ -496,6 +497,7 @@ export function Composer({
   const fileTrigger = useSetting('chat.fileTrigger');
   const matchesShown = useSetting('viewer.fileMatchesShown');
   const imageMaxBytes = useSetting('chat.imageMaxBytes');
+  const textMaxBytes = useSetting('chat.attachTextMaxBytes');
   const takesImages = imageTarget !== undefined && connection !== undefined;
   const palette = useStore(paletteCommandsStore, (state) => state.commands);
   const takesSkills = providerKind !== undefined;
@@ -716,10 +718,27 @@ export function Composer({
 
   // Each image goes to the server once, when it is added (agent workbench Interface); a refused
   // one says why and is not added (spec 54).
+  // A file that is no image goes into the text as a quoted block named by the file (chat
+  // overview spec 35), read here and never written anywhere; a PDF or a binary file is refused.
+  const addTextFile = (file: File) => {
+    void textFileBlock(file, textMaxBytes).then((block) => {
+      if (typeof block !== 'string') {
+        setError(block.refused);
+        return;
+      }
+      const value = `${text}${text === '' ? '' : '\n\n'}${block}`;
+      update(value, value.length);
+      textarea.current?.focus();
+    });
+  };
   const addImages = (added: readonly File[]) => {
     if (!imageTarget || !connection || disabled) return;
     setError(undefined);
     for (const file of added) {
+      if (!file.type.startsWith('image/')) {
+        addTextFile(file);
+        continue;
+      }
       const refused = localImageRefusal(file, imageMaxBytes);
       if (refused !== undefined) {
         setError(refused);
