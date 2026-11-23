@@ -284,6 +284,7 @@ describe('helper tools in a chat session (orchestration spec 1)', () => {
       'start_helper',
       'list_helpers',
       'read_helper',
+      'merge_helpers',
       'write_to_helper',
       'answer_helper_question',
       'stop_helper',
@@ -559,6 +560,8 @@ async function repository(name: string) {
   const folder = path.join(root, name);
   await mkdir(folder);
   runGit(folder, 'init', '-q', '-b', 'main');
+  // No line ending conversion, whatever the user's own git config says.
+  await writeFile(path.join(folder, '.gitattributes'), '* -text\n');
   await writeFile(path.join(folder, 'README.md'), 'An invented repository.\n');
   runGit(folder, 'add', '.');
   runGit(
@@ -903,6 +906,147 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
     expect(
       gateCards().map((item) => (item.payload as { fromThreadId: string }).fromThreadId),
     ).toEqual([asking]);
+    await client.close();
+  });
+});
+
+// Resolves once the thread's own copy is made, or could not be.
+const copyMade = (threadId: string) =>
+  until(() => {
+    const state = threadRow(threadId)?.workingCopy?.state;
+    return state === 'ready' || state === 'failed';
+  });
+
+// A copy helper of the main thread whose turn has ended, and an invented commit in its copy.
+async function copyHelper(
+  client: Client,
+  folder: string,
+  brief: string,
+  file: string,
+  ownBranch?: string,
+) {
+  const started = await call(client, 'start_helper', { brief, folder, isolation: 'copy' });
+  const helperId = String(started.value['id']);
+  await copyMade(helperId);
+  await helperStarted(helperId);
+  await turnEnds(helperId);
+  const cwd = threadRow(helperId)?.cwd ?? '';
+  // As a delivery skill does: its agent makes a branch of its own and commits there.
+  if (ownBranch) runGit(cwd, 'checkout', '-q', '-b', ownBranch);
+  await writeFile(path.join(cwd, file), `${brief}\n`);
+  runGit(cwd, 'add', '.');
+  runGit(
+    cwd,
+    '-c',
+    'user.name=Ada',
+    '-c',
+    'user.email=ada@example.invalid',
+    'commit',
+    '-qm',
+    brief,
+  );
+  return { helperId, cwd, branch: ownBranch ?? threadRow(helperId)?.branch ?? '?' };
+}
+
+describe("bringing helpers' work together (orchestrator threads spec 6, 11, 12)", () => {
+  it('says where each helper’s work is, and starts a merge helper for two copies of one repository', async () => {
+    const bell = await repository('bell');
+    const client = await mainThread();
+    const ring = await copyHelper(client, bell, 'Ring the bell', 'ring.md');
+    const polish = await copyHelper(client, bell, 'Polish the bell', 'polish.md', 'polish/shine');
+    expect((await call(client, 'read_helper', { id: polish.helperId })).value).toMatchObject({
+      branch: 'polish/shine',
+    });
+    expect((await call(client, 'read_helper', { id: ring.helperId })).value).toMatchObject({
+      folder: ring.cwd,
+      repository: bell,
+      branch: ring.branch,
+      ownCopy: true,
+      ahead: 1,
+    });
+    const merged = await call(client, 'merge_helpers', { ids: [ring.helperId, polish.helperId] });
+    expect(merged).toMatchObject({
+      isError: false,
+      value: {
+        isolation: 'copy',
+        merges: [ring.branch, 'polish/shine'],
+        commits: { [ring.branch]: 1, 'polish/shine': 1 },
+      },
+    });
+    const mergeId = String(merged.value['id']);
+    await copyMade(mergeId);
+    await helperStarted(mergeId);
+    expect(threadRow(mergeId)).toMatchObject({
+      parentThreadId: 't1',
+      title: 'Merge Ring the bell + Polish the bell',
+      workingCopy: { state: 'ready', repository: bell },
+    });
+    expect(startTurnsOf(mergeId)[0]?.prompt).toContain(`- ${ring.branch}\n- ${polish.branch}`);
+    expect(runGit(bell, 'status', '--porcelain')).toBe('');
+    // What its agent does: merge both branches into its own and commit.
+    const mergeCwd = threadRow(mergeId)?.cwd ?? '';
+    runGit(
+      mergeCwd,
+      '-c',
+      'user.name=Ada',
+      '-c',
+      'user.email=ada@example.invalid',
+      'merge',
+      '--no-edit',
+      '-q',
+      ring.branch,
+      polish.branch,
+    );
+    expect((await call(client, 'read_helper', { id: mergeId })).value).toMatchObject({
+      repository: bell,
+      ahead: 3,
+    });
+    await client.close();
+  });
+
+  it('refuses to merge too few helpers, someone else’s, one without a copy, one at work, or two repositories', async () => {
+    const bell = await repository('bell');
+    const tower = await repository('tower');
+    const client = await mainThread();
+    const ring = await copyHelper(client, bell, 'Ring the bell', 'ring.md');
+    const climb = await copyHelper(client, tower, 'Climb the tower', 'climb.md');
+    const shared = String(
+      (await call(client, 'start_helper', { brief: 'Read the bell', folder: bell })).value['id'],
+    );
+    await helperStarted(shared);
+    await turnEnds(shared);
+    const busy = String(
+      (
+        await call(client, 'start_helper', {
+          brief: 'Wait for the bell',
+          folder: bell,
+          isolation: 'copy',
+        })
+      ).value['id'],
+    );
+    await copyMade(busy);
+    await helperStarted(busy);
+    const refusal = async (ids: string[]) => {
+      const answer = await call(client, 'merge_helpers', { ids });
+      expect(answer.isError).toBe(true);
+      return String(answer.value['error'] ?? JSON.stringify(answer.value));
+    };
+    expect(await refusal([ring.helperId])).toMatch(/ids/);
+    expect(await refusal([ring.helperId, ring.helperId])).toContain('at least two');
+    expect(await refusal([ring.helperId, 'someone-else'])).toContain('You have no helper');
+    expect(await refusal([ring.helperId, shared])).toContain('no working copy of its own');
+    expect(await refusal([ring.helperId, busy])).toContain('still working');
+    const loose = await copyHelper(client, bell, 'Loosen the bell', 'loose.md');
+    runGit(loose.cwd, 'checkout', '-q', '--detach');
+    expect(await refusal([ring.helperId, loose.helperId])).toContain('on no branch');
+    expect(await refusal([ring.helperId, climb.helperId])).toContain('different repositories');
+    expect(
+      server.database.db
+        .select()
+        .from(threads)
+        .all()
+        .filter((row) => row.title.startsWith('Merge ')),
+    ).toEqual([]);
     await client.close();
   });
 });

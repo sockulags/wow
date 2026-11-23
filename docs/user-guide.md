@@ -897,6 +897,14 @@ one works. At most `chat.helpersPerThread` (3) helpers of one thread, `chat.help
 under one main thread at every level, and `chat.helpersLive` (6) in all, work at once. A workflow
 step's thread and the Assistant never get the tools.
 
+When two or more helpers worked side by side in their own copies of one repository, the agent
+has their work merged before it reports: it starts a **merge helper**, in a new copy of that
+repository, that merges their branches one by one, resolves conflicts and says how. You review
+one branch, in the merge helper's Changes, and bring it home from there with **Apply to project
+folder** or a pull request; your own folder is not touched before that. What the merge helper is
+told is the setting `chat.mergeBrief`. The agent can also read where each helper's work is: its
+folder, the repository, its branch and how many commits it made.
+
 ### Threads at work
 
 **At work** at the top of the thread list (**Ctrl+Shift+O**, `keybindings.threadsAtWork`, or

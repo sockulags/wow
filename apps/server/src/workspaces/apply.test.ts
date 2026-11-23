@@ -261,6 +261,57 @@ const ringTwice = (cwd: string) => {
   rmSync(at(cwd, 'old.md'));
 };
 
+describe("a merge helper's copy of another repository (orchestrator threads spec 13)", () => {
+  it('shows the merged commits and brings them home to that repository, not the project', async () => {
+    const other = path.join(root, 'tea pot');
+    git(root, 'clone', '-q', '-c', 'core.autocrlf=false', path.join(root, 'the remote.git'), other);
+    // What a merge helper's agent does: two helpers' branches, merged into its own in one commit.
+    agent = (cwd) => {
+      const start = git(cwd, 'rev-parse', 'HEAD');
+      for (const [branch, file] of [
+        ['wow/helper/ring', 'ring.md'],
+        ['wow/helper/polish', 'polish.md'],
+      ] as const) {
+        git(cwd, 'checkout', '-q', '-b', branch, start);
+        writeFileSync(at(cwd, file), `${branch}\n`);
+        git(cwd, 'add', '-A');
+        git(cwd, 'commit', '-q', '-m', `Invented work on ${branch}`);
+      }
+      git(cwd, 'checkout', '-q', 'wow/helper/abc123');
+      git(cwd, 'merge', '-q', '--no-edit', 'wow/helper/ring', 'wow/helper/polish');
+    };
+    dispatch({
+      type: 'thread.create',
+      threadId: 't1',
+      providerInstanceId: 'claude-work',
+      projectId: 'mug',
+      cwd: other,
+      title: 'Merge the helpers',
+      model: 'opus',
+      effort: 'high',
+      permissionMode: 'default',
+      ownWorkingCopy: true,
+      copyFrom: other,
+      branch: 'wow/helper/abc123',
+    });
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Merge them' });
+    await turnEnds();
+    await server.workspaces.settled();
+    const projectBefore = projectHistory();
+    const shown = await preview();
+    expect(shown).toMatchObject({ status: 'ok', projectFolder: other });
+    expect(outcomes(shown)).toEqual({
+      'polish.md': ['write', null],
+      'ring.md': ['write', null],
+    });
+    expect(errorOf(await apply(shown))).toBeUndefined();
+    expect(await read(other, 'ring.md')).toBe('wow/helper/ring\n');
+    expect(await read(other, 'polish.md')).toBe('wow/helper/polish\n');
+    expect(existsSync(at(project, 'ring.md'))).toBe(false);
+    expect(projectHistory()).toEqual(projectBefore);
+  });
+});
+
 describe('Apply to project folder (parallel threads spec 1 to 10)', () => {
   it('writes, adds and deletes what the thread changed and leaves the history alone (spec 2, 3, 7, 8)', async () => {
     await threadTurn(ringTwice);
