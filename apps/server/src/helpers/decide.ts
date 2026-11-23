@@ -273,15 +273,95 @@ export function* decideHelper(
 
 // What the main thread's agent is told when its helper ends a turn or asks (spec 3), as a message
 // from wow. A stopped turn tells nothing, so stopping a main thread does not start it again.
-export function decideHelperFollow(
+export function* decideHelperFollow(
   command: Extract<ServerCommand, { type: 'helper.followed' }>,
   read: ReadModel,
   context: DecideContext,
-): DomainEvent[] {
+): Generator<DomainEvent[], void> {
   const helper = read.thread(command.threadId);
-  if (!helper || helper.startedBy !== 'helper' || !helper.parentThreadId) return [];
+  if (!helper || helper.startedBy !== 'helper' || !helper.parentThreadId) return;
   const parent = read.thread(helper.parentThreadId);
-  if (!parent) return [];
+  if (!parent) return;
+  // A question or an approval for the user is drawn in the main thread first (spec 14), so the
+  // message to the parent below reads the main thread's items as they are then.
+  if (command.reason !== 'turnEnded') yield gateCard(command, helper, parent, read, context);
+  // An approval is the user's alone (spec 17): the parent's agent is not asked.
+  if (command.reason === 'approval') return;
+  yield followMessage(command, helper, parent, read, context);
+}
+
+// The card in the main thread for a helper's approval or question (spec 14), once per request,
+// on the main thread's last turn.
+function gateCard(
+  command: Extract<ServerCommand, { type: 'helper.followed' }>,
+  helper: Thread,
+  parent: Thread,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
+  const request =
+    command.reason === 'approval'
+      ? command.approvalId === undefined
+        ? undefined
+        : read.approval(command.approvalId)
+      : command.questionId === undefined
+        ? undefined
+        : read.question(command.questionId);
+  if (!request || request.threadId !== helper.id) return [];
+  const answered = 'decision' in request ? request.decision !== null : request.answer !== null;
+  if (answered) return [];
+  const main = mainOf(helper, read);
+  const turn = read.lastTurn(main.id);
+  if (!turn || main.id === helper.id) return [];
+  const id = `${turn.id}:gate:${request.id}`;
+  // Once per request, whichever turn the main thread is on now.
+  const drawn = read
+    .threadItems(main.id)
+    .some(
+      (item) =>
+        item.kind === 'gate_card' &&
+        typeof item.payload === 'object' &&
+        item.payload !== null &&
+        'requestId' in item.payload &&
+        item.payload.requestId === request.id,
+    );
+  if (drawn) return [];
+  const instance = read.providerInstance(helper.providerInstanceId);
+  return [
+    {
+      kind: 'threadItem.added',
+      aggregate: main.id,
+      payload: {
+        id,
+        threadId: main.id,
+        turnId: turn.id,
+        index: read.nextItemIndex(main.id),
+        kind: 'gate_card',
+        payload: {
+          fromThreadId: helper.id,
+          kind: command.reason === 'approval' ? 'approval' : 'question',
+          requestId: request.id,
+          itemId: request.itemId,
+          title: helper.title,
+          instanceName: instance?.name ?? helper.providerInstanceId,
+          providerKind: instance?.kind ?? 'claude',
+          depth: depthOf(helper, read),
+          ...(parent.id === main.id ? {} : { parentTitle: parent.title }),
+          at: context.now,
+        },
+        streaming: false,
+      },
+    },
+  ];
+}
+
+function followMessage(
+  command: Extract<ServerCommand, { type: 'helper.followed' }>,
+  helper: Thread,
+  parent: Thread,
+  read: ReadModel,
+  context: DecideContext,
+): DomainEvent[] {
   const instance = read.providerInstance(helper.providerInstanceId);
   const who = `your helper "${helper.title}" (id ${helper.id}, on ${instance?.name ?? 'its instance'})`;
   let text: string;

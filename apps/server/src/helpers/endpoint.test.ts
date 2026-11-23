@@ -13,7 +13,14 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { providerInstances, questions, threadItems, threads, turns } from '../db/schema.js';
+import {
+  approvals,
+  providerInstances,
+  questions,
+  threadItems,
+  threads,
+  turns,
+} from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 
@@ -56,11 +63,24 @@ const codex: ProviderInstance = {
   defaultPermissionMode: 'auto',
 };
 
-// The invented agents: "wait" keeps the turn running until it is stopped.
+// The invented agents: "wait" keeps the turn running until it is stopped, and "approve" asks for
+// an approval to run the tests.
 const script = (command: ProviderCommand) => {
   if (command.type === 'interrupt')
     return [{ type: 'turnInterrupted' as const, threadId: command.threadId }];
   if (command.type !== 'startTurn') return [];
+  if (/^approve/i.test(command.prompt)) {
+    return [
+      {
+        type: 'approvalRequested' as const,
+        threadId: command.threadId,
+        approvalId: `${command.threadId}-approval`,
+        kind: 'command' as const,
+        summary: 'pnpm test',
+        request: { command: 'pnpm test' },
+      },
+    ];
+  }
   if (/which port/i.test(command.prompt)) {
     return [
       {
@@ -758,6 +778,139 @@ describe('helpers in depth (orchestrator threads spec 4 to 10)', () => {
     await ready(secondId);
     expect(threadRow(secondId)?.workingCopy).toMatchObject({ state: 'ready', repository: bell });
     await helperClient.close();
+    await client.close();
+  });
+});
+
+// The gate cards in the main thread, and how their requests stand.
+const gateCards = (threadId = 't1') =>
+  server.database.db
+    .select()
+    .from(threadItems)
+    .where(eq(threadItems.threadId, threadId))
+    .all()
+    .filter((item) => item.kind === 'gate_card');
+
+describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => {
+  it("draws a depth 2 helper's approval in the main thread, and answering it lets the helper go on", async () => {
+    const client = await mainThread();
+    const first = await call(client, 'start_helper', {
+      brief: 'Plan the deploy',
+      instance: 'Codex at work',
+    });
+    const firstId = String(first.value['id']);
+    await helperStarted(firstId);
+    const tools = startTurnsOf(firstId)[0]?.helperTools;
+    if (!tools) throw new Error('the helper has no helper tools');
+    const helperClient = await connect(tools);
+    const deep = await call(helperClient, 'start_helper', {
+      brief: 'Approve the release',
+      instance: 'claude-work',
+    });
+    const deepId = String(deep.value['id']);
+    await until(() => gateCards().length === 1);
+    await server.helperFollower.settled();
+    const approval = server.database.db
+      .select()
+      .from(approvals)
+      .where(eq(approvals.threadId, deepId))
+      .get();
+    expect(gateCards()[0]?.payload).toMatchObject({
+      fromThreadId: deepId,
+      kind: 'approval',
+      requestId: approval?.id,
+      itemId: approval?.itemId,
+      title: 'Approve the release',
+      instanceName: 'claude-work',
+      providerKind: 'claude',
+      depth: 2,
+      parentTitle: 'Plan the deploy',
+    });
+    // An approval is the user's alone: the helper that started it is not asked.
+    expect(startTurnsOf(firstId).some((turn) => turn.prompt.includes('Approve the release'))).toBe(
+      false,
+    );
+    // The card answers with the same command as the helper's own card.
+    dispatch({ type: 'approval.answer', approvalId: approval?.id ?? '?', decision: 'allowOnce' });
+    await server.providerService.idle();
+    expect(
+      server.database.db.select().from(approvals).where(eq(approvals.threadId, deepId)).get()
+        ?.decision,
+    ).toBe('allowOnce');
+    expect(
+      adapters
+        .flatMap((adapter) => adapter.sent)
+        .some(
+          (command) =>
+            command.type === 'answerApproval' && command.approvalId === `${deepId}-approval`,
+        ),
+    ).toBe(true);
+    // A second follow of the same approval draws nothing more.
+    dispatch({
+      type: 'helper.followed',
+      threadId: deepId,
+      reason: 'approval',
+      approvalId: approval?.id ?? '?',
+    });
+    expect(gateCards()).toHaveLength(1);
+    await helperClient.close();
+    await client.close();
+  });
+
+  it("draws a helper's question in the main thread and still tells the thread that started it", async () => {
+    const client = await mainThread();
+    const started = await call(client, 'start_helper', { brief: 'Which port should it use?' });
+    const helperId = String(started.value['id']);
+    await until(() => gateCards().length === 1);
+    await mainTurns(2);
+    const question = server.database.db
+      .select()
+      .from(questions)
+      .where(eq(questions.threadId, helperId))
+      .get();
+    expect(gateCards()[0]?.payload).toMatchObject({
+      fromThreadId: helperId,
+      kind: 'question',
+      requestId: question?.id,
+      depth: 1,
+    });
+    expect(gateCards()[0]?.payload).not.toHaveProperty('parentTitle');
+    expect(startTurnsOf('t1')[1]?.prompt).toContain('asks a question');
+    dispatch({
+      type: 'question.answer',
+      answers: [{ questionId: question?.id ?? '?', reply: { picked: ['8080'], text: '' } }],
+    });
+    expect(
+      server.database.db.select().from(questions).where(eq(questions.threadId, helperId)).get()
+        ?.answer,
+    ).toContain('8080');
+    await client.close();
+  });
+
+  it('keeps the main composer open while a card waits, and draws nothing for a helper that only answers', async () => {
+    const client = await mainThread();
+    const asking = String(
+      (await call(client, 'start_helper', { brief: 'Approve the release' })).value['id'],
+    );
+    const answering = String(
+      (await call(client, 'start_helper', { brief: 'Read the changelog' })).value['id'],
+    );
+    await until(() => gateCards().length === 1);
+    await turnEnds(answering);
+    await mainTurns(2);
+    expect(threadRow(asking)?.state).toBe('needs_you');
+    const before = startTurnsOf('t1').length;
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'How far is it?' });
+    await turnsSent('t1', before + 1);
+    expect(startTurnsOf('t1').at(-1)?.prompt).toBe('How far is it?');
+    // Followed again after the main thread moved to a new turn: still one card for the request.
+    const approvalId =
+      server.database.db.select().from(approvals).where(eq(approvals.threadId, asking)).get()?.id ??
+      '?';
+    dispatch({ type: 'helper.followed', threadId: asking, reason: 'approval', approvalId });
+    expect(
+      gateCards().map((item) => (item.payload as { fromThreadId: string }).fromThreadId),
+    ).toEqual([asking]);
     await client.close();
   });
 });

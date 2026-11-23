@@ -1,4 +1,4 @@
-import { HelperStartedItemPayload, type Thread } from '@wow/contracts';
+import { GateCardItemPayload, HelperStartedItemPayload, type Thread } from '@wow/contracts';
 
 // Helper threads in lists (agent orchestration spec 11, 12): a helper sits right after its main
 // thread, one step in, when both are in the same list; otherwise it stays where it was and says
@@ -46,3 +46,21 @@ export const helperRowText = (payload: HelperStartedItemPayload): string =>
 
 export const helperPayload = (payload: unknown): HelperStartedItemPayload | undefined =>
   HelperStartedItemPayload.safeParse(payload).data;
+
+const providerName = { claude: 'Claude Code', codex: 'Codex' } as const;
+
+// "Review the timer · Codex · depth 2 · Helper of Plan the change": who asks in a gate card (orchestrator
+// threads spec 14), for the card, its line, Ctrl+F and export.
+export const gateCardWho = (payload: GateCardItemPayload): string =>
+  [
+    payload.title || 'A helper',
+    providerName[payload.providerKind],
+    `depth ${payload.depth}`,
+    ...(payload.parentTitle === undefined ? [] : [`Helper of ${payload.parentTitle}`]),
+  ].join(' · ');
+
+export const gateRowText = (payload: GateCardItemPayload): string =>
+  `${gateCardWho(payload)} asks you ${payload.kind === 'approval' ? 'for an approval' : 'a question'}`;
+
+export const gatePayload = (payload: unknown): GateCardItemPayload | undefined =>
+  GateCardItemPayload.safeParse(payload).data;

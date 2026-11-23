@@ -838,11 +838,13 @@ export const InternalCommand = z.discriminatedUnion('type', [
     reply: QuestionReply,
   }),
   // wow's helper follower (spec 3): a helper ended a turn, failed or asked a question, so its main
-  // thread's agent is told with a message. A turn that was stopped tells nothing.
+  // thread's agent is told with a message. A turn that was stopped tells nothing. A question or
+  // an approval for the user is also drawn in the main thread (orchestrator threads spec 14).
   z.object({
     type: z.literal('helper.followed'),
     threadId: Id,
-    reason: z.enum(['turnEnded', 'question']),
+    reason: z.enum(['turnEnded', 'question', 'approval']),
+    approvalId: Id.optional(),
     questionId: Id.optional(),
   }),
   // The apply service wrote a thread's changes into the project folder, or undid that (parallel

@@ -5,6 +5,7 @@ import {
   ChangeRequestOpenedItemPayload,
   ChangesAppliedItemPayload,
   CommittedItemPayload,
+  GateCardItemPayload,
   HelperStartedItemPayload,
   FilesRestoredItemPayload,
   ReasoningItemPayload,
@@ -46,6 +47,7 @@ import { cn } from '@/lib/utils';
 import { ApprovalCard } from './approval-card';
 import { FilesRestoredLine } from './restore';
 import { ChangesAppliedLine } from './apply';
+import { GateCardLine } from './gate-card';
 import { HelperRow } from './tools/helper';
 import { CommittedLine } from './commit-dialog';
 import { ChangeRequestOpenedLine } from './pull-request-dialog';
@@ -108,6 +110,10 @@ export interface ItemContext {
   // thread is the context panel's (a step's), which yields to the open thread's. Absent, a
   // pending card answers them itself.
   readonly keyedApproval?: { readonly id: string; readonly side: boolean } | undefined;
+  // A helper's request drawn in its main thread (orchestrator threads spec 14, 15): it takes
+  // neither the focus nor the approval keys, which stay with the composer and the main thread's
+  // own requests, so typing there never answers it.
+  readonly gate?: boolean | undefined;
   // The provider's label for a model or a mode id, for the dividers and usage rows (spec 9).
   readonly modelLabel?: ((id: string) => string) | undefined;
   readonly modeLabel?: ((id: string) => string) | undefined;
@@ -859,6 +865,10 @@ function ItemBody({
     case 'helper_started': {
       const parsed = HelperStartedItemPayload.safeParse(item.payload);
       return parsed.success ? <HelperRow payload={parsed.data} /> : <Unreadable item={item} />;
+    }
+    case 'gate_card': {
+      const parsed = GateCardItemPayload.safeParse(item.payload);
+      return parsed.success ? <GateCardLine payload={parsed.data} /> : <Unreadable item={item} />;
     }
     case 'changes_applied': {
       const parsed = ChangesAppliedItemPayload.safeParse(item.payload);

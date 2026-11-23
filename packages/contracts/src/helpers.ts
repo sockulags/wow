@@ -24,6 +24,24 @@ export const HelperStartedItemPayload = z.object({
 });
 export type HelperStartedItemPayload = z.infer<typeof HelperStartedItemPayload>;
 
+// The `gate_card` row in a main thread (orchestrator threads spec 14): an approval or a question
+// for the user from a helper anywhere in its tree. The request itself stays in the helper's
+// thread (`itemId` there); the card draws it and answers it by its id.
+export const GateCardItemPayload = z.object({
+  fromThreadId: Id,
+  kind: z.enum(['approval', 'question']),
+  requestId: Id,
+  itemId: Id,
+  title: z.string(),
+  instanceName: z.string().min(1),
+  providerKind: z.enum(['claude', 'codex']),
+  depth: z.number().int().min(1),
+  // The thread that started the helper, when that is not the main thread.
+  parentTitle: z.string().optional(),
+  at: Timestamp,
+});
+export type GateCardItemPayload = z.infer<typeof GateCardItemPayload>;
+
 // How much a permission mode lets an agent do without asking, comparable across providers:
 // 0 reads only, 1 asks before acting, 2 edits files in its folder, 3 decides for itself, 4 has no
 // sandbox and never asks. A mode not listed counts as asking.
