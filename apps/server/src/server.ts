@@ -1,5 +1,5 @@
 import { archiveDoneByAge } from './core/archive-by-age.js';
-import { settingsRegistry, type HostKind, type ServerMessage } from '@wow/contracts';
+import { helperDepth, settingsRegistry, type HostKind, type ServerMessage } from '@wow/contracts';
 import { discoverClaudeFolders, listClaudeSessions } from '@wow/provider-claude';
 import { discoverCodexFolders, listCodexSessions } from '@wow/provider-codex';
 import { SecretStore, defaultProtector, type Protector } from '@wow/secrets';
@@ -218,26 +218,27 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     platform: options.platform ?? process.platform,
     clock: options.clock ?? (() => new Date()),
   });
-  // wow's helper tools for chat threads (agent orchestration spec 1): a chat thread of the
-  // user's, not a step's, with `chat.helpers` on for its project.
+  // wow's helper tools (orchestrator threads spec 3, 4): every chat thread of the user's that is
+  // not a step's, and every helper above the deepest level `chat.helperDepth` allows.
   const helperEndpoint = new HelperEndpoint({
     version,
     logger,
     allowed: (threadId) => {
+      const parentOf = (id: string) =>
+        database.db
+          .select({ parent: threads.parentThreadId })
+          .from(threads)
+          .where(eq(threads.id, id))
+          .get()?.parent;
       const row = database.db.select().from(threads).where(eq(threads.id, threadId)).get();
-      // A helper has no helpers of its own (agent orchestration spec 7).
-      if (!row || row.kind !== 'chat' || row.runId !== null || row.startedBy === 'helper') {
-        return false;
-      }
-      return settings.get(
-        'chat.helpers',
-        row.projectId === null ? {} : { projectId: row.projectId },
-      );
+      if (!row || row.kind !== 'chat' || row.runId !== null) return false;
+      return helperDepth(threadId, parentOf) < settings.get('chat.helperDepth');
     },
     provider: new HelperTools({
       db: database.db,
       engine,
       logger,
+      home,
       git: () => ({
         timeoutMs: settings.get('trackers.gitTimeoutMs'),
         stopWaitMs: settings.get('advanced.gitStopWaitMs'),

@@ -297,7 +297,7 @@ export class Workspaces {
         `Thread "${other.title || other.id}" also works in this working copy. Mark it done first.`,
       );
     }
-    const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
+    const projectFolder = this.#copySource(thread);
     if (projectFolder === undefined) {
       throw new WorkspaceRefused(
         `The project of this thread no longer exists; delete ${copy.path} yourself.`,
@@ -501,7 +501,7 @@ export class Workspaces {
     if (!copy) return undefined;
     const onDisk = !(await gone(copy.path));
     if (copy.state === 'ready' && onDisk) return undefined;
-    const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
+    const projectFolder = this.#copySource(thread);
     const fail = (error: string) => {
       this.#deps.logger.warn('thread working copy not made', {
         threadId: thread.id,
@@ -608,7 +608,7 @@ export class Workspaces {
       }
     }
     if (!copy.branchStart) return;
-    const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
+    const projectFolder = this.#copySource(thread);
     if (projectFolder !== undefined) {
       await discardWorkingCopy({ projectFolder, target: copy.path, git });
       // Stopped before git made the branch: the note goes, so a branch of that name the user
@@ -637,7 +637,7 @@ export class Workspaces {
     if (this.#settlingThreads.has(copy.path) || this.#preparingThreads.has(copy.path)) return;
     const sharing = this.#threadsSharing(copy.path);
     if (sharing.some((each) => each.state !== 'done' || this.#threadTurnRunning(each.id))) return;
-    const projectFolder = thread.projectId ? this.#projectFolder(thread.projectId) : undefined;
+    const projectFolder = this.#copySource(thread);
     if (projectFolder === undefined) return;
     const work = settleWorkingCopy({
       projectFolder,
@@ -712,6 +712,15 @@ export class Workspaces {
 
   #projectFolder(projectId: string): string | undefined {
     return this.#deps.db.select().from(projects).where(eq(projects.id, projectId)).get()?.cwd;
+  }
+
+  // The repository a thread's own copy is a worktree of: the one a helper's copy was made from
+  // (orchestrator threads spec 5), else the project's folder.
+  #copySource(thread: Pick<Thread, 'projectId' | 'workingCopy'>): string | undefined {
+    return (
+      thread.workingCopy?.repository ??
+      (thread.projectId ? this.#projectFolder(thread.projectId) : undefined)
+    );
   }
 
   #run(runId: string): WorkflowRun | undefined {

@@ -159,7 +159,10 @@ export class ThreadApply {
     return thread;
   }
 
+  // A helper's copy of another repository comes home to that repository (orchestrator threads
+  // spec 5); every other copy to its project's folder.
   #projectFolderOf(thread: ThreadRow): string | undefined {
+    if (thread.workingCopy?.repository) return thread.workingCopy.repository;
     if (thread.projectId === null) return undefined;
     return this.#deps.db.select().from(projects).where(eq(projects.id, thread.projectId)).get()
       ?.cwd;

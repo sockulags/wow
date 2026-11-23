@@ -6,6 +6,7 @@ import {
   type Thread,
   type WorkingCopy,
 } from '@wow/contracts';
+import path from 'node:path';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 import { resolvedSetting, threadWorkingCopyPath } from './workflows.js';
 
@@ -44,7 +45,7 @@ export function ownCopyOf(
   context: DecideContext,
   command: Extract<ServerCommand, { type: 'thread.create' }>,
 ): { readonly cwd: string; readonly branch: string; readonly workingCopy: WorkingCopy } {
-  if (command.projectId === undefined) {
+  if (command.projectId === undefined && command.copyFrom === undefined) {
     throw new CommandRejected(
       'rejected',
       'Only a thread in a project can have its own working copy; this one has a folder only.',
@@ -56,23 +57,31 @@ export function ownCopyOf(
       'A session started in a terminal goes on in its own folder, so it cannot move to a working copy.',
     );
   }
-  const project = read.project(command.projectId);
-  if (!project) throw new CommandRejected('not_found', `No project ${command.projectId}`);
-  const template = stringSetting('chat.workingCopyBranch', read, context, project.id);
-  const taken = read
-    .projectThreads(project.id)
-    .map((thread) => thread.branch)
-    .filter((branch): branch is string => branch !== null);
-  let branch = '';
-  // Ids differ, so names differ; this only matters when six characters of two ids agree.
-  for (let length = 6; length <= longestId; length += 2) {
-    branch = branchName(template, command.title ?? '', command.threadId, length);
-    if (!taken.some((other) => sameBranchName(other, branch))) break;
+  const project = command.projectId === undefined ? undefined : read.project(command.projectId);
+  if (command.projectId !== undefined && !project) {
+    throw new CommandRejected('not_found', `No project ${command.projectId}`);
+  }
+  // A helper's copy of another repository names its branch itself (orchestrator threads spec 5).
+  let branch = command.copyFrom === undefined ? '' : (command.branch ?? '');
+  if (branch === '' && project) {
+    const template = stringSetting('chat.workingCopyBranch', read, context, project.id);
+    const taken = read
+      .projectThreads(project.id)
+      .map((thread) => thread.branch)
+      .filter((each): each is string => each !== null);
+    // Ids differ, so names differ; this only matters when six characters of two ids agree.
+    for (let length = 6; length <= longestId; length += 2) {
+      branch = branchName(template, command.title ?? '', command.threadId, length);
+      if (!taken.some((other) => sameBranchName(other, branch))) break;
+    }
+  }
+  if (branch === '') {
+    throw new CommandRejected('rejected', 'A working copy of another repository needs a branch.');
   }
   const cwd = threadWorkingCopyPath(
     stringSetting('workspaces.root', read, context, undefined),
     context.home,
-    project.name,
+    command.copyFrom === undefined ? (project?.name ?? '') : path.basename(command.copyFrom),
     command.threadId,
   );
   return {
@@ -87,6 +96,7 @@ export function ownCopyOf(
       unpushed: null,
       error: null,
       branch,
+      ...(command.copyFrom === undefined ? {} : { repository: command.copyFrom }),
     },
   };
 }

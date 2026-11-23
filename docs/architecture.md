@@ -179,11 +179,11 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  list, false and true for older rows (migration 0027_thread_list); queued: the
                  message waiting for the running turn to end (migration 0028_queued_messages);
                  baseSha, baseFiles: where a chat thread's Changes are measured from, set at its
-                 first turn (migration 0029_thread_changes); parentThreadId: a helper thread's
-                 main thread, with startedBy 'helper' (migration 0042_helper_threads); stateSince (0031); goBack(json:
+                 first turn (migration 0029_thread_changes); parentThreadId: the thread that started
+                 a helper, with startedBy 'helper' (migration 0042_helper_threads; depth derived); stateSince (0031); goBack(json:
                  GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
                  0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
-                 working copy, null for older rows (migration 0035_thread_working_copy);
+                 working copy, null for older rows (migration 0035_thread_working_copy; repository? for a helper's copy of another repository);
                  changeCount(json: ChangeCount)? what the thread changed as of its last turn's
                  end (migration 0043_thread_change_count); tasks(json: {done, total})? how far
                  its latest task list is, set by the projector as a `task_list` item is added
@@ -1699,8 +1699,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive`,
-  `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
+  `chat.helpersPerTree`, `chat.helperBranch`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
   `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
@@ -4471,16 +4471,35 @@ Agent orchestration U1 (spec 1, Interface, Security). A second MCP path on the w
 `/threads/mcp` (`helpers/endpoint.ts`, `HelperEndpoint`), answers wow's helper tools for ordinary
 chat sessions through the same `answerMcp` as `/assistant/mcp` (`assistant/mcp.ts`). The provider
 service asks `HelperEndpoint.grant(threadId)` in `#chatTurn`, after the start snapshot, and puts
-the answer on the `startTurn` as `helperTools {name: 'wow', url, token}`. It answers only for a
-chat thread of the user's (`kind` chat, no `runId`) whose project has `chat.helpers` on (default
-on), and only once the server listens. The token is made the first time a thread asks and is the
+the answer on the `startTurn` as `helperTools {name: 'wow', url, token}`. It answers for every
+chat thread (`kind` chat, no `runId`), with or without a project, whose depth is below
+`chat.helperDepth` (see "Helpers in depth" below), and only once the server listens. The token is made the first time a thread asks and is the
 same for every turn of it for the server's life, because a provider's session keeps the server it
 was opened with across turns; it is kept in memory only. A request is answered only with a token
 `grant` made, compared in constant time, for the thread it was made for, and only while that
-thread may still have the tools (asked again on every request), so turning the setting off
-refuses the token at once. The assistant's token and the app's token open nothing here, and a
-thread's token does not open `/assistant/mcp`. A helper thread (`startedBy: 'helper'`) gets no
-helper tools of its own.
+thread may still have the tools (asked again on every request), so lowering `chat.helperDepth`
+refuses a helper's token at once. The assistant's token and the app's token open nothing here,
+and a thread's token does not open `/assistant/mcp`. The project switch `chat.helpers` is gone
+(orchestrator threads spec 3); migration `0047_retire_chat_helpers` deletes its stored values.
+
+**Helpers in depth** (orchestrator threads U1, spec 4 to 10, 36). A thread's depth is derived
+from its parent links (`helperDepth` in contracts `helpers.ts`; 0 for a main thread, a helper
+stored before is 1) and never stored. A helper below `chat.helperDepth` (default 2) has the helper
+tools and starts helpers as a main thread does; `decideHelper` refuses `helper.start` from a
+thread at the limit, and every `helper.*` from a step's thread. A helper's end, failure or
+question goes to the thread that started it (`parentThreadId`), not to the top of the chain.
+`helperTree` lists every helper under a thread at any depth: `thread.interrupt` stops all that
+run, and `refuseWhileHelpersWork` names every one that works, deepest first.
+`chat.helpersPerTree` (8) counts the working helpers under one main thread at every level,
+beside `chat.helpersPerThread` and `chat.helpersLive`. `start_helper` takes `folder` (absolute,
+or relative to the starting thread's folder): `HelperTools` resolves it with `realpath`, refuses a
+folder that is not there or lies in wow's home, and passes it on `helper.start`. With
+`isolation: 'copy'` the copy is made from the repository that holds the folder (the starting
+thread's own when none is named): when that is not the project's own folder, `thread.create`
+carries `copyFrom` and a branch from `chat.helperBranch` (`wow/helper/{{id}}`), `ownCopyOf` makes
+the copy without a project if need be, and `WorkingCopy.repository` records the repository. The
+workspaces service (`#copySource`) makes, recovers and settles the worktree from that repository,
+and Apply brings its changes home to it.
 
 **Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
 (`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,
@@ -4492,8 +4511,8 @@ name, checks with `readSnapshotRepository` that the project is in Git for `isola
 and dispatches `helper.start`; `write_to_helper` and `stop_helper` dispatch `helper.write` and
 `helper.stop`. They go to the engine with the origin `helper` (`CommandOrigin`), and
 `decideInSteps` refuses `helper.*` from any other origin. `helpers/decide.ts` (`decideHelper`)
-decides them in steps, as the assistant's delegation does: the main thread must be a chat
-thread with no `runId` that is not a helper; `chat.helpersPerThread` and `chat.helpersLive` count
+decides them in steps, as the assistant's delegation does: the starting thread must be a chat
+thread with no `runId` (a helper below `chat.helperDepth` counts, see above); `chat.helpersPerThread` and `chat.helpersLive` count
 helpers that work (state `working` or a running turn). `helper.start` decides the user's
 `thread.create` on the named instance (refused unless its last test passed), with the main
 thread's model and effort on the same instance or the instance's defaults, the mode

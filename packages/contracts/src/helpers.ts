@@ -50,3 +50,43 @@ export function helperPermissionMode(
   }
   return best?.id ?? providerChatOptions[to].assistantPermissionMode;
 }
+
+// A thread's place in its tree (orchestrator threads spec 4): a main thread is at depth 0 and a
+// helper one below the thread that started it. Derived from the parent links, never stored; a
+// chain that loops stops where it would repeat.
+export function helperDepth(
+  threadId: string,
+  parentOf: (threadId: string) => string | null | undefined,
+): number {
+  const seen = new Set([threadId]);
+  let depth = 0;
+  for (let parent = parentOf(threadId); parent; parent = parentOf(parent)) {
+    if (seen.has(parent)) break;
+    seen.add(parent);
+    depth += 1;
+  }
+  return depth;
+}
+
+// Every helper under a thread at any depth, nearest first, each with its depth below the thread.
+export function helperTree<T extends { readonly id: string }>(
+  threadId: string,
+  childrenOf: (threadId: string) => readonly T[],
+): { readonly thread: T; readonly depth: number }[] {
+  const found: { thread: T; depth: number }[] = [];
+  const seen = new Set([threadId]);
+  let level = [threadId];
+  for (let depth = 1; level.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const id of level) {
+      for (const child of childrenOf(id)) {
+        if (seen.has(child.id)) continue;
+        seen.add(child.id);
+        found.push({ thread: child, depth });
+        next.push(child.id);
+      }
+    }
+    level = next;
+  }
+  return found;
+}

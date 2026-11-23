@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { helperPermissionMode } from './helpers.js';
+import { helperDepth, helperPermissionMode, helperTree } from './helpers.js';
 
 // A helper's permission mode (agent orchestration spec 6): never wider than its main thread's.
 
@@ -28,5 +28,33 @@ describe('helperPermissionMode', () => {
     expect(helperPermissionMode({ kind: 'claude', mode: 'bypassPermissions' }, 'codex')).toBe(
       'full-access',
     );
+  });
+});
+
+// A thread's depth and the helpers under it (orchestrator threads spec 4, 8, 36).
+describe('helperDepth and helperTree', () => {
+  const parents: Record<string, string | null> = { main: null, a: 'main', b: 'a', c: 'main' };
+  const children = (id: string) =>
+    Object.entries(parents)
+      .filter(([, parent]) => parent === id)
+      .map(([child]) => ({ id: child }));
+
+  it('counts the levels up to the main thread, and a stored helper is one down', () => {
+    expect(helperDepth('main', (id) => parents[id])).toBe(0);
+    expect(helperDepth('a', (id) => parents[id])).toBe(1);
+    expect(helperDepth('b', (id) => parents[id])).toBe(2);
+  });
+
+  it('stops at a chain that loops', () => {
+    const loop: Record<string, string> = { x: 'y', y: 'x' };
+    expect(helperDepth('x', (id) => loop[id])).toBe(1);
+  });
+
+  it('lists every helper under a thread, nearest first, with its depth', () => {
+    expect(helperTree('main', children)).toEqual([
+      { thread: { id: 'a' }, depth: 1 },
+      { thread: { id: 'c' }, depth: 1 },
+      { thread: { id: 'b' }, depth: 2 },
+    ]);
   });
 });

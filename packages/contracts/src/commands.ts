@@ -190,6 +190,10 @@ export const Command = z.discriminatedUnion('type', [
     // names the folder and the branch; `cwd` and `branch` above are not used then. Refused
     // without a project and with `resumeSessionId` (a provider session belongs to its folder).
     ownWorkingCopy: z.boolean().optional(),
+    // A helper's own copy (orchestrator threads spec 5): the repository it is made from, an
+    // absolute folder, instead of the project's. `branch` then names the new branch, and a
+    // project is not needed. Absent: the project's repository and the branch template.
+    copyFrom: z.string().min(1).optional(),
   }),
   // Makes the one assistant thread, or brings it in line with the provider instance, model and
   // effort the settings name now (app assistant spec 1). Refused with the reason when no
@@ -813,6 +817,9 @@ export const InternalCommand = z.discriminatedUnion('type', [
     model: z.string().min(1).optional(),
     effort: z.string().min(1).optional(),
     isolation: HelperIsolation,
+    // The folder the helper works in, or that its copy is made from (orchestrator threads spec
+    // 5): absolute, checked by the helper tools. Absent: the starting thread's folder.
+    folder: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal('helper.write'),
