@@ -140,12 +140,11 @@ export function* decideHelper(
         );
       }
       const copy = command.isolation === 'copy';
-      const project = parent.projectId === null ? undefined : read.project(parent.projectId);
       const folder = command.folder ?? parent.cwd;
-      // A copy is made from the repository that holds the folder (spec 5). The project's own
-      // folder keeps the project's way of naming the copy's branch; any other gets a helper's.
-      const copyFrom = copy && folder !== project?.cwd ? folder : undefined;
-      if (copy && copyFrom === undefined && !project) {
+      // A copy is made from the main worktree of the repository that holds the folder, which the
+      // helper tools found (spec 5), on a helper's branch.
+      const copyFrom = copy ? command.folder : undefined;
+      if (copy && copyFrom === undefined) {
         throw new CommandRejected(
           'rejected',
           'A helper gets its own working copy of a Git repository; name its folder.',

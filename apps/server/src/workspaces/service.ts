@@ -1,4 +1,5 @@
 import {
+  helperTree,
   isLiveRunState,
   type ServerCommand,
   type Thread,
@@ -287,6 +288,16 @@ export class Workspaces {
           running.id === thread.id
             ? 'A turn runs in this thread. Stop it, then remove the working copy.'
             : `Thread "${running.title || running.id}" is working in this working copy.`,
+        );
+      }
+      // A helper in the folder has no copy of its own, so it is not among `sharing`; no copy goes
+      // while a helper under the thread works, at any depth (orchestrator threads spec 8).
+      const helper = helperTree(thread.id, (id) =>
+        this.#deps.db.select().from(threads).where(eq(threads.parentThreadId, id)).all(),
+      ).find(({ thread: each }) => each.state === 'working' || this.#threadTurnRunning(each.id));
+      if (helper) {
+        throw new WorkspaceRefused(
+          `Helper "${helper.thread.title || helper.thread.id}" is working. Stop it, then remove the working copy.`,
         );
       }
     };

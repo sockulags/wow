@@ -700,7 +700,7 @@ describe('helpers in depth (orchestrator threads spec 4 to 10)', () => {
       folder: 'plain',
       isolation: 'copy',
     });
-    expect(plain.isError).toBe(true);
+    expect(String(plain.value['error'])).toContain('is not in a Git repository');
     expect(
       server.database.db
         .select()
@@ -708,6 +708,53 @@ describe('helpers in depth (orchestrator threads spec 4 to 10)', () => {
         .all()
         .filter((each) => each.startedBy === 'helper'),
     ).toEqual([]);
+    await client.close();
+  });
+
+  it("makes a helper's copy from its repository's main worktree, never another thread's copy, and keeps that copy while a helper in it works", async () => {
+    const bell = await repository('bell');
+    await mkdir(path.join(bell, 'docs'));
+    const client = await mainThread();
+    // A subfolder names its repository: the copy is of the whole repository, and comes home to
+    // its top level.
+    const first = await call(client, 'start_helper', {
+      brief: 'Ring the bell',
+      folder: 'bell/docs',
+      isolation: 'copy',
+    });
+    const firstId = String(first.value['id']);
+    const ready = (id: string) =>
+      until(() => {
+        const state = threadRow(id)?.workingCopy?.state;
+        return state === 'ready' || state === 'failed';
+      });
+    await ready(firstId);
+    const branch = threadRow(firstId)?.branch ?? '?';
+    expect(threadRow(firstId)?.workingCopy).toMatchObject({ state: 'ready', repository: bell });
+    expect(runGit(bell, 'rev-parse', branch)).toBe(runGit(bell, 'rev-parse', 'HEAD'));
+    await helperStarted(firstId);
+    await turnEnds(firstId);
+    const tools = startTurnsOf(firstId)[0]?.helperTools;
+    if (!tools) throw new Error('the helper has no helper tools');
+    const helperClient = await connect(tools);
+    // A helper in the first copy's folder keeps that copy from being removed while it works.
+    const sharing = await call(helperClient, 'start_helper', { brief: 'Wait for the bell' });
+    const sharingId = String(sharing.value['id']);
+    await helperStarted(sharingId);
+    expect(threadRow(sharingId)?.cwd).toBe(threadRow(firstId)?.cwd);
+    const holds = await server.workspaces.threadStatus(firstId);
+    await expect(server.workspaces.removeThread(firstId, holds)).rejects.toThrow(
+      /Helper "Wait for the bell" is working/,
+    );
+    // From inside that copy, a copy of its own is made from the repository, not from the copy.
+    const second = await call(helperClient, 'start_helper', {
+      brief: 'Ring it again',
+      isolation: 'copy',
+    });
+    const secondId = String(second.value['id']);
+    await ready(secondId);
+    expect(threadRow(secondId)?.workingCopy).toMatchObject({ state: 'ready', repository: bell });
+    await helperClient.close();
     await client.close();
   });
 });

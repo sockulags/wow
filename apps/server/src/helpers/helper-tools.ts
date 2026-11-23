@@ -15,7 +15,7 @@ import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
 import { providerInstances, questions, threadItems, threads, turns } from '../db/schema.js';
 import type { Logger } from '../logger.js';
-import { readSnapshotRepository, type GitRunOptions } from '../projects/git.js';
+import { readMainWorktree, type GitRunOptions } from '../projects/git.js';
 import type { HelperToolProvider } from './endpoint.js';
 
 // wow's helper tools (agent orchestration spec 2): what a chat thread's agent can do with helper
@@ -42,6 +42,15 @@ const id = z.string().min(1);
 // Said in every description, so the agent reaches for a helper when it helps, not by habit.
 const when =
   'Use a helper only when the task needs a second agent (another provider’s view, a review, work that can run beside yours) or the person asks for one; do the work yourself otherwise.';
+
+// Whether `folder` is `parent` or inside it; a name such as "..x" is inside.
+function within(parent: string, folder: string): boolean {
+  const inside = path.relative(parent, folder);
+  return (
+    inside === '' ||
+    (inside !== '..' && !inside.startsWith(`..${path.sep}`) && !path.isAbsolute(inside))
+  );
+}
 
 const json = (value: unknown): ToolResult => ({ text: JSON.stringify(value), isError: false });
 const refusal = (message: string): ToolResult => ({
@@ -185,18 +194,22 @@ export class HelperTools implements HelperToolProvider {
     const isolation = args.isolation ?? 'folder';
     const parent = this.#deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
     if (!parent) throw new CommandRejected('not_found', `There is no thread ${threadId}.`);
-    const folder =
+    let folder =
       args.folder === undefined ? undefined : await this.#folder(parent.cwd, args.folder);
     if (isolation === 'copy') {
-      // The folder the copy is made from: the one named, else this thread's own (spec 5).
+      // A copy is a worktree of the repository that holds the named folder, else this thread's
+      // own (spec 5). It is made from, and comes home to, that repository's main worktree: not a
+      // subfolder, and not another thread's worktree, which goes away when that thread is done.
       const base = folder ?? parent.cwd;
-      const repository = await readSnapshotRepository(base, this.#deps.git());
-      if (repository.status !== 'ok') {
+      const main = await readMainWorktree(base, this.#deps.git());
+      const real = main === undefined ? undefined : await realpath(main).catch(() => undefined);
+      if (real === undefined) {
         throw new CommandRejected(
           'rejected',
-          repository.message ?? `${base} is not in a Git repository, so no copy can be made of it.`,
+          `${base} is not in a Git repository, so no working copy can be made of it.`,
         );
       }
+      folder = real;
     }
     const helperId = randomUUID();
     const title = args.title ?? args.brief.split('\n')[0]?.slice(0, 200) ?? 'Helper';
@@ -216,7 +229,8 @@ export class HelperTools implements HelperToolProvider {
   }
 
   // The folder a helper is to work in (spec 5, Security): absolute or relative to the starting
-  // thread's own, an existing folder, and not wow's home.
+  // thread's own, an existing folder, and not in wow's home unless it is in the starting
+  // thread's own folder (a working copy or a thread folder that wow keeps there).
   async #folder(from: string, named: string): Promise<string> {
     const resolved = path.resolve(from, named);
     const real = await realpath(resolved).catch(() => undefined);
@@ -225,8 +239,8 @@ export class HelperTools implements HelperToolProvider {
       throw new CommandRejected('rejected', `There is no folder ${resolved}.`);
     }
     const home = await realpath(this.#deps.home).catch(() => path.resolve(this.#deps.home));
-    const inside = path.relative(home, real);
-    if (inside === '' || (!inside.startsWith('..') && !path.isAbsolute(inside))) {
+    const own = await realpath(from).catch(() => path.resolve(from));
+    if (within(home, real) && !(within(home, own) && within(own, real))) {
       throw new CommandRejected('rejected', `A helper does not work in wow's own folder ${home}.`);
     }
     return real;

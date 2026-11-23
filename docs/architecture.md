@@ -4489,17 +4489,22 @@ tools and starts helpers as a main thread does; `decideHelper` refuses `helper.s
 thread at the limit, and every `helper.*` from a step's thread. A helper's end, failure or
 question goes to the thread that started it (`parentThreadId`), not to the top of the chain.
 `helperTree` lists every helper under a thread at any depth: `thread.interrupt` stops all that
-run, and `refuseWhileHelpersWork` names every one that works, deepest first.
+run, and `refuseWhileHelpersWork` names every one that works, deepest first. Removing a thread's
+working copy is refused while a helper under it works too (`Workspaces.removeThread`), since a
+helper in the folder has no copy of its own and is not among the threads sharing it.
 `chat.helpersPerTree` (8) counts the working helpers under one main thread at every level,
 beside `chat.helpersPerThread` and `chat.helpersLive`. `start_helper` takes `folder` (absolute,
 or relative to the starting thread's folder): `HelperTools` resolves it with `realpath`, refuses a
-folder that is not there or lies in wow's home, and passes it on `helper.start`. With
-`isolation: 'copy'` the copy is made from the repository that holds the folder (the starting
-thread's own when none is named): when that is not the project's own folder, `thread.create`
-carries `copyFrom` and a branch from `chat.helperBranch` (`wow/helper/{{id}}`), `ownCopyOf` makes
-the copy without a project if need be, and `WorkingCopy.repository` records the repository. The
-workspaces service (`#copySource`) makes, recovers and settles the worktree from that repository,
-and Apply brings its changes home to it.
+folder that is not there, and refuses one in wow's home unless the starting thread's own folder
+is in wow's home (a working copy or thread folder) and holds it; it passes the folder on
+`helper.start`. With `isolation: 'copy'` the copy is a worktree of the repository that holds the
+folder (the starting thread's own when none is named), made from that repository's main worktree
+(`readMainWorktree`: the parent of `git rev-parse --git-common-dir`). That is never a subfolder,
+whose paths would not match the worktree's, and never another thread's working copy, which goes
+when that thread is done. `thread.create` carries it as `copyFrom` with a branch from
+`chat.helperBranch` (`wow/helper/{{id}}`); `ownCopyOf` makes the copy without a project if need be,
+and `WorkingCopy.repository` records the repository. The workspaces service (`#copySource`)
+makes, recovers and settles the worktree from it, and Apply brings its changes home to it.
 
 **Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
 (`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,
