@@ -91,3 +91,12 @@ export const FileReadResult = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('refused'), reason: FileRefusal, message: z.string().min(1) }),
 ]);
 export type FileReadResult = z.infer<typeof FileReadResult>;
+
+// Settings › Workflows (orchestrator threads spec 23): a new workflow file in wow's own folder
+// from `workflows.newTemplate`, and a workflow file opened in the user's editor.
+export const WorkflowFileCreateParams = z.object({ name: z.string().trim().min(1).max(120) });
+export type WorkflowFileCreateParams = z.infer<typeof WorkflowFileCreateParams>;
+export const WorkflowFileOpenParams = z.object({ path: z.string().min(1) });
+export type WorkflowFileOpenParams = z.infer<typeof WorkflowFileOpenParams>;
+export const WorkflowFileResult = z.object({ path: z.string().min(1) });
+export type WorkflowFileResult = z.infer<typeof WorkflowFileResult>;

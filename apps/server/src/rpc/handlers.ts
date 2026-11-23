@@ -3,6 +3,7 @@ import {
   Thread,
   WorkflowRun,
   confirmedOf,
+  fillTemplate,
   inListOrder,
   runFolder,
   settingsRegistry,
@@ -13,9 +14,11 @@ import {
   type FileScope,
 } from '@wow/contracts';
 import { OutlookError } from '@wow/outlook-bridge';
+import { userWorkflowsDir } from '@wow/skills';
 import type { SecretStore } from '@wow/secrets';
 import { desc, eq } from 'drizzle-orm';
-import { stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { openAssistantThread } from '../assistant/thread.js';
 import type { Engine } from '../core/engine.js';
@@ -24,7 +27,7 @@ import { readCalendarRange } from '../core/series.js';
 import { searchThreads } from '../core/thread-search.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
-import { projects, threads, turns, workflowRuns } from '../db/schema.js';
+import { projects, skills, threads, turns, workflowRuns } from '../db/schema.js';
 import { ImageRefused, type ImageStore } from '../files/images.js';
 import { RestoreChanged, RestoreRefused, type FolderSnapshots } from '../files/snapshots.js';
 import { listFolderFiles } from '../files/list.js';
@@ -47,6 +50,7 @@ import type { SkillsService } from '../skills/service.js';
 import { TrackerError } from '../trackers/http.js';
 import type { TrackerService } from '../trackers/service.js';
 import { detectArtifacts } from '../workflows/artifacts.js';
+import { workflowFileBase } from '../workflows/files.js';
 import { changesOptions, readRunDiff, readThreadDiff } from '../workflows/changes.js';
 import type { WorkflowRunner } from '../workflows/runner.js';
 import { WorkspaceChanged, WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
@@ -397,6 +401,49 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         );
       }
       return { path: found.found };
+    },
+    'workflowFiles.create': async ({ name }) => {
+      const folder = userWorkflowsDir(deps.info.home);
+      const file = path.join(folder, `${workflowFileBase(name)}.md`);
+      if (existsSync(file)) throw new RpcFault('conflict', `${file} is there already.`);
+      await mkdir(folder, { recursive: true });
+      const text = fillTemplate(deps.settings.get('workflows.newTemplate'), { name: name.trim() });
+      await writeFile(file, text.endsWith('\n') ? text : `${text}\n`, {
+        encoding: 'utf8',
+        flag: 'wx',
+      });
+      await deps.skills.refresh();
+      return { path: file };
+    },
+    'workflowFiles.open': async ({ path: asked }) => {
+      // Only a workflow file wow lists, never any path a page names.
+      const known = deps.db
+        .select({ id: skills.id, source: skills.source })
+        .from(skills)
+        .all()
+        .some(
+          (row) =>
+            (row.source === 'workflow' || row.source === 'project-workflow') && row.id === asked,
+        );
+      if (!known) throw new RpcFault('not_found', `${asked} is not a workflow file wow lists.`);
+      try {
+        const launch = await planEditor({
+          command: deps.settings.get('viewer.editorCommand'),
+          shell: deps.settings.get('viewer.editorShell'),
+          target: { path: asked, line: 1 },
+          platform: deps.editor?.platform ?? process.platform,
+          env: deps.editor?.env ?? process.env,
+        });
+        await startEditor(launch, deps.editor?.spawn);
+      } catch (failure) {
+        if (failure instanceof EditorRefused) throw new RpcFault('rejected', failure.message);
+        const reason = failure instanceof Error ? failure.message : String(failure);
+        throw new RpcFault(
+          'rejected',
+          `The editor command did not start (${reason}). Check the "Editor command" setting.`,
+        );
+      }
+      return { path: asked };
     },
     'workflowRuns.diff': async ({ runId, path: asked }) => {
       const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
