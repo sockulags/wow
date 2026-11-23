@@ -6,6 +6,7 @@ import type {
   ProviderToolset,
   ServerCommand,
 } from '@wow/contracts';
+import { RpcResponse } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
@@ -15,6 +16,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   approvals,
+  skills,
   providerInstances,
   questions,
   threadItems,
@@ -22,6 +24,7 @@ import {
   turns,
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
+import { WebSocket } from 'ws';
 import { startServer, type RunningServer } from '../server.js';
 import { exportStoredWorkflows } from '../workflows/files.js';
 
@@ -1271,6 +1274,10 @@ describe('workflows as text (orchestrator threads spec 19, 20, 22)', () => {
     await server.providerService.idle();
     const inProject = startTurnsOf('t1')[0]?.prompt ?? '';
     expect(inProject).toContain('Follow this workflow');
+    // What wow controls of the agent's way through it: helpers per step, and a question at a gate.
+    expect(inProject).toContain('start_helper');
+    expect(inProject).toContain('ask_questions');
+    expect(inProject).toContain('gate: after');
     expect(inProject).toContain('The project release.');
     expect(inProject).not.toContain('Your own release.');
     expect(inProject).toContain('fix the timer');
@@ -1317,7 +1324,7 @@ describe('workflows as text (orchestrator threads spec 19, 20, 22)', () => {
       'Ship-1.md',
     ]);
     const ship = await readFile(path.join(home, 'workflows', 'Ship-1.md'), 'utf8');
-    expect(ship).toContain('name: Ship');
+    expect(ship).toContain('name: Ship-1');
     expect(ship).toContain('## plan-work');
     expect(ship).toContain('instance: claude-work');
     expect(ship).toContain('gate: after');
@@ -1327,5 +1334,48 @@ describe('workflows as text (orchestrator threads spec 19, 20, 22)', () => {
     expect(
       await exportStoredWorkflows({ db: server.database.db, home, logger: server.logger }),
     ).toEqual([]);
+  });
+});
+
+async function rpc(method: string, params: unknown): Promise<RpcResponse> {
+  const socket = new WebSocket(server.url);
+  await new Promise((resolve, reject) => {
+    socket.once('open', resolve);
+    socket.once('error', reject);
+  });
+  const answer = new Promise<RpcResponse>((resolve) =>
+    socket.once('message', (raw) => resolve(RpcResponse.parse(JSON.parse(String(raw))))),
+  );
+  socket.send(JSON.stringify({ id: '1', method, params }));
+  const response = await answer;
+  await new Promise<void>((resolve) => {
+    socket.once('close', () => resolve());
+    socket.close();
+  });
+  return response;
+}
+
+describe('Settings › Workflows (orchestrator threads spec 23)', () => {
+  it('makes a new workflow file from the template, lists it, and refuses one that is there', async () => {
+    const made = await rpc('workflowFiles.create', { name: 'Release: v2' });
+    const file = path.join(root, 'wow home', 'workflows', 'Release- v2.md');
+    expect(made).toMatchObject({ result: { path: file } });
+    expect(await readFile(file, 'utf8')).toContain('name: "Release: v2"');
+    expect(
+      server.database.db
+        .select()
+        .from(skills)
+        .all()
+        .some((row) => row.source === 'workflow' && row.name === 'Release: v2'),
+    ).toBe(true);
+    expect(await rpc('workflowFiles.create', { name: 'Release: v2' })).toMatchObject({
+      error: { code: 'conflict' },
+    });
+  });
+
+  it('opens only a workflow file wow lists', async () => {
+    expect(await rpc('workflowFiles.open', { path: path.join(root, 'secret.txt') })).toMatchObject({
+      error: { code: 'not_found' },
+    });
   });
 });

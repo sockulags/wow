@@ -19,13 +19,17 @@ type StoredWorkflow = typeof workflows.$inferSelect;
 // nothing even after files were deleted.
 const exportedMark = (home: string): string => path.join(home, 'workflows-exported');
 
-// A file name from a workflow's name: what Windows and Git take, never empty.
-export const workflowFileBase = (name: string): string =>
-  name
-    .trim()
-    .replace(/[<>:"/\\|?*]+/g, '-')
-    .replace(/\s+/g, ' ')
-    .replace(/^[.\s-]+|[.\s]+$/g, '') || 'workflow';
+// A file name from a workflow's name: what Windows and Git take, never empty and never one of
+// the names Windows keeps for devices.
+export function workflowFileBase(name: string): string {
+  const base =
+    name
+      .trim()
+      .replace(/[<>:"/\\|?*]+/g, '-')
+      .replace(/\s+/g, ' ')
+      .replace(/^[.\s-]+|[.\s]+$/g, '') || 'workflow';
+  return /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(base) ? `${base}-workflow` : base;
+}
 
 // A stored workflow as the text of its file.
 export function workflowFileText(
@@ -88,7 +92,11 @@ export async function exportStoredWorkflows(deps: {
     for (let n = 1; existsSync(file); n += 1) file = path.join(folder, `${base}-${n}.md`);
     await writeFile(
       file,
-      workflowFileText(workflow, (id) => names.get(id) ?? id),
+      // The file's own name, so a workflow written as <name>-1.md is the workflow <name>-1.
+      workflowFileText(
+        { ...workflow, name: path.basename(file, '.md') },
+        (id) => names.get(id) ?? id,
+      ),
       { encoding: 'utf8', flag: 'wx' },
     );
     written.push(file);

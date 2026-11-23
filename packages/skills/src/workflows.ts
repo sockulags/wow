@@ -66,13 +66,24 @@ export async function scanWorkflows(
   const problems: ScanProblem[] = [];
   for (const root of roots) {
     const names = await readdir(root.dir).catch(() => [] as string[]);
+    // Two files of one folder with one name could not be told apart by /name: the first wins
+    // and the other is reported.
+    const taken = new Set<string>();
     for (const entry of names.filter((name) => name.toLowerCase().endsWith('.md')).toSorted()) {
       const file = path.join(root.dir, entry);
       const content = await readFile(file, 'utf8').catch(() => undefined);
       if (content === undefined) continue;
       const result = workflowOf(file, content, root);
       if ('message' in result) problems.push(result);
-      else skills.push(result);
+      else if (taken.has(result.name.toLowerCase())) {
+        problems.push({
+          file,
+          message: `Another workflow in ${root.dir} is named ${result.name}; rename one.`,
+        });
+      } else {
+        taken.add(result.name.toLowerCase());
+        skills.push(result);
+      }
     }
   }
   return { skills, problems };

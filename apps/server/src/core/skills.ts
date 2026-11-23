@@ -14,6 +14,7 @@ import {
   type Thread,
   fillTemplate,
   promptWithSkills,
+  isWorkflowSkill,
 } from '@wow/contracts';
 import {
   changedOwnSkillFile,
@@ -224,7 +225,7 @@ export function skillToSend(
       text: source === 'wow' ? fillBuiltInSkill(text, values) : text,
     };
   }
-  const folder = skills.filter((skill) => !isWow(skill));
+  const folder = skills.filter((skill) => !isWow(skill) && !isWorkflowSkill(skill));
   return { kind: 'invoke', ...folderInvocation(folder, ref.name, provider) };
 }
 

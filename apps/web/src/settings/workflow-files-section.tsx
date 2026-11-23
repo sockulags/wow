@@ -1,6 +1,7 @@
 import { WorkflowFileResult, type Skill } from '@wow/contracts';
 import { FileTextIcon } from 'lucide-react';
 import { useState } from 'react';
+import type { AppCommand } from '@/app/commands';
 import { useRuntime } from '@/app/runtime';
 import { errorMessage, useTopic } from '@/chat/data';
 import { PathText } from '@/components/path-text';
@@ -92,4 +93,35 @@ export function WorkflowFilesSection() {
       </form>
     </section>
   );
+}
+
+// The palette's way to the same actions (every action of a view has a command).
+export function workflowFileCommands(skills: readonly Skill[]): AppCommand[] {
+  const keywords = ['workflow', 'workflows', 'settings', 'file'];
+  return [
+    {
+      id: 'workflows.newFile',
+      title: 'New workflow file',
+      group: 'Settings',
+      keywords: [...keywords, 'write', 'create', 'add'],
+      run: ({ navigate }) => {
+        void navigate({ to: '/settings/$group', params: { group: 'workflows' } });
+      },
+    },
+    ...workflowFiles(skills).map((file): AppCommand => ({
+      id: `workflows.openFile.${file.id}`,
+      title: `Open workflow in editor: ${file.name}`,
+      group: 'Settings',
+      keywords: [...keywords, 'open', 'edit', file.name],
+      searchOnly: true,
+      run: ({ connection }) => {
+        if (!connection) return;
+        connection
+          .request('workflowFiles.open', { path: file.id })
+          .catch((failure: unknown) =>
+            notify.error('Not opened in your editor', { description: errorMessage(failure) }),
+          );
+      },
+    })),
+  ];
 }

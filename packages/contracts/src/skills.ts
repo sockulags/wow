@@ -242,3 +242,8 @@ export function automaticSkills(
   }
   return found;
 }
+
+// A workflow file listed with the skills (orchestrator threads spec 19): started with /name in a
+// message, never a step's skill or a folder skill a provider invokes.
+export const isWorkflowSkill = (skill: { readonly source: string }): boolean =>
+  skill.source === 'workflow' || skill.source === 'project-workflow';

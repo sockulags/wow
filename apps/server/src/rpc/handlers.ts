@@ -407,7 +407,10 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       const file = path.join(folder, `${workflowFileBase(name)}.md`);
       if (existsSync(file)) throw new RpcFault('conflict', `${file} is there already.`);
       await mkdir(folder, { recursive: true });
-      const text = fillTemplate(deps.settings.get('workflows.newTemplate'), { name: name.trim() });
+      // Quoted, so a name such as "Release: v2" keeps the front matter readable.
+      const text = fillTemplate(deps.settings.get('workflows.newTemplate'), {
+        name: JSON.stringify(name.trim()),
+      });
       await writeFile(file, text.endsWith('\n') ? text : `${text}\n`, {
         encoding: 'utf8',
         flag: 'wx',

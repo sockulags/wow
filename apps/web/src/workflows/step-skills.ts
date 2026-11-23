@@ -8,6 +8,7 @@ import {
   type Skill,
   type SkillRef,
   type WowSkillSource,
+  isWorkflowSkill,
 } from '@wow/contracts';
 import type { ComboboxChoice } from '@/components/combobox';
 import { parseGlobs, type DraftStep } from './model';
@@ -61,7 +62,7 @@ function sharedFolders(skills: readonly Skill[], skill: Skill): string {
 export function skillChoices(skills: readonly Skill[]): SkillChoice[] {
   const seen = new Set<string>();
   const choices: SkillChoice[] = [];
-  for (const skill of skills) {
+  for (const skill of skills.filter((entry) => !isWorkflowSkill(entry))) {
     const ref = refOf(skill);
     const value = refKey(ref);
     if (seen.has(value)) continue;

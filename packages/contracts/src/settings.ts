@@ -1378,7 +1378,7 @@ export const settingsRegistry = {
     group: 'workflows',
     label: 'A new workflow file',
     description:
-      'What "New workflow" in Settings › Workflows writes in a new file; {{name}} is the name you give it.',
+      'What "New workflow" in Settings › Workflows writes in a new file; {{name}} is the name you give it, in double quotes so the front matter takes any name.',
     default:
       '---\nname: {{name}}\ndescription: What this workflow is for, in one line\n---\n\n## Plan\n\nRead the request and write a short plan.\n\ngate: after\n\n## Build\n\ninstance: Claude Code\n\nCarry out the plan, with tests.\n\n## Review\n\ninstance: Codex\n\nReview the change and say what to fix.\n',
     scope: 'global',

@@ -11,6 +11,7 @@ import {
   type CalendarOccurrence,
   type ProviderModel,
   type SettingDefinition,
+  isWorkflowSkill,
 } from '@wow/contracts';
 import type { SecretStore } from '@wow/secrets';
 import { asc, desc } from 'drizzle-orm';
@@ -217,7 +218,7 @@ export const readers = {
     input: none,
     read: (_args, deps) => {
       const all = deps.db.select().from(t.skills).all();
-      return inListOrder(all).map((skill) => {
+      return inListOrder(all.filter((skill) => !isWorkflowSkill(skill))).map((skill) => {
         const shared = skill.source === 'yours' ? ambiguousOwnSkill(all, skill.name) : undefined;
         return {
           id: skill.id,

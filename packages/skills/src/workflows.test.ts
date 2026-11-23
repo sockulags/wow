@@ -62,3 +62,17 @@ describe('scanWorkflows', () => {
     ]);
   });
 });
+
+describe('workflows of one name', () => {
+  it('keeps the first of two files with one name in a folder and reports the other', async () => {
+    const home = path.join(root, 'wow home');
+    await mkdir(path.join(home, 'workflows'), { recursive: true });
+    await writeFile(path.join(home, 'workflows', 'a.md'), '---\nname: Ship\n---\n\n## One\n');
+    await writeFile(path.join(home, 'workflows', 'b.md'), '---\nname: ship\n---\n\n## Two\n');
+    const { skills, problems } = await scanWorkflows(workflowRoots(home, []));
+    expect(skills.map((skill) => skill.text)).toEqual(['---\nname: Ship\n---\n\n## One']);
+    expect(problems).toEqual([
+      expect.objectContaining({ file: path.join(home, 'workflows', 'b.md') }),
+    ]);
+  });
+});
