@@ -1114,6 +1114,24 @@ export async function readSnapshotRepository(
   };
 }
 
+// The main worktree of the repository that holds `folder` (orchestrator threads spec 5): the
+// folder a helper's copy is made from and comes home to. Its top level, never a subfolder, and
+// never another thread's worktree, which goes away. Undefined outside a repository with one.
+export async function readMainWorktree(
+  folder: string,
+  options: GitRunOptions,
+): Promise<string | undefined> {
+  const found = await runStoreGit(
+    ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+    { cwd: folder, maxBytes: 4096 },
+    options,
+  );
+  if (!found.ok) return undefined;
+  const common = found.stdout.toString('utf8').trim();
+  if (common === '' || path.basename(common) !== '.git') return undefined;
+  return path.resolve(path.dirname(common));
+}
+
 // Every file Git tracks and every untracked file it does not ignore, relative to `folder`, with
 // forward slashes, each once (a file in a merge is listed once per side).
 export async function listSnapshotFiles(

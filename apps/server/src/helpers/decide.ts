@@ -1,5 +1,9 @@
 import {
+  branchName,
+  helperDepth,
   helperPermissionMode,
+  helperTree,
+  sameBranchName,
   type DomainEvent,
   type ServerCommand,
   type Thread,
@@ -26,15 +30,32 @@ export type HelperCommand = Extract<
 const working = (thread: Thread, read: ReadModel) =>
   thread.state === 'working' || read.runningTurn(thread.id) !== undefined;
 
-function mainThread(parentThreadId: string, read: ReadModel): Thread {
+const depthOf = (thread: Thread, read: ReadModel) =>
+  helperDepth(thread.id, (id) => read.thread(id)?.parentThreadId);
+
+// The main thread a thread belongs to: itself, or the top of its helper chain.
+function mainOf(thread: Thread, read: ReadModel): Thread {
+  let top = thread;
+  const seen = new Set([thread.id]);
+  for (let up = read.thread(top.parentThreadId ?? ''); up && !seen.has(up.id);) {
+    seen.add(up.id);
+    top = up;
+    up = read.thread(top.parentThreadId ?? '');
+  }
+  return top;
+}
+
+// The thread whose agent called the helper tools: a chat thread of the user's or a helper (spec
+// 4). A step's thread has none.
+function startingThread(parentThreadId: string, read: ReadModel): Thread {
   const parent = read.thread(parentThreadId);
   if (!parent || parent.kind === 'assistant') {
     throw new CommandRejected('not_found', `There is no thread ${parentThreadId}.`);
   }
-  if (parent.runId !== null || parent.startedBy === 'helper') {
+  if (parent.runId !== null) {
     throw new CommandRejected(
       'rejected',
-      "A workflow step's thread and a helper cannot start helpers of their own.",
+      "A workflow step's thread cannot start helpers of its own.",
     );
   }
   return parent;
@@ -54,9 +75,28 @@ export function* decideHelper(
   context: DecideContext,
 ): Generator<DomainEvent[], void> {
   const asUser: DecideContext = { ...context, origin: 'user' };
-  const parent = mainThread(command.parentThreadId, read);
+  const parent = startingThread(command.parentThreadId, read);
   switch (command.type) {
     case 'helper.start': {
+      const deepest = settingValue('chat.helperDepth', read, context);
+      const depth = depthOf(parent, read);
+      if (typeof deepest === 'number' && depth >= deepest) {
+        throw new CommandRejected(
+          'rejected',
+          `This thread is a helper ${depth} level${depth === 1 ? '' : 's'} down, the deepest a helper may start helpers from (chat.helperDepth). Do the work yourself.`,
+        );
+      }
+      const perTree = settingValue('chat.helpersPerTree', read, context);
+      const main = mainOf(parent, read);
+      const inTree = helperTree(main.id, (id) => read.helperThreads(id)).filter(({ thread }) =>
+        working(thread, read),
+      ).length;
+      if (typeof perTree === 'number' && inTree >= perTree) {
+        throw new CommandRejected(
+          'rejected',
+          `${inTree} helpers are working under the main thread "${main.title}", the most at once (chat.helpersPerTree). Wait for one to finish.`,
+        );
+      }
       const perThread = settingValue('chat.helpersPerThread', read, context);
       const mine = read.helperThreads(parent.id).filter((thread) => working(thread, read)).length;
       if (typeof perThread === 'number' && mine >= perThread) {
@@ -100,22 +140,45 @@ export function* decideHelper(
         );
       }
       const copy = command.isolation === 'copy';
-      if (copy && parent.projectId === null) {
+      const folder = command.folder ?? parent.cwd;
+      // A copy is made from the main worktree of the repository that holds the folder, which the
+      // helper tools found (spec 5), on a helper's branch.
+      const copyFrom = copy ? command.folder : undefined;
+      if (copy && copyFrom === undefined) {
         throw new CommandRejected(
           'rejected',
-          'A helper gets its own working copy only in a project; this thread has none. Start it in this folder instead.',
+          'A helper gets its own working copy of a Git repository; name its folder.',
         );
       }
-      const project = parent.projectId === null ? undefined : read.project(parent.projectId);
+      let branch: string | undefined;
+      if (copyFrom !== undefined) {
+        const template = settingValue('chat.helperBranch', read, context);
+        const taken = read
+          .helperThreads()
+          .map((thread) => thread.branch)
+          .filter((each): each is string => each !== null);
+        // Ids differ, so names differ; this only matters when six characters of two ids agree.
+        for (let length = 6; length <= 16; length += 2) {
+          branch = branchName(
+            typeof template === 'string' ? template : 'wow/helper/{{id}}',
+            command.title,
+            command.threadId,
+            length,
+          );
+          if (!taken.some((other) => sameBranchName(other, branch ?? ''))) break;
+        }
+      }
       yield decide(
         {
           type: 'thread.create',
           threadId: command.threadId,
           providerInstanceId: instance.id,
           ...(parent.projectId === null ? {} : { projectId: parent.projectId }),
-          // The main thread's own folder (its working copy when it has one), or the project's,
-          // from which the helper's own copy is made.
-          cwd: copy && project ? project.cwd : parent.cwd,
+          // The folder it works in: the starting thread's own (its working copy when it has
+          // one) or the one it named. For a copy, the folder it is made from.
+          cwd: folder,
+          ...(copyFrom === undefined ? {} : { copyFrom }),
+          ...(branch === undefined ? {} : { branch }),
           title: command.title,
           model,
           effort,

@@ -594,14 +594,14 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
-  'chat.helpers': defineSetting({
-    schema: z.boolean(),
+  'chat.helperDepth': defineSetting({
+    schema: z.number().int().min(1).max(5),
     group: 'chat',
-    label: 'Helper threads',
+    label: 'How deep helpers go',
     description:
-      "Give the agent of a chat thread wow's helper tools, with which it can start helper threads on any connected Claude Code or Codex instance when the task needs one or you ask for it. A helper's approvals stay yours.",
-    default: true,
-    scope: 'project',
+      "How many levels of helper threads a main thread may have: 1 lets only the main thread's agent start helpers, 2 lets those helpers start their own, and so on. A helper at the deepest level has no helper tools.",
+    default: 2,
+    scope: 'global',
   }),
   'chat.helpersPerThread': defineSetting({
     schema: z.number().int().min(1).max(20),
@@ -619,6 +619,29 @@ export const settingsRegistry = {
     description:
       'How many helper threads may be working at the same time across every thread. Over it, starting another is refused with the reason.',
     default: 6,
+    scope: 'global',
+  }),
+  'chat.helpersPerTree': defineSetting({
+    schema: z.number().int().min(1).max(50),
+    group: 'chat',
+    label: 'Helpers under one main thread at once',
+    description:
+      'How many helper threads may be working at the same time under one main thread, at every level together. Over it, starting another is refused with the reason.',
+    default: 8,
+    scope: 'global',
+  }),
+  'chat.helperBranch': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
+      .meta({ widget: 'template', placeholders: ['title', 'id'] }),
+    group: 'chat',
+    label: "Branch of a helper's own working copy",
+    description:
+      "The name of the new branch a helper's own working copy is on. {{title}} is the helper's title in lower case with dashes, at most 32 characters, and {{id}} six characters of the helper's id. Characters Git does not take in a branch name become dashes.",
+    default: 'wow/helper/{{id}}',
     scope: 'global',
   }),
   'chat.helperAnswerMaxLength': defineSetting({

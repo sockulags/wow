@@ -6,21 +6,16 @@ import {
 } from '@wow/contracts';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
+import { realpath, stat } from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
 import type { ToolDescription, ToolResult } from '../assistant/tools.js';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
-import {
-  projects,
-  providerInstances,
-  questions,
-  threadItems,
-  threads,
-  turns,
-} from '../db/schema.js';
+import { providerInstances, questions, threadItems, threads, turns } from '../db/schema.js';
 import type { Logger } from '../logger.js';
-import { readSnapshotRepository, type GitRunOptions } from '../projects/git.js';
+import { readMainWorktree, type GitRunOptions } from '../projects/git.js';
 import type { HelperToolProvider } from './endpoint.js';
 
 // wow's helper tools (agent orchestration spec 2): what a chat thread's agent can do with helper
@@ -32,6 +27,8 @@ export interface HelperToolsDeps {
   readonly engine: Engine;
   readonly logger: Logger;
   readonly git: () => GitRunOptions;
+  // wow's own home, where no helper may work (orchestrator threads, Security).
+  readonly home: string;
 }
 
 interface Tool {
@@ -45,6 +42,15 @@ const id = z.string().min(1);
 // Said in every description, so the agent reaches for a helper when it helps, not by habit.
 const when =
   'Use a helper only when the task needs a second agent (another provider’s view, a review, work that can run beside yours) or the person asks for one; do the work yourself otherwise.';
+
+// Whether `folder` is `parent` or inside it; a name such as "..x" is inside.
+function within(parent: string, folder: string): boolean {
+  const inside = path.relative(parent, folder);
+  return (
+    inside === '' ||
+    (inside !== '..' && !inside.startsWith(`..${path.sep}`) && !path.isAbsolute(inside))
+  );
+}
 
 const json = (value: unknown): ToolResult => ({ text: JSON.stringify(value), isError: false });
 const refusal = (message: string): ToolResult => ({
@@ -60,7 +66,7 @@ export class HelperTools implements HelperToolProvider {
     this.#deps = deps;
     this.#tools = {
       start_helper: {
-        description: `Starts a helper thread: another agent, on any connected Claude Code or Codex instance (list_helpers names them), that gets your brief as its first message. ${when} Write the brief as you would for a colleague: the goal, what you know, what to leave alone and what to report. By default it works in your folder, as a subagent does; isolation "copy" gives it its own working copy on a new branch (a project in Git only). It runs on its own; read_helper shows how it stands and what it answered. Its approvals are the person's.`,
+        description: `Starts a helper thread: another agent, on any connected Claude Code or Codex instance (list_helpers names them), that gets your brief as its first message. ${when} Write the brief as you would for a colleague: the goal, what you know, what to leave alone and what to report. By default it works in your folder, as a subagent does; "folder" names another one (absolute, or relative to yours), such as another repository the task touches. Isolation "copy" gives it its own working copy on a new branch of the Git repository that holds that folder. It runs on its own and its answer comes back to you; read_helper shows how it stands and what it answered. Its approvals are the person's.`,
         input: z
           .object({
             brief: z.string().trim().min(1),
@@ -68,6 +74,7 @@ export class HelperTools implements HelperToolProvider {
             instance: z.string().min(1).optional(),
             model: z.string().min(1).optional(),
             effort: z.string().min(1).optional(),
+            folder: z.string().trim().min(1).optional(),
             isolation: z.enum(['folder', 'copy']).optional(),
           })
           .strict(),
@@ -167,6 +174,7 @@ export class HelperTools implements HelperToolProvider {
       instance?: string | undefined;
       model?: string | undefined;
       effort?: string | undefined;
+      folder?: string | undefined;
       isolation?: 'folder' | 'copy' | undefined;
     },
   ) {
@@ -184,22 +192,24 @@ export class HelperTools implements HelperToolProvider {
       );
     }
     const isolation = args.isolation ?? 'folder';
+    const parent = this.#deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
+    if (!parent) throw new CommandRejected('not_found', `There is no thread ${threadId}.`);
+    let folder =
+      args.folder === undefined ? undefined : await this.#folder(parent.cwd, args.folder);
     if (isolation === 'copy') {
-      const parent = this.#deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
-      const project =
-        parent?.projectId == null
-          ? undefined
-          : this.#deps.db.select().from(projects).where(eq(projects.id, parent.projectId)).get();
-      const repository = project
-        ? await readSnapshotRepository(project.cwd, this.#deps.git())
-        : undefined;
-      if (repository?.status !== 'ok') {
+      // A copy is a worktree of the repository that holds the named folder, else this thread's
+      // own (spec 5). It is made from, and comes home to, that repository's main worktree: not a
+      // subfolder, and not another thread's worktree, which goes away when that thread is done.
+      const base = folder ?? parent.cwd;
+      const main = await readMainWorktree(base, this.#deps.git());
+      const real = main === undefined ? undefined : await realpath(main).catch(() => undefined);
+      if (real === undefined) {
         throw new CommandRejected(
           'rejected',
-          repository?.message ??
-            'A helper gets its own working copy only in a project; this thread has none.',
+          `${base} is not in a Git repository, so no working copy can be made of it.`,
         );
       }
+      folder = real;
     }
     const helperId = randomUUID();
     const title = args.title ?? args.brief.split('\n')[0]?.slice(0, 200) ?? 'Helper';
@@ -212,9 +222,28 @@ export class HelperTools implements HelperToolProvider {
       ...(instance ? { providerInstanceId: instance.id } : {}),
       ...(args.model ? { model: args.model } : {}),
       ...(args.effort ? { effort: args.effort } : {}),
+      ...(folder === undefined ? {} : { folder }),
       isolation,
     });
     return { id: helperId, title, isolation, started: true };
+  }
+
+  // The folder a helper is to work in (spec 5, Security): absolute or relative to the starting
+  // thread's own, an existing folder, and not in wow's home unless it is in the starting
+  // thread's own folder (a working copy or a thread folder that wow keeps there).
+  async #folder(from: string, named: string): Promise<string> {
+    const resolved = path.resolve(from, named);
+    const real = await realpath(resolved).catch(() => undefined);
+    const kind = real === undefined ? undefined : await stat(real).catch(() => undefined);
+    if (real === undefined || !kind?.isDirectory()) {
+      throw new CommandRejected('rejected', `There is no folder ${resolved}.`);
+    }
+    const home = await realpath(this.#deps.home).catch(() => path.resolve(this.#deps.home));
+    const own = await realpath(from).catch(() => path.resolve(from));
+    if (within(home, real) && !(within(home, own) && within(own, real))) {
+      throw new CommandRejected('rejected', `A helper does not work in wow's own folder ${home}.`);
+    }
+    return real;
   }
 
   #lastTurn(threadId: string) {

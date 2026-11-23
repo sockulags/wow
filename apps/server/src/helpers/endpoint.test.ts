@@ -8,7 +8,8 @@ import type {
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -277,18 +278,9 @@ describe('helper tools in a chat session (orchestration spec 1)', () => {
     expect((await listTools(tools.token, server.assistant.url)).status).toBe(401);
   });
 
-  it('gives none with chat.helpers off for the project, and refuses the token from then on', async () => {
-    create('t1', 'tea');
-    const tools = (await turnOf('t1')).helperTools;
-    if (!tools) throw new Error('no helper tools');
-    dispatch({
-      type: 'setting.set',
-      key: 'chat.helpers',
-      scope: 'project:tea',
-      value: false,
-    });
-    expect((await turnOf('t1')).helperTools).toBeUndefined();
-    expect((await listTools(tools.token, tools.url)).status).toBe(401);
+  it('gives a thread without a project the tools too (orchestrator threads spec 3)', async () => {
+    create('t1');
+    expect((await turnOf('t1')).helperTools).toMatchObject({ name: 'wow' });
   });
 
   it("gives a workflow step's thread none", async () => {
@@ -336,8 +328,8 @@ describe('helper threads (orchestration spec 2 to 8)', () => {
       prompt: 'Review the timer change\nLook at src/timer.ts only.',
       cwd: root,
     });
-    // A helper has no helpers of its own.
-    expect(turn?.helperTools).toBeUndefined();
+    // Above the deepest level a helper has helper tools of its own (orchestrator threads spec 4).
+    expect(turn?.helperTools).toMatchObject({ name: 'wow' });
     const row = server.database.db
       .select()
       .from(threadItems)
@@ -501,6 +493,268 @@ describe('following helpers (orchestration spec 3, 7)', () => {
     ).toEqual(['t1', helperId].toSorted());
     // A stopped helper tells its main thread nothing, so the main thread does not start again.
     expect(startTurnsOf('t1')).toHaveLength(2);
+    await client.close();
+  });
+});
+
+// Resolves on the commit after which `test` holds: no sleeping or polling.
+function until(test: () => boolean) {
+  return new Promise<void>((resolve) => {
+    const check = () => {
+      if (test()) {
+        unsubscribe();
+        resolve();
+      }
+    };
+    const unsubscribe = server.engine.onCommit(check);
+    check();
+  });
+}
+
+// Resolves once the thread has had `count` turns, and what followed them has settled.
+async function turnsSent(threadId: string, count: number) {
+  await until(() => startTurnsOf(threadId).length >= count);
+  await server.helperFollower.settled();
+  await server.providerService.idle();
+}
+
+// A main thread, its Codex helper, and a client of that helper's own helper tools.
+async function helperWithTools(brief = 'Plan the timer change') {
+  const client = await mainThread();
+  const started = await call(client, 'start_helper', { brief, instance: 'Codex at work' });
+  const helperId = String(started.value['id']);
+  await helperStarted(helperId);
+  const tools = startTurnsOf(helperId)[0]?.helperTools;
+  if (!tools) throw new Error('the helper has no helper tools');
+  return { client, helperId, tools, helperClient: await connect(tools) };
+}
+
+const runGit = (folder: string, ...args: string[]) =>
+  execFileSync('git', ['-C', folder, ...args], {
+    env: { ...process.env, GIT_CONFIG_GLOBAL: path.join(root, 'none'), GIT_CONFIG_NOSYSTEM: '1' },
+    encoding: 'utf8',
+  });
+
+async function repository(name: string) {
+  const folder = path.join(root, name);
+  await mkdir(folder);
+  runGit(folder, 'init', '-q', '-b', 'main');
+  await writeFile(path.join(folder, 'README.md'), 'An invented repository.\n');
+  runGit(folder, 'add', '.');
+  runGit(
+    folder,
+    '-c',
+    'user.name=Ada',
+    '-c',
+    'user.email=ada@example.invalid',
+    'commit',
+    '-qm',
+    'Start',
+  );
+  return folder;
+}
+
+describe('helpers in depth (orchestrator threads spec 4 to 10)', () => {
+  it('lets a helper start a helper of its own, which has none, down to chat.helperDepth', async () => {
+    const { client, helperId, tools, helperClient } = await helperWithTools();
+    const started = await call(helperClient, 'start_helper', {
+      brief: 'Check the README',
+      instance: 'claude-work',
+    });
+    expect(started.isError).toBe(false);
+    const deepId = String(started.value['id']);
+    await helperStarted(deepId);
+    expect(threadRow(deepId)).toMatchObject({ parentThreadId: helperId, startedBy: 'helper' });
+    expect(startTurnsOf(deepId)[0]?.helperTools).toBeUndefined();
+    expect(() =>
+      server.engine.dispatch(
+        'too-deep',
+        {
+          type: 'helper.start',
+          threadId: 'h-deeper',
+          parentThreadId: deepId,
+          title: 'Deeper',
+          brief: 'Go deeper',
+          isolation: 'folder',
+        },
+        'helper',
+      ),
+    ).toThrow(/chat\.helperDepth/);
+    // At depth 1, the first helper is the deepest and loses its tools.
+    dispatch({ type: 'setting.set', key: 'chat.helperDepth', scope: 'global', value: 1 });
+    expect((await listTools(tools.token, tools.url)).status).toBe(401);
+    await helperClient.close();
+    await client.close();
+  });
+
+  it("sends a helper's answer to the helper that started it, not to the main thread", async () => {
+    const { client, helperId, helperClient } = await helperWithTools();
+    await turnsSent('t1', 2);
+    const started = await call(helperClient, 'start_helper', { brief: 'Check the README' });
+    const deepId = String(started.value['id']);
+    await turnsSent(helperId, 2);
+    expect(startTurnsOf(helperId)[1]?.prompt).toContain(
+      `From wow: your helper "Check the README" (id ${deepId}`,
+    );
+    await turnsSent('t1', 3);
+    expect(startTurnsOf('t1').some((turn) => turn.prompt.includes(deepId))).toBe(false);
+    await helperClient.close();
+    await client.close();
+  });
+
+  it('stops the whole tree with the main thread and keeps it from being marked done', async () => {
+    const { client, helperId, helperClient } = await helperWithTools('Wait for the build');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Wait while they work' });
+    const started = await call(helperClient, 'start_helper', { brief: 'Wait for the tests' });
+    const deepId = String(started.value['id']);
+    await helperStarted(deepId);
+    expect(() => dispatch({ type: 'thread.setDone', threadId: 't1', done: true })).toThrow(
+      /helpers "Wait for the tests", "Wait for the build" work/,
+    );
+    dispatch({ type: 'thread.interrupt', threadId: 't1' });
+    await turnEnds(deepId);
+    await server.providerService.idle();
+    expect(
+      adapters
+        .flatMap((adapter) => adapter.sent)
+        .filter((command) => command.type === 'interrupt')
+        .map((command) => command.threadId)
+        .toSorted(),
+    ).toEqual(['t1', helperId, deepId].toSorted());
+    await helperClient.close();
+    await client.close();
+  });
+
+  it('keeps to chat.helpersPerTree at every level', async () => {
+    const { client, helperClient } = await helperWithTools('Wait for the build');
+    dispatch({ type: 'setting.set', key: 'chat.helpersPerTree', scope: 'global', value: 1 });
+    const refused = await call(helperClient, 'start_helper', { brief: 'Another one' });
+    expect(refused.isError).toBe(true);
+    expect(String(refused.value['error'])).toContain('chat.helpersPerTree');
+    await helperClient.close();
+    await client.close();
+  });
+
+  it('gives no helper in the tree a wider mode than the main thread', async () => {
+    create('t1', 'tea');
+    dispatch({ type: 'thread.configure', threadId: 't1', permissionMode: 'plan' });
+    const mainTools = (await turnOf('t1')).helperTools;
+    if (!mainTools) throw new Error('no helper tools');
+    const client = await connect(mainTools);
+    const first = await call(client, 'start_helper', { brief: 'Read the plan' });
+    const firstId = String(first.value['id']);
+    await helperStarted(firstId);
+    expect(threadRow(firstId)?.permissionMode).toBe('plan');
+    const tools = startTurnsOf(firstId)[0]?.helperTools;
+    if (!tools) throw new Error('the helper has no helper tools');
+    const helperClient = await connect(tools);
+    const deep = await call(helperClient, 'start_helper', {
+      brief: 'Read it too',
+      instance: 'Codex at work',
+    });
+    const deepId = String(deep.value['id']);
+    await helperStarted(deepId);
+    expect(threadRow(deepId)?.permissionMode).toBe('read-only');
+    await helperClient.close();
+    await client.close();
+  });
+
+  it('works in a folder it names, and makes its own copy of the repository that holds it', async () => {
+    const bell = await repository('bell');
+    const client = await mainThread();
+    const inFolder = await call(client, 'start_helper', { brief: 'Read the bell', folder: 'bell' });
+    const inFolderId = String(inFolder.value['id']);
+    await helperStarted(inFolderId);
+    expect(threadRow(inFolderId)).toMatchObject({ cwd: bell, workingCopy: null });
+    const copied = await call(client, 'start_helper', {
+      brief: 'Ring the bell',
+      folder: bell,
+      isolation: 'copy',
+    });
+    expect(copied.isError).toBe(false);
+    const copyId = String(copied.value['id']);
+    await until(() => {
+      const state = threadRow(copyId)?.workingCopy?.state;
+      return state === 'ready' || state === 'failed';
+    });
+    const row = threadRow(copyId);
+    expect(row?.workingCopy).toMatchObject({ state: 'ready', repository: bell });
+    expect(row?.branch).toMatch(/^wow\/helper\/[0-9a-z]{6}$/);
+    expect(runGit(bell, 'branch', '--list', 'wow/helper/*')).toContain(row?.branch ?? '?');
+    expect(row?.cwd).not.toBe(bell);
+    await client.close();
+  });
+
+  it("refuses a folder that is not there, is wow's own, or is outside Git for a copy", async () => {
+    await mkdir(path.join(root, 'plain'));
+    const client = await mainThread();
+    const missing = await call(client, 'start_helper', { brief: 'Look', folder: 'nowhere' });
+    expect(String(missing.value['error'])).toContain('There is no folder');
+    const own = await call(client, 'start_helper', {
+      brief: 'Look',
+      folder: path.join(root, 'wow home'),
+    });
+    expect(String(own.value['error'])).toContain("wow's own folder");
+    const plain = await call(client, 'start_helper', {
+      brief: 'Look',
+      folder: 'plain',
+      isolation: 'copy',
+    });
+    expect(String(plain.value['error'])).toContain('is not in a Git repository');
+    expect(
+      server.database.db
+        .select()
+        .from(threads)
+        .all()
+        .filter((each) => each.startedBy === 'helper'),
+    ).toEqual([]);
+    await client.close();
+  });
+
+  it("makes a helper's copy from its repository's main worktree, never another thread's copy, and keeps that copy while a helper in it works", async () => {
+    const bell = await repository('bell');
+    await mkdir(path.join(bell, 'docs'));
+    const client = await mainThread();
+    // A subfolder names its repository: the copy is of the whole repository, and comes home to
+    // its top level.
+    const first = await call(client, 'start_helper', {
+      brief: 'Ring the bell',
+      folder: 'bell/docs',
+      isolation: 'copy',
+    });
+    const firstId = String(first.value['id']);
+    const ready = (id: string) =>
+      until(() => {
+        const state = threadRow(id)?.workingCopy?.state;
+        return state === 'ready' || state === 'failed';
+      });
+    await ready(firstId);
+    const branch = threadRow(firstId)?.branch ?? '?';
+    expect(threadRow(firstId)?.workingCopy).toMatchObject({ state: 'ready', repository: bell });
+    expect(runGit(bell, 'rev-parse', branch)).toBe(runGit(bell, 'rev-parse', 'HEAD'));
+    await helperStarted(firstId);
+    await turnEnds(firstId);
+    const tools = startTurnsOf(firstId)[0]?.helperTools;
+    if (!tools) throw new Error('the helper has no helper tools');
+    const helperClient = await connect(tools);
+    // A helper in the first copy's folder keeps that copy from being removed while it works.
+    const sharing = await call(helperClient, 'start_helper', { brief: 'Wait for the bell' });
+    const sharingId = String(sharing.value['id']);
+    await helperStarted(sharingId);
+    expect(threadRow(sharingId)?.cwd).toBe(threadRow(firstId)?.cwd);
+    const holds = await server.workspaces.threadStatus(firstId);
+    await expect(server.workspaces.removeThread(firstId, holds)).rejects.toThrow(
+      /Helper "Wait for the bell" is working/,
+    );
+    // From inside that copy, a copy of its own is made from the repository, not from the copy.
+    const second = await call(helperClient, 'start_helper', {
+      brief: 'Ring it again',
+      isolation: 'copy',
+    });
+    const secondId = String(second.value['id']);
+    await ready(secondId);
+    expect(threadRow(secondId)?.workingCopy).toMatchObject({ state: 'ready', repository: bell });
+    await helperClient.close();
     await client.close();
   });
 });

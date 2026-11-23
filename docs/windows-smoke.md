@@ -260,6 +260,16 @@ Expected to fail until the bundled server registers the Codex adapter ("Known ga
       files (Codex's `instructionSources`, read from the generated types of 0.166.0 only), with
       the line that Codex reports no list of servers, tools or skills.
 
+- [ ] **Helpers in depth (orchestrator threads U1).** In a Claude thread ask: "Start a Codex
+      helper that starts a Claude helper of its own to read README.md, and tell me what it found".
+      Expected: the Codex helper lists the `wow` server next to the servers from your own
+      `config.toml` (open its Tools tab) and starts the Claude helper; that one has no `wow`
+      server. Write down whether the Codex helper's call reached wow (the Claude helper exists)
+      and whether its own `config.toml` servers were still there, since a Codex session carrying
+      `mcp_servers.wow` with its own token was only seen against the mock. Then ask for a helper in
+      another Git repository with its own copy: a branch `wow/helper/<id>` appears in that
+      repository.
+
 ## 5. Secrets
 
 - [ ] Add a secret-marked environment variable to an instance and save.

@@ -353,6 +353,9 @@ export const WorkingCopy = z.object({
   // leaves it when the folder then fails; a branch at this commit that never moved is taken up
   // again by the next try. wow never deletes a branch (thread work spec 15).
   branchStart: z.string().min(1).nullable().optional(),
+  // A helper's copy made from another repository than its project's (orchestrator threads spec
+  // 5): that repository's folder. Absent: the project's folder.
+  repository: z.string().min(1).optional(),
 });
 export type WorkingCopy = z.infer<typeof WorkingCopy>;
 

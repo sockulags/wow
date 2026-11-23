@@ -23,6 +23,7 @@ import {
   ApprovalItemPayload,
   ChatNotifications,
   diffCounts,
+  helperTree,
   planStartModes,
   proposeRule,
   AttachmentId,
@@ -126,10 +127,12 @@ type ThreadCommand = Extract<
   }
 >;
 
-// A main thread is not put away while a helper of it works (agent orchestration spec 7).
+// A thread is not put away while a helper under it works, at any depth (orchestrator threads
+// spec 8). The deepest are named first.
 function refuseWhileHelpersWork(thread: Thread, read: ReadModel, what: string): void {
-  const working = read
-    .helperThreads(thread.id)
+  const working = helperTree(thread.id, (id) => read.helperThreads(id))
+    .toReversed()
+    .map(({ thread: helper }) => helper)
     .filter((helper) => helper.state === 'working' || read.runningTurn(helper.id) !== undefined);
   if (working.length === 0) return;
   throw new CommandRejected(
@@ -999,11 +1002,11 @@ export function decideThread(
       const thread = requireThread(read, command.threadId);
       const turn = read.runningTurn(thread.id);
       if (!turn) throw new CommandRejected('rejected', `Thread ${thread.id} has no running turn`);
-      // A helper belongs to its main thread: stopping the main thread stops the helpers that work
-      // (agent orchestration spec 7).
+      // A helper belongs to the thread that started it: stopping a thread stops every helper
+      // under it that works, at any depth (orchestrator threads spec 8).
       const stops = [
         { stopped: thread, running: turn },
-        ...read.helperThreads(thread.id).flatMap((helper) => {
+        ...helperTree(thread.id, (id) => read.helperThreads(id)).flatMap(({ thread: helper }) => {
           const running = read.runningTurn(helper.id);
           return running ? [{ stopped: helper, running }] : [];
         }),
