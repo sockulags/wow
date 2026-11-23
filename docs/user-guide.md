@@ -884,6 +884,19 @@ call with **Undo**; a change that lets wow do more on its own (an always-allow r
 passes by itself) waits as a proposal with **Yes** and **No** in the same thread. Helpers do not
 get these tools.
 
+### Workflows
+
+A workflow is a Markdown file your main agent follows. Start one in any thread with `/` and its
+name, followed by what you want: `/release fix the timer`. The agent gets the file with
+`workflows.followTemplate`, runs each step (each `## ` heading) as a helper on the instance,
+model and effort the step names, and asks you before the next step where a step says
+`gate: after`. Conditions and loops are sentences in the step; the agent follows them.
+
+Your workflows are files in `~/.wow/workflows`; a project's are in its `.wow/workflows`, and one
+there replaces yours of the same name in that project's threads. Settings → Workflows lists them,
+opens one in your editor and makes a new one from `workflows.newTemplate`. The workflows you had
+in the builder were written out there once when you updated.
+
 ### Helper threads
 
 The agent of every chat thread, with or without a project, has wow's helper tools beside its own

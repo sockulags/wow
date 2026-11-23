@@ -1699,7 +1699,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `workflows.followTemplate`, `workflows.newTemplate` (see "Workflows as text"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helpersPerTree`, `chat.helperBranch`, `chat.mergeBrief`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
@@ -4598,6 +4598,25 @@ through `thread.sendMessage`. `helper.write` is `thread.sendMessage` and `helper
 `thread.interrupt`, for a helper of that main thread only. The read model's `helperThreads`
 lists a main thread's helpers, or all.
 
+**Workflows as text** (orchestrator threads U5, spec 19 to 23). A workflow is a `*.md` file in
+`<wow home>/workflows` or a project's `.wow/workflows`. `@wow/skills` reads them
+(`workflowRoots`, `scanWorkflows`) as skills of the sources `workflow` and `project-workflow`:
+the front matter's name, else the file's, its description, and the whole file as `text`; they
+are `manualOnly`. `SkillsService` scans and watches those folders with the skill folders, so the
+`skills` topic carries them and the composer's `/` list offers them; `skillsForProject` shows a
+project's workflows only in that project's threads and hides your own workflow of the same name
+there. A picked workflow is a `SkillRef` with its source; `messageWithSkills` sends it through
+`workflowToSend`: the thread's project's file of that name, else your own, filled into
+`workflows.followTemplate` (`{{workflow}}`) as the skill's text before the user's words. The main
+agent does the rest with its helper tools and `ask_questions`; there is no engine. At start,
+before the skills scan, `exportStoredWorkflows` (`workflows/files.ts`) writes every stored
+workflow once to `<wow home>/workflows` (`<name>.md`, else `<name>-1.md` and on, never over a
+file), with each step's skill, instance, model, effort, `gate: after` and its rules as sentences;
+the file `<wow home>/workflows-exported` marks it done. Settings › Workflows
+(`settings/workflow-files-section.tsx`) lists the workflow skills with their place, opens one in
+the editor (`workflowFiles.open`, only a file the list has) and makes a new one from
+`workflows.newTemplate` (`workflowFiles.create`, refused when the file is there). The builder,
+runs and triggers stay until U8.
 **Following helpers** (U3, spec 3, 7). `helpers/follow.ts` (`HelperFollower`) listens for
 `turn.ended` and `question.asked` of a thread with `startedBy: 'helper'` and, after the commit,
 dispatches the internal `helper.followed {threadId, reason, questionId?}` (refused from the

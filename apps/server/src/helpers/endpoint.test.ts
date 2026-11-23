@@ -9,7 +9,7 @@ import type {
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -23,6 +23,7 @@ import {
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
+import { exportStoredWorkflows } from '../workflows/files.js';
 
 // Agent orchestration U1 (spec 1, Security): a chat thread's turn carries wow's helper tools, and
 // the helper endpoint answers only that thread's token while the thread may have them. All
@@ -1230,5 +1231,101 @@ describe('answers and folders of main threads (orchestrator threads spec 1, 24, 
       .filter((item) => item.kind === 'error');
     expect(errors).toHaveLength(2);
     expect(startTurnsOf('crowded')).toEqual([]);
+  });
+});
+
+// A workflow step as the builder stored it.
+const storedStep = (id: string, skillName: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  skillName,
+  providerInstanceId: 'claude-work',
+  model: 'opus',
+  gateBefore: false,
+  gateAfter: false,
+  expectedArtifacts: [],
+  ...extra,
+});
+
+describe('workflows as text (orchestrator threads spec 19, 20, 22)', () => {
+  it("sends a workflow started with /name as the follow template around the file, the project's first", async () => {
+    await mkdir(path.join(root, 'wow home', 'workflows'), { recursive: true });
+    await mkdir(path.join(root, '.wow', 'workflows'), { recursive: true });
+    await writeFile(
+      path.join(root, 'wow home', 'workflows', 'release.md'),
+      '---\nname: release\n---\n\n## Build\n\nYour own release.\n',
+    );
+    await writeFile(
+      path.join(root, '.wow', 'workflows', 'release.md'),
+      '---\nname: release\n---\n\n## Build\n\ngate: after\n\nThe project release.\n',
+    );
+    await server.skills.refresh();
+    create('t1', 'tea');
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 't1',
+      text: 'fix the timer',
+      skills: [{ name: 'release', source: 'workflow' }],
+    });
+    // The follow template says "wait", which keeps the invented agent's turn going.
+    await turnsSent('t1', 1);
+    await server.providerService.idle();
+    const inProject = startTurnsOf('t1')[0]?.prompt ?? '';
+    expect(inProject).toContain('Follow this workflow');
+    expect(inProject).toContain('The project release.');
+    expect(inProject).not.toContain('Your own release.');
+    expect(inProject).toContain('fix the timer');
+    createBare('bare');
+    dispatch({
+      type: 'thread.sendMessage',
+      threadId: 'bare',
+      text: 'fix the timer',
+      skills: [{ name: 'release', source: 'project-workflow' }],
+    });
+    await turnsSent('bare', 1);
+    await server.providerService.idle();
+    expect(startTurnsOf('bare')[0]?.prompt).toContain('Your own release.');
+  });
+
+  it('writes the stored workflows out once, as files with steps, gates and rules, and never over a file', async () => {
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'w1',
+      name: 'Ship',
+      steps: [
+        storedStep('plan', 'plan-work', { gateAfter: true }),
+        storedStep('build', 'deliver-work', {
+          rules: [{ when: { fact: 'failed' }, goTo: { type: 'step', stepId: 'plan' } }],
+        }),
+      ],
+    });
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'w2',
+      name: 'Review',
+      steps: [storedStep('r', 'check-work')],
+    });
+    const home = path.join(root, 'other home');
+    await mkdir(path.join(home, 'workflows'), { recursive: true });
+    await writeFile(path.join(home, 'workflows', 'Ship.md'), 'Mine\n');
+    const written = await exportStoredWorkflows({
+      db: server.database.db,
+      home,
+      logger: server.logger,
+    });
+    expect(written.map((file) => path.basename(file)).toSorted()).toEqual([
+      'Review.md',
+      'Ship-1.md',
+    ]);
+    const ship = await readFile(path.join(home, 'workflows', 'Ship-1.md'), 'utf8');
+    expect(ship).toContain('name: Ship');
+    expect(ship).toContain('## plan-work');
+    expect(ship).toContain('instance: claude-work');
+    expect(ship).toContain('gate: after');
+    expect(ship).toContain('After this step, on ');
+    expect(ship).toContain('go to the step "plan-work"');
+    expect(await readFile(path.join(home, 'workflows', 'Ship.md'), 'utf8')).toBe('Mine\n');
+    expect(
+      await exportStoredWorkflows({ db: server.database.db, home, logger: server.logger }),
+    ).toEqual([]);
   });
 });
