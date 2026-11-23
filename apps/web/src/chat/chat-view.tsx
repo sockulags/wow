@@ -4,6 +4,7 @@ import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import { nestHelpers, type Nested } from './helpers';
 import {
   ActivityIcon,
+  BarChart3Icon,
   ChevronRightIcon,
   MessagesSquareIcon,
   PinIcon,
@@ -486,6 +487,14 @@ function ThreadList() {
             firstDay: firstDayOfWeek,
           }).map((section) => renderSection(section, 0))
         )}
+      </div>
+      <div className="flex shrink-0 border-t border-border px-2 py-1">
+        <Button asChild variant="ghost" size="sm" className="w-full justify-start">
+          <Link to="/chat/usage" data-testid="usage-link">
+            <BarChart3Icon />
+            Usage
+          </Link>
+        </Button>
       </div>
     </nav>
   );

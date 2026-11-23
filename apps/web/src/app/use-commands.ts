@@ -13,6 +13,7 @@ import { changesShown, threadChangesCommands, threadChangesStore } from '@/chat/
 import { atWorkCommands } from '@/chat/at-work';
 import { sessionToolsCommands, toolsShown } from '@/panel/tools-tab';
 import { outlineCommands, outlineShown } from '@/chat/outline';
+import { usageCommands } from '@/chat/usage-view';
 import { draftCopyStore, workingCopyCommands } from '@/chat/working-copy';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
@@ -220,6 +221,7 @@ export function useCommands(gated = false): {
         toolsOpen,
         toolsLive,
       ),
+      ...usageCommands(),
       ...outlineCommands(
         openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,
         tabsRoute,

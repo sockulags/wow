@@ -1,3 +1,4 @@
+import { usageSummary } from '../usage/summary.js';
 import {
   Thread,
   WorkflowRun,
@@ -287,6 +288,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return { removed: deps.subscriptions.unsubscribe(subscriptionId) };
     },
     'settings.resolve': (context) => deps.settings.resolveAll(context),
+    'usage.summary': (range) => usageSummary(deps.db, range),
     'threads.search': ({ query }) => ({
       threadIds: searchThreads(deps.db, query, deps.settings.get('chat.threadSearchMaxLength')),
     }),

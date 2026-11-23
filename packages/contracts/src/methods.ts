@@ -308,6 +308,34 @@ export const rpcMethods = {
   },
   // The threads whose title, project name or message text hold every word of the query
   // (agent workbench spec 66, 69), archived ones included, newest first. Never the assistant's.
+  // Tokens and cost per day, project, provider instance and model over a range (chat overview
+  // spec 39, 40), from the stored usage of turns that ended in it; days in `timeZone`.
+  'usage.summary': {
+    params: z.object({
+      from: z.iso.datetime({ offset: true }),
+      to: z.iso.datetime({ offset: true }),
+      timeZone: z.string().min(1),
+    }),
+    result: z.object({
+      rows: z.array(
+        z.object({
+          day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          projectId: z.string().nullable(),
+          providerInstanceId: z.string(),
+          model: z.string(),
+          assistant: z.boolean(),
+          turns: z.number().int().nonnegative(),
+          inputTokens: z.number().int().nonnegative(),
+          outputTokens: z.number().int().nonnegative(),
+          cachedInputTokens: z.number().int().nonnegative(),
+          costUsd: z.number().nonnegative(),
+          // Turns whose provider reported no cost, and turns with no usage at all.
+          unknownCost: z.number().int().nonnegative(),
+          noUsage: z.number().int().nonnegative(),
+        }),
+      ),
+    }),
+  },
   'threads.search': {
     params: z.object({ query: z.string() }),
     result: z.object({ threadIds: z.array(z.string()) }),

@@ -3537,6 +3537,18 @@ off. The web shows `LimitChip` (`chat/limits.tsx`) in the composer bar from the 
 `LimitList` in Settings → Providers; a window whose reset time has passed reads "reset at …, not
 reported since". No account detail is kept with the limits.
 
+### Usage (chat overview U12)
+
+`usage.summary {from, to, timeZone}` (`usage/summary.ts`) reads every turn that ended in the
+range with its thread and its `usage` row, and sums per day (the turn's end in `timeZone`),
+project, provider instance, model (the row's, else the thread's) and whether it is the
+Assistant's: turns, input, output and cached tokens, cost, turns whose provider reported no
+cost (`unknownCost`) and turns without usage (`noUsage`). `/chat/usage` (`chat/usage-view.tsx`,
+palette "Show usage", the Usage link at the foot of the thread list) asks it for Today, 7 days,
+30 days or This month, shows the plan limits of every instance on top, a bar per day and totals
+per project, instance and model; a click on a total narrows the days to it. An unknown cost
+shows as "—" or "+ N unknown" and is never summed as zero. The view reads only.
+
 ### Subagents and background work
 
 Agent workbench U11 (spec 44, 48, 90). `chat/tools/agent.tsx` draws a `subagent` call:

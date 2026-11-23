@@ -15,6 +15,7 @@ import { validateCalendarSearch } from '@/calendar/search';
 import { ChatHome, ChatLayout } from '@/chat/chat-view';
 import { NewThreadView } from '@/chat/new-thread';
 import { ThreadsAtWork } from '@/chat/at-work';
+import { UsageView } from '@/chat/usage-view';
 import { ThreadView } from '@/chat/thread-view';
 import { ProjectsSettingsPage, SettingsPage } from '@/settings/settings-page';
 import {
@@ -100,6 +101,12 @@ const atWorkRoute = createRoute({
   getParentRoute: () => chatRoute,
   path: '/work',
   component: ThreadsAtWork,
+});
+
+const usageRoute = createRoute({
+  getParentRoute: () => chatRoute,
+  path: '/usage',
+  component: UsageView,
 });
 
 const threadRoute = createRoute({
@@ -257,7 +264,7 @@ const routeTree = rootRoute.addChildren([
   quickAskRoute,
   indexRoute,
   calendarRoute,
-  chatRoute.addChildren([chatIndexRoute, newThreadRoute, atWorkRoute, threadRoute]),
+  chatRoute.addChildren([chatIndexRoute, newThreadRoute, atWorkRoute, usageRoute, threadRoute]),
   workflowsRoute.addChildren([
     workflowsIndexRoute,
     triggersRoute,

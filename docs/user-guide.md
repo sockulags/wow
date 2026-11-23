@@ -450,6 +450,15 @@ per window when it crosses the warning and again when it is reached (as `chat.no
 says). Settings → Providers lists every window with when it was reported. Only what the provider
 reports shows: an API key reports no plan limits, and this version shows none for Codex.
 
+### Usage
+
+**Usage** at the foot of the thread list (or "Show usage" in the palette) shows the tokens and
+cost of your turns per day for Today, 7 days, 30 days or This month, with totals per project,
+provider instance and model, and every plan limit on top. Click a total to see only its days,
+and again to see all. A cost the provider did not report shows as "—" (or "+ 2 unknown") and is
+not counted as nothing; turns without any usage reported are counted apart. Usage only shows: it
+sets no budget and stops nothing.
+
 ### Model, effort and mode
 
 The bar at the bottom of the composer, left of Send, reads the thread's model, effort and
