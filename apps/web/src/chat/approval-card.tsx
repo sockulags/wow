@@ -289,13 +289,14 @@ export function ApprovalCard({
   const noting = useStore(approvalCardStore, (state) => state.noting === payload.approvalId);
   // A new request takes the focus, so its keys work at once (audit A-11); a plan's first choice
   // takes it itself, so Enter starts the plan.
+  const gate = context.gate === true;
   useEffect(() => {
-    if (pending && payload.kind !== 'plan') section.current?.focus();
-  }, [pending, payload.kind]);
+    if (pending && payload.kind !== 'plan' && !gate) section.current?.focus();
+  }, [pending, payload.kind, gate]);
   // The palette and the keys answer the thread's first request on screen, whichever card
   // mounted last.
   const keyed = context.keyedApproval;
-  const answersKeys = pending && (keyed === undefined || keyed.id === payload.approvalId);
+  const answersKeys = pending && !gate && (keyed === undefined || keyed.id === payload.approvalId);
   const side = keyed?.side ?? false;
   useEffect(() => {
     if (!answersKeys) return;
@@ -329,6 +330,7 @@ export function ApprovalCard({
         busy={busy}
         error={error}
         noting={noting}
+        quiet={gate}
         onAnswer={answer}
       />
     );

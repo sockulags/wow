@@ -314,7 +314,18 @@ function gateCard(
   const turn = read.lastTurn(main.id);
   if (!turn || main.id === helper.id) return [];
   const id = `${turn.id}:gate:${request.id}`;
-  if (read.threadItems(main.id).some((item) => item.id === id)) return [];
+  // Once per request, whichever turn the main thread is on now.
+  const drawn = read
+    .threadItems(main.id)
+    .some(
+      (item) =>
+        item.kind === 'gate_card' &&
+        typeof item.payload === 'object' &&
+        item.payload !== null &&
+        'requestId' in item.payload &&
+        item.payload.requestId === request.id,
+    );
+  if (drawn) return [];
   const instance = read.providerInstance(helper.providerInstanceId);
   return [
     {

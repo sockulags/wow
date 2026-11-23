@@ -1883,7 +1883,9 @@ test("a gate: a Claude main thread's Codex helper starts a Claude helper whose a
 }) => {
   await startClaudeThread(page, 'Orchestrate the release');
   const card = conversation(page).getByTestId('gate-card');
-  await expect(card).toContainText('Release check · Claude Code · Helper of Delegate the release');
+  await expect(card).toContainText(
+    'Release check · Claude Code · depth 2 · Helper of Delegate the release',
+  );
   await expect(card.getByRole('region', { name: 'Approval request' })).toContainText('pnpm test');
   await card.getByRole('button', { name: /Allow once/ }).click();
   await expect(card).toHaveCount(0);

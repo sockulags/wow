@@ -49,6 +49,9 @@ const deep: Thread = {
   ...main,
   id: 'deep',
   title: 'Approve the release',
+  // The helper works in a copy of its own, in a mode of its own.
+  cwd: '/home/wow/workspaces/tea-deep',
+  permissionMode: 'acceptEdits',
   state: 'needs_you',
   startedBy: 'helper',
   parentThreadId: 'first',
@@ -83,13 +86,14 @@ const claude: ProviderInstance = {
   updateRun: null,
 };
 
-const turn = (threadId: string): Turn => ({
+// A helper's request waits while the turn that asked runs.
+const turn = (threadId: string, state: Turn['state'] = 'completed'): Turn => ({
   id: `${threadId}:turn:0`,
   threadId,
   index: 0,
-  state: 'completed',
+  state,
   startedAt: '2026-11-23T08:00:00.000Z',
-  endedAt: '2026-11-23T08:00:30.000Z',
+  endedAt: state === 'running' ? null : '2026-11-23T08:00:30.000Z',
   usage: null,
   resumable: true,
   restorable: true,
@@ -154,7 +158,10 @@ const port: Question = {
   answeredAt: null,
 };
 
-function setup(options: { approval?: Approval; question?: Question } = {}) {
+function setup(
+  options: { approval?: Approval; question?: Question; helperTurn?: Turn['state'] } = {},
+) {
+  const helperTurn = options.helperTurn ?? 'running';
   const request = vi.fn<(method: string, params: unknown) => Promise<unknown>>(() =>
     Promise.resolve({
       commandId: '00000000-0000-4000-8000-000000000000',
@@ -175,7 +182,7 @@ function setup(options: { approval?: Approval; question?: Question } = {}) {
       questions: [],
     },
     deep: {
-      turns: [turn('deep')],
+      turns: [turn('deep', helperTurn)],
       threadItems: [
         item('deep', 1, 'approval', {
           approvalId: 'deep-approval',
@@ -187,7 +194,7 @@ function setup(options: { approval?: Approval; question?: Question } = {}) {
       questions: [],
     },
     asker: {
-      turns: [turn('asker')],
+      turns: [turn('asker', helperTurn)],
       threadItems: [
         item('asker', 1, 'question', {
           questionId: 'asker-port',
@@ -200,7 +207,10 @@ function setup(options: { approval?: Approval; question?: Question } = {}) {
       questions: [options.question ?? port],
     },
   };
-  const global: Record<string, unknown> = { threads: [main, deep, asker] };
+  const global: Record<string, unknown> = {
+    threads: [main, deep, asker],
+    providerInstances: [claude, { ...claude, id: 'codex', kind: 'codex', name: 'Codex at work' }],
+  };
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request: request as Connection['request'],
@@ -236,7 +246,7 @@ describe('gate cards in the main thread (spec 14 to 18)', () => {
     const user = userEvent.setup();
     const { dispatched } = setup();
     const card = await screen.findByRole('listitem', {
-      name: 'Approve the release · Claude Code · Helper of Plan the deploy asks you',
+      name: 'Approve the release · Claude Code · depth 2 · Helper of Plan the deploy asks you',
     });
     expect(within(card).getByRole('region', { name: 'Approval request' }).textContent).toContain(
       'pnpm test',
@@ -262,7 +272,9 @@ describe('gate cards in the main thread (spec 14 to 18)', () => {
   it("draws a helper's question with its choices and sends the answer as the helper's own", async () => {
     const user = userEvent.setup();
     const { dispatched } = setup();
-    const card = await screen.findByRole('listitem', { name: 'Pick the port · Codex asks you' });
+    const card = await screen.findByRole('listitem', {
+      name: 'Pick the port · Codex · depth 1 asks you',
+    });
     expect(card.textContent).toContain('Which port?');
     await user.click(within(card).getByRole('radio', { name: /8080/ }));
     await user.click(within(card).getByRole('button', { name: /Send/ }));
@@ -285,9 +297,35 @@ describe('gate cards in the main thread (spec 14 to 18)', () => {
     expect(screen.queryAllByTestId('gate-card')).toEqual([]);
   });
 
+  it("shows the helper's own folder and mode, and takes neither the focus nor the keys", async () => {
+    const user = userEvent.setup();
+    const { dispatched } = setup();
+    const card = await screen.findByRole('listitem', {
+      name: 'Approve the release · Claude Code · depth 2 · Helper of Plan the deploy asks you',
+    });
+    const where = within(card).getByTestId('approval-context').textContent ?? '';
+    expect(where).toContain('/home/wow/workspaces/tea-deep');
+    expect(where).toContain('Accept edits');
+    expect(where).not.toContain('/home/wow/tea ');
+    expect(card.contains(document.activeElement)).toBe(false);
+    // Typing outside a field, as the approval keys would be pressed, answers nothing here.
+    await user.keyboard('asy');
+    expect(dispatched().filter((command) => command.type === 'approval.answer')).toEqual([]);
+  });
+
+  it('draws no card for a request whose turn ended without an answer, and says so', async () => {
+    setup({ helperTurn: 'interrupted' });
+    const lines = await screen.findAllByTestId('gate-card-line');
+    expect(lines.map((line) => line.textContent)).toEqual([
+      'Approve the release · Claude Code · depth 2 · Helper of Plan the deploy asked you; its turn ended without an answer.',
+      'Pick the port · Codex · depth 1 asked you; its turn ended without an answer.',
+    ]);
+    expect(screen.queryAllByTestId('gate-card')).toEqual([]);
+  });
+
   it('names who asks for Ctrl+F and the Markdown export', () => {
     expect(gateRowText(approvalCard.payload as Parameters<typeof gateRowText>[0])).toBe(
-      'Approve the release · Claude Code · Helper of Plan the deploy asks you for an approval',
+      'Approve the release · Claude Code · depth 2 · Helper of Plan the deploy asks you for an approval',
     );
   });
 });

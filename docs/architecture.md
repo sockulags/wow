@@ -4539,12 +4539,17 @@ request stays in the helper's thread. The web app's `chat/gate-card.tsx` reads i
 thread's own topics (`approvals`, `questions`, `threadItems`, all thread-scoped) and draws it with
 the ordinary `ApprovalCard` or `ChatQuestions`, so Allow or a reply sends the same
 `approval.answer` or `question.answer` as the helper's own card. `GateDock`, after the
-conversation's items in `ThreadConversation`, draws every card still waiting, so they are at the
-end; the item's own place shows `GateCardLine`: who asks and that the card waits at the end, or
-"Answered in <helper>: <decision or reply>" once it is answered anywhere. Ctrl+F and the Markdown
-export use `gateRowText`. The card's approval does not take the approval keys, which stay with
-the main thread's own requests. Only the asking thread waits: the main thread's composer and its
-other helpers go on.
+conversation's items in `ThreadConversation`, draws every card still waiting: a request waits
+while the helper's turn that asked runs, so one left by a stopped helper leaves the end. The
+item's own place shows `GateCardLine`: who asks (title, provider, `depth N`, and "Helper of
+<parent>" below the first level) and that the card waits at the end, "Answered in <helper>:
+<decision or reply>" once it is answered anywhere, or that its turn ended without an answer.
+Ctrl+F and the Markdown export use `gateRowText`. The card shows the request in the helper's own
+folder and permission mode, has no Open file, and its `ItemContext.gate` keeps it from taking the
+focus or the approval keys (`PlanCard` gets `quiet`), so typing in the main composer never
+answers it (spec 15). A request is drawn once, matched by its id among the main thread's
+`gate_card` items. Only the asking thread waits: the main thread's composer and its other helpers
+go on.
 
 **Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
 (`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,

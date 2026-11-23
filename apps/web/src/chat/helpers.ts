@@ -49,12 +49,13 @@ export const helperPayload = (payload: unknown): HelperStartedItemPayload | unde
 
 const providerName = { claude: 'Claude Code', codex: 'Codex' } as const;
 
-// "Review the timer · Codex · Helper of Plan the change": who asks in a gate card (orchestrator
+// "Review the timer · Codex · depth 2 · Helper of Plan the change": who asks in a gate card (orchestrator
 // threads spec 14), for the card, its line, Ctrl+F and export.
 export const gateCardWho = (payload: GateCardItemPayload): string =>
   [
     payload.title || 'A helper',
     providerName[payload.providerKind],
+    `depth ${payload.depth}`,
     ...(payload.parentTitle === undefined ? [] : [`Helper of ${payload.parentTitle}`]),
   ].join(' · ');
 

@@ -26,6 +26,7 @@ export function PlanCard({
   error,
   noting,
   onAnswer,
+  quiet = false,
 }: {
   readonly payload: ApprovalItemPayload;
   readonly approval: Approval | undefined;
@@ -37,6 +38,8 @@ export function PlanCard({
     decision: ApprovalDecision,
     extra?: { note?: string; permissionMode?: string },
   ) => void;
+  // A helper's plan shown in its main thread takes no focus (orchestrator threads spec 15).
+  readonly quiet?: boolean;
 }) {
   const decision = approval?.decision ?? null;
   const pending = decision === null && approval !== undefined;
@@ -45,8 +48,8 @@ export function PlanCard({
   const start = useRef<HTMLButtonElement>(null);
   // A new plan takes the focus on its first choice, so Enter starts it (spec 42).
   useEffect(() => {
-    if (pending) start.current?.focus();
-  }, [pending]);
+    if (pending && !quiet) start.current?.focus();
+  }, [pending, quiet]);
   return (
     <section
       ref={section}

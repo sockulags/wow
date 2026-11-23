@@ -903,6 +903,11 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
     dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'How far is it?' });
     await turnsSent('t1', before + 1);
     expect(startTurnsOf('t1').at(-1)?.prompt).toBe('How far is it?');
+    // Followed again after the main thread moved to a new turn: still one card for the request.
+    const approvalId =
+      server.database.db.select().from(approvals).where(eq(approvals.threadId, asking)).get()?.id ??
+      '?';
+    dispatch({ type: 'helper.followed', threadId: asking, reason: 'approval', approvalId });
     expect(
       gateCards().map((item) => (item.payload as { fromThreadId: string }).fromThreadId),
     ).toEqual([asking]);
