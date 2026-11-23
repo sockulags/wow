@@ -1,6 +1,6 @@
 ---
 intent: 2026-11-orchestrator-threads
-rev: 1
+rev: 2
 built_on: intent@1
 status: accepted
 ---
@@ -69,16 +69,21 @@ tools (`2026-11-app-assistant`), threads' working copies and Apply (`2026-11-thr
 ### Bringing work together
 
 11. Each helper's work stays on its branch or in its shared folder. The tool descriptions tell the
-    main agent that when two or more helpers worked in their own copies of the same repository, it
-    should merge their branches into its own branch before it reports, and say which merged, which
-    conflicted and how it resolved them.
-12. When the main thread has no worktree of its own in that repository, `merge_helpers {ids,
-repository}` makes one on `wow/thread/<threadId>` from the repository's `HEAD` and answers its
-    path, so the agent merges there and the user's project folder is not touched. The agent does
-    the merge itself with Git.
-13. The main thread's Changes shows its own branch (with the merged work) as today. Apply to
-    project folder and Commit and pull request work from there as today. A helper's copy goes when
-    its main thread is done, under the rules for working copies today.
+    agent that when two or more of its helpers worked in their own copies of the same repository,
+    it should have their branches merged with `merge_helpers` before it reports, and tell the user
+    which merge helper holds the result.
+12. `merge_helpers {ids, instance?, model?, effort?, title?}` starts a merge helper: a helper of the
+    calling thread, in its own copy of the repository the named helpers' copies belong to, whose
+    brief (`chat.mergeBrief`) lists their branches in order and tells it to merge them into its
+    own branch with Git, resolve conflicts, and report which merged, which conflicted and how it
+    resolved them. It is refused, with the reason, when fewer than two helpers are named, when one
+    is not the caller's, has no copy of its own or works, or when their copies belong to different
+    repositories. The limits of spec 9 and the depth of spec 4 apply as to any helper. The user's
+    project folder is not touched.
+13. The merge helper's Changes shows the merged work, and Apply to project folder and Commit and
+    pull request work from there as for any thread with its own copy. The agent's report names the
+    merge helper; the user opens it from its row. A helper's copy goes when its main thread is
+    done, under the rules for working copies today.
 
 ### Gates in the main thread
 
@@ -185,14 +190,15 @@ unread | done`. Removed: plan run, workflow run and trigger contracts that only 
 - Web: the thread list (`chat/thread-sections.ts`, `chat/thread-row.ts`), the gate card in the
   conversation, the settings button and its menu, Settings › Workflows; removed views as in spec 34.
 - Settings: added `chat.helperDepth` (2), `chat.helpersPerTree` (8), `chat.defaultInstance`,
-  `chat.defaultModel`, `chat.instructions`, `workflows.followTemplate`, `workflows.newTemplate`.
+  `chat.defaultModel`, `chat.instructions`, `chat.mergeBrief`, `workflows.followTemplate`,
+  `workflows.newTemplate`.
   Removed: `chat.helpers`, `assistant.*`, `triggers.*`, `workflows.planRun*`, the review loop's
   and the builder's settings.
 
 ## Boundaries and non-goals
 
 - No change to Claude Code's or Codex's own subagents.
-- wow does not merge branches itself; the main agent does, with Git, in its own worktree.
+- wow does not merge branches itself; a merge helper does, with Git, in its own copy.
 - No direct messages from the user to a helper.
 - No workflow engine: a workflow's order, gates and conditions are text the agent follows.
 
@@ -205,8 +211,11 @@ unread | done`. Removed: plan run, workflow run and trigger contracts that only 
 - **Answers go to the parent, not to the main thread.** Each agent coordinates the helpers it
   started, as Claude Code's subagents do; the main thread sees the result through its own
   helpers.
-- **The agent merges.** Which branches belong together is a judgment about the task; Git in the
-  agent's own worktree keeps the user's folder untouched until he asks.
+- **A merge helper merges.** Which branches belong together is a judgment about the task, so the
+  agent picks them. The merge runs in a helper's own copy because a thread cannot move to another
+  folder once its session started (both providers bind a session to its folder) and a Codex
+  session may write only in its own folder; a merge helper works the same on both, and its copy
+  keeps the user's folder untouched until he asks (owner's choice, 2026-11-23).
 - **The assistant folds into every main thread** rather than staying a separate thread, since its
   tools are what a project-less main thread needs, and one kind of thread is simpler.
 
