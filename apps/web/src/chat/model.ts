@@ -208,7 +208,12 @@ export function withoutQuery(
 // own skill and a folder skill of the same name stay apart; a folder skill by the name a step
 // would store (plugin:name for a Claude plugin's).
 export function skillRefOf(skill: Skill): SkillRef {
-  if (skill.source === 'wow' || skill.source === 'yours') {
+  if (
+    skill.source === 'wow' ||
+    skill.source === 'yours' ||
+    skill.source === 'workflow' ||
+    skill.source === 'project-workflow'
+  ) {
     return { name: skill.name, source: skill.source };
   }
   const plugin = /^\/([^:\s]+:[^\s]+)$/u.exec(skill.invocations.claude)?.[1];

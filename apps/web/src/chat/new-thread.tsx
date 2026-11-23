@@ -403,6 +403,7 @@ export function NewThreadView() {
           ref={composer}
           onTextChange={titleTyped}
           providerKind={instance?.kind}
+          workflowProject={project?.cwd}
           running={false}
           disabled={!instance}
           blockedReason={blockedReason}

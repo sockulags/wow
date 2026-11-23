@@ -1508,6 +1508,7 @@ export function ThreadConversation({
                   ? undefined
                   : { providerInstanceId: instance.id, cwd: thread.cwd, threadId }
               }
+              workflowProject={projects.find((entry) => entry.id === thread.projectId)?.cwd}
               {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
               fileSource={fileLinks ? { threadId } : undefined}
               recentSkills={recentSkillNames(items ?? [])}

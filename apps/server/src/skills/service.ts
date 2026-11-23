@@ -3,6 +3,7 @@ import {
   chokidarWatch,
   claudePluginRoots,
   scanSkills,
+  scanWorkflows,
   skillRoots,
   watchSkillRoots,
   type SkillRoot,
@@ -13,6 +14,7 @@ import {
   removeOwnSkill,
   skillFileName,
   wowSkillRoots,
+  workflowRoots,
   writeOwnSkillFile,
 } from '@wow/skills';
 import { existsSync } from 'node:fs';
@@ -194,12 +196,18 @@ export class SkillsService {
     const generation = this.#ownGeneration;
     const projectDirs = this.#projectDirs();
     const roots = await this.#roots(projectDirs);
-    await this.#watch(roots, projectDirs);
+    // Workflow files are listed with the skills (orchestrator threads spec 19, 20).
+    const flows = workflowRoots(this.#deps.wowHome, projectDirs);
+    await this.#watch([...roots, ...flows], projectDirs);
     const scanned = await scanSkills(roots);
-    const { problems } = scanned;
+    const workflows = await scanWorkflows(flows);
+    const problems = [...scanned.problems, ...workflows.problems];
     // A built-in skill switched off is in no list (wow skills spec 3).
     const off = new Set<string>(this.#deps.settings.get('skills.builtInOff'));
-    const skills = scanned.skills.filter((skill) => skill.source !== 'wow' || !off.has(skill.name));
+    const skills = [
+      ...scanned.skills.filter((skill) => skill.source !== 'wow' || !off.has(skill.name)),
+      ...workflows.skills,
+    ];
     for (const problem of problems) {
       this.#deps.logger.warn(`skipped skill file ${problem.file}`, problem.message);
     }

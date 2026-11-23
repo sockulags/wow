@@ -18,6 +18,7 @@ import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './as
 import { HelperEndpoint, helperMcpPath } from './helpers/endpoint.js';
 import { HelperTools } from './helpers/helper-tools.js';
 import { HelperFollower } from './helpers/follow.js';
+import { exportStoredWorkflows } from './workflows/files.js';
 import { AssistantTools } from './assistant/tools.js';
 import { Engine } from './core/engine.js';
 import { Subscriptions } from './core/subscriptions.js';
@@ -315,6 +316,11 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     .expire()
     .catch((error: unknown) => logger.warn('old snapshots were not dropped', error));
   workflows.recover();
+  // The workflows stored before are written out as files once, before the skills scan reads
+  // them (orchestrator threads spec 22).
+  await exportStoredWorkflows({ db: database.db, home, logger }).catch((error: unknown) =>
+    logger.warn('stored workflows were not written as files', error),
+  );
   const skills = new SkillsService({
     db: database.db,
     engine,

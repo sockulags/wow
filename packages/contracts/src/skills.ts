@@ -67,7 +67,8 @@ export function inListOrder<
 // (spec 9).
 export const SkillRef = z.object({
   name: z.string().min(1),
-  source: WowSkillSource.optional(),
+  // wow's own skills, and workflows (orchestrator threads spec 20); absent for a folder skill.
+  source: z.enum(['wow', 'yours', 'workflow', 'project-workflow']).optional(),
 });
 export type SkillRef = z.infer<typeof SkillRef>;
 

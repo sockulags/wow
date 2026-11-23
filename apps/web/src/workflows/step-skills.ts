@@ -85,7 +85,9 @@ export function skillChoices(skills: readonly Skill[]): SkillChoice[] {
 
 // The fields a step gets when its own skill is picked.
 export function withStepSkill(ref: SkillRef): Pick<DraftStep, 'skillName' | 'skillSource'> {
-  return { skillName: ref.name, skillSource: ref.source };
+  // A step runs a skill, never a workflow; the builder offers none.
+  const skillSource = ref.source === 'wow' || ref.source === 'yours' ? ref.source : undefined;
+  return { skillName: ref.name, skillSource };
 }
 
 export function withAlsoFollow(step: DraftStep, ref: SkillRef): Pick<DraftStep, 'alsoFollow'> {
