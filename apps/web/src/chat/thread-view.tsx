@@ -88,6 +88,7 @@ import {
   WorkingIndicator,
   type ItemContext,
 } from './items';
+import { GateDock } from './gate-card';
 import { TaskPin } from './task-pin';
 import { ToolCallGroup } from './tools/group';
 import {
@@ -1410,6 +1411,10 @@ export function ThreadConversation({
                   );
                 })}
                 {extras?.end && <li>{extras.end}</li>}
+                <GateDock
+                  items={items ?? noItems}
+                  contextOf={(item) => itemContext(item.turnId, item.id)}
+                />
                 {thread.queued && (
                   <QueuedMessageItem
                     queued={thread.queued}

@@ -30,7 +30,13 @@ export class HelperFollower {
                 reason: 'question' as const,
                 questionId: event.payload.question.id,
               }
-            : undefined;
+            : event.kind === 'approval.requested'
+              ? {
+                  threadId: event.payload.approval.threadId,
+                  reason: 'approval' as const,
+                  approvalId: event.payload.approval.id,
+                }
+              : undefined;
       if (!found || !isHelper(found.threadId)) return;
       // After this commit, so the main thread's decision reads the helper's turn as ended.
       const work = Promise.resolve().then(() => {

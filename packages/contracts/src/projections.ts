@@ -254,6 +254,8 @@ export const ThreadItemKind = z.enum([
   'changes_applied',
   // A helper thread the agent started, where it started it (agent orchestration spec 10).
   'helper_started',
+  // An approval or question from a helper in the thread's tree (orchestrator threads spec 14).
+  'gate_card',
 ]);
 export type ThreadItemKind = z.infer<typeof ThreadItemKind>;
 

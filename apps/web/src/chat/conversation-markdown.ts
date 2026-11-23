@@ -19,7 +19,7 @@ import {
 } from '@wow/contracts';
 import { decisionLabels } from './approval-card';
 import { appliedText, changeRequestLineText, committedText } from './git-lines';
-import { helperPayload, helperRowText } from './helpers';
+import { gatePayload, gateRowText, helperPayload, helperRowText } from './helpers';
 import { compactionText, settingsChangeText } from './items';
 import { startedLabels } from './plan-card';
 import { taskProgress } from './task-pin';
@@ -381,6 +381,11 @@ export function conversationMarkdown(input: ConversationExport): string {
       case 'helper_started': {
         const helper = helperPayload(item.payload);
         if (helper) line(helperRowText(helper));
+        break;
+      }
+      case 'gate_card': {
+        const gate = gatePayload(item.payload);
+        if (gate) line(gateRowText(gate));
         break;
       }
       case 'changes_applied': {

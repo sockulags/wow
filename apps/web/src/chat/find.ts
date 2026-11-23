@@ -22,7 +22,7 @@ import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { gfm } from 'micromark-extension-gfm';
 import { questionStatus, taskLine, toolLine } from './conversation-markdown';
 import { appliedText, changeRequestLineText, committedText } from './git-lines';
-import { helperPayload, helperRowText } from './helpers';
+import { gatePayload, gateRowText, helperPayload, helperRowText } from './helpers';
 import { compactionText, settingsChangeText } from './items';
 import { withoutMentions } from './mentions';
 import { openKey } from './open-state';
@@ -309,6 +309,11 @@ function itemPieces(walk: Walk, item: ThreadItem, opens: readonly string[]) {
     case 'helper_started': {
       const helper = helperPayload(item.payload);
       if (helper) add(helperRowText(helper));
+      return;
+    }
+    case 'gate_card': {
+      const gate = gatePayload(item.payload);
+      if (gate) add(gateRowText(gate));
       return;
     }
     case 'changes_applied': {

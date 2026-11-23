@@ -59,7 +59,7 @@ export function* decideInSteps(
     if (context.origin !== undefined && context.origin !== 'user') {
       throw new CommandRejected('rejected', 'Only wow sends this.');
     }
-    yield decideHelperFollow(command, read, context);
+    yield* decideHelperFollow(command, read, context);
     return;
   }
   if (isHelperCommand(command)) {
