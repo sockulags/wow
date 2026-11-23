@@ -419,6 +419,35 @@ function reworkTeaTimer(repo: string): void {
   );
 }
 
+// A call of one of wow's helper tools, as an agent makes it over MCP; the turn does not wait for
+// it, as the helper runs on its own.
+function callHelperTool(
+  tools: { readonly url: string; readonly token: string },
+  name: string,
+  args: Record<string, unknown>,
+): void {
+  void fetch(tools.url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      authorization: `Bearer ${tools.token}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name, arguments: args },
+    }),
+  })
+    .then(async (response) => {
+      const answer = await response.text();
+      if (answer.includes('"isError":true'))
+        process.stderr.write(`helper tool ${name} refused: ${answer}\n`);
+    })
+    .catch(() => undefined);
+}
+
 function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): ProviderEvent[] {
   const { threadId, prompt } = command;
   const session: ProviderEvent = {
@@ -433,6 +462,29 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   if (images.length > 0) {
     const types = images.map((image) => image.mediaType.slice('image/'.length)).join(', ');
     return [session, ...finish(threadId, `${imagesReceived(images.length)} Types: ${types}.`)];
+  }
+  // Gates in the main thread (orchestrator threads U3): the main agent starts a Codex helper,
+  // which starts a Claude helper whose brief asks for an approval ("approve" above). Each calls
+  // wow's helper tools over MCP, as a real agent would.
+  if (command.helperTools && /^orchestrate the release/i.test(prompt)) {
+    callHelperTool(command.helperTools, 'start_helper', {
+      brief: 'Delegate the release',
+      title: 'Delegate the release',
+      instance: 'Mock Codex',
+      model: 'mock-codex',
+      effort: 'medium',
+    });
+    return [session, ...finish(threadId, 'A Codex helper takes the release.')];
+  }
+  if (command.helperTools && /^delegate the release/i.test(prompt)) {
+    callHelperTool(command.helperTools, 'start_helper', {
+      brief: 'Approve the release check',
+      title: 'Release check',
+      instance: 'Mock Claude',
+      model: 'mock-model',
+      effort: 'high',
+    });
+    return [session, ...finish(threadId, 'A Claude helper checks the release.')];
   }
   // Find in the conversation (thread work U1): the word is in the prompt, closed reasoning, the
   // first reply (in bold), line 3 of a 40-line command output and a read in a closed group of

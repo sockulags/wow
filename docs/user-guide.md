@@ -905,6 +905,13 @@ folder** or a pull request; your own folder is not touched before that. What the
 told is the setting `chat.mergeBrief`. The agent can also read where each helper's work is: its
 folder, the repository, its branch and how many commits it made.
 
+When a helper, at any depth, asks for your approval or asks you a question, the card shows at
+the end of the main thread's conversation, with which helper asks and, for a deeper one, whose
+helper it is. Answer it there as you would in the helper's own thread; only that helper waits,
+and you can keep writing to the main agent meanwhile. Once answered, here or in the helper's own
+thread, its place in the conversation says "Answered in <helper>". An approval is always yours:
+no agent is asked to give it.
+
 ### Threads at work
 
 **At work** at the top of the thread list (**Ctrl+Shift+O**, `keybindings.threadsAtWork`, or

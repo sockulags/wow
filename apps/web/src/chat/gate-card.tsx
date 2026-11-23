@@ -101,7 +101,11 @@ export function GateCard({
           context={{ ...context, keyedApproval: { id: payload.requestId, side: true } }}
         />
       ) : (
-        <ChatQuestions items={[state.item]} questions={state.questions} turnEnded={!state.helperWaits} />
+        <ChatQuestions
+          items={[state.item]}
+          questions={state.questions}
+          turnEnded={!state.helperWaits}
+        />
       )}
     </li>
   );

@@ -1876,3 +1876,18 @@ test.describe('sketch', () => {
     await page.screenshot({ path: sketchPath('2026-11-wow-skills', 'skill-chip') });
   });
 });
+
+// Gates in the main thread (orchestrator threads U3, spec 14 to 18).
+test("a gate: a Claude main thread's Codex helper starts a Claude helper whose approval is answered in the main thread", async ({
+  page,
+}) => {
+  await startClaudeThread(page, 'Orchestrate the release');
+  const card = conversation(page).getByTestId('gate-card');
+  await expect(card).toContainText('Release check · Claude Code · Helper of Delegate the release');
+  await expect(card.getByRole('region', { name: 'Approval request' })).toContainText('pnpm test');
+  await card.getByRole('button', { name: /Allow once/ }).click();
+  await expect(card).toHaveCount(0);
+  await expect(conversation(page).getByTestId('gate-card-line')).toContainText(
+    'Answered in Release check: Allowed once',
+  );
+});

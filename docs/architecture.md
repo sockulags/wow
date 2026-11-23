@@ -4527,6 +4527,25 @@ its own copy, so its Changes show the result and Apply brings it home to the rep
 a worktree for the main thread, because a provider session stays in the folder it started in and
 a Codex session writes only there (spec Decisions).
 
+**Gates in the main thread** (orchestrator threads U3, spec 14 to 18). `HelperFollower` also
+follows `approval.requested` of a helper and sends `helper.followed` with the reason `approval`
+and its `approvalId`; `question.asked` keeps the reason `question`. `decideHelperFollow` decides
+in steps: first, for an approval or a question that is not yet answered, a `gate_card` item
+(`GateCardItemPayload`: the asking helper, the request's id and item, its title, instance,
+provider, depth and the title of the thread that started it when that is not the main thread) on
+the main thread's last turn, once per request; then, for a question only, the "From wow" message
+to the thread that started the helper. An approval is never passed to an agent (spec 17). The
+request stays in the helper's thread. The web app's `chat/gate-card.tsx` reads it from that
+thread's own topics (`approvals`, `questions`, `threadItems`, all thread-scoped) and draws it with
+the ordinary `ApprovalCard` or `ChatQuestions`, so Allow or a reply sends the same
+`approval.answer` or `question.answer` as the helper's own card. `GateDock`, after the
+conversation's items in `ThreadConversation`, draws every card still waiting, so they are at the
+end; the item's own place shows `GateCardLine`: who asks and that the card waits at the end, or
+"Answered in <helper>: <decision or reply>" once it is answered anywhere. Ctrl+F and the Markdown
+export use `gateRowText`. The card's approval does not take the approval keys, which stay with
+the main thread's own requests. Only the asking thread waits: the main thread's composer and its
+other helpers go on.
+
 **Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
 (`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,
 `write_to_helper` and `stop_helper` to the thread whose token called. The reads come straight
