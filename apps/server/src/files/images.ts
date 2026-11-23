@@ -12,11 +12,14 @@ import {
   type AttachmentReadResult,
   type Command,
   type DomainEvent,
+  type ImagesOmitted,
   type ProviderModel,
+  type ToolImage,
+  type ToolStoredImage,
 } from '@wow/contracts';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
-import { constants, copyFileSync, mkdirSync } from 'node:fs';
+import { constants, copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Db } from '../db/database.js';
@@ -130,6 +133,62 @@ export class ImageStore {
       mediaType,
       ...(params.name !== undefined ? { name: params.name } : {}),
       bytes: bytes.length,
+    };
+  }
+
+  // The pictures of a tool's result (chat overview spec 31, 32), stored for the thread as a
+  // message's images are, with the same types and size limit; any other is counted with why.
+  // Synchronous, so the provider event that carries them goes on in its place among the rest.
+  keepToolImages(
+    threadId: string,
+    images: readonly ToolImage[],
+  ): { readonly stored: ToolStoredImage[]; readonly omitted: ImagesOmitted | undefined } {
+    const limit = this.#deps.maxBytes();
+    const stored: ToolStoredImage[] = [];
+    let omitted = 0;
+    let reason: string | undefined;
+    const skip = (why: string) => {
+      omitted += 1;
+      reason ??= why;
+    };
+    for (const image of images) {
+      let bytes: Buffer;
+      try {
+        if ('path' in image) {
+          if (statSync(image.path).size > limit) {
+            skip('too large');
+            continue;
+          }
+          bytes = readFileSync(image.path);
+        } else {
+          bytes = Buffer.from(image.base64, 'base64');
+        }
+      } catch {
+        skip('no longer there');
+        continue;
+      }
+      const mediaType = sniffImage(bytes);
+      if (!mediaType || mediaType === 'image/svg+xml') {
+        skip('not a picture wow shows');
+        continue;
+      }
+      if (bytes.length > limit) {
+        skip('too large');
+        continue;
+      }
+      try {
+        const id = AttachmentId.parse(`${randomUUID()}.${attachmentExtensions[mediaType]}`);
+        const folder = threadImageFolder(this.#deps.home, threadId);
+        mkdirSync(folder, { recursive: true, mode: 0o700 });
+        writeFileSync(path.join(folder, id), bytes, { mode: 0o600, flag: 'wx' });
+        stored.push({ id, mediaType });
+      } catch {
+        skip('could not be stored');
+      }
+    }
+    return {
+      stored,
+      omitted: omitted === 0 ? undefined : { count: omitted, reason: reason ?? 'not kept' },
     };
   }
 

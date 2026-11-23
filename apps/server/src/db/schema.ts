@@ -1,5 +1,7 @@
 import type {
   AssistantChangeRecord,
+  ChangeCount,
+  ReportedLimit,
   AssistantChangeState,
   AssistantPermissionKind,
   AssistantPlace,
@@ -134,6 +136,8 @@ export const threads = sqliteTable(
     backgroundTasks: json<BackgroundTask[]>().notNull().default([]),
     archived: bool().notNull().default(false),
     seen: bool().notNull().default(true),
+    // The newest item's index when the user last saw it (chat overview spec 17).
+    seenThrough: integer(),
     queued: json<QueuedMessage>(),
     // Where a chat thread's Changes are measured from (agent workbench spec 34): the commit its
     // folder was on at the first turn, and what already differed then. Null for a thread stored
@@ -153,11 +157,22 @@ export const threads = sqliteTable(
     // A helper thread's main thread (agent orchestration spec 4).
     parentThreadId: text(),
     followTurns: integer().notNull().default(0),
+    // What the thread changed as of its last turn's end (chat overview spec 4); null when not
+    // measured.
+    changeCount: json<ChangeCount>(),
+    // How far its latest task list is (chat overview spec 6).
+    tasks: json<{ done: number; total: number }>(),
     createdAt: text().notNull(),
     updatedAt: text().notNull(),
   },
   (table) => [index('threads_project_idx').on(table.projectId)],
 );
+
+// The plan limits each provider instance last reported, one per window (chat overview spec 26).
+export const providerLimits = sqliteTable('provider_limits', {
+  providerInstanceId: text().primaryKey(),
+  limits: json<ReportedLimit[]>().notNull(),
+});
 
 export const turns = sqliteTable(
   'turns',

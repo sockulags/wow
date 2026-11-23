@@ -155,6 +155,7 @@ describe('the exchanges (spec 8)', () => {
         '\n',
       ),
       'The bell rings **twice** now.',
+      '- Turn: Ran 1 command, edited 1 file · 1 failed',
       '## You · 20:41',
       'Thanks',
       '## Claude Code · 20:41',

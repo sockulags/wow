@@ -11,6 +11,7 @@ import { useBelow } from '@/lib/use-breakpoint';
 import { cn } from '@/lib/utils';
 import { ThreadChanges } from '@/chat/thread-changes';
 import { ToolsTab } from './tools-tab';
+import { ThreadOutline } from '@/chat/outline';
 import { ThreadTab } from './thread-tab';
 import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
@@ -219,6 +220,8 @@ export function ContextPanel() {
   const changes = tab?.kind === 'changes' ? tab.changes : undefined;
   // What the thread's session can use (thread work spec 37).
   const tools = tab?.kind === 'tools' ? tab.tools : undefined;
+  // A chat thread's outline (chat overview spec 21).
+  const outline = tab?.kind === 'outline' ? tab.outline : undefined;
   // Another thread beside the view (parallel threads spec 15).
   const otherThread = tab?.kind === 'thread' ? tab.thread : undefined;
   const { width, cap } = useShownPanelWidth(selection.view);
@@ -360,6 +363,8 @@ export function ContextPanel() {
           <ThreadChanges key={tab.id} changes={changes} />
         ) : tools && tab ? (
           <ToolsTab key={tab.id} tools={tools} />
+        ) : outline && tab ? (
+          <ThreadOutline key={tab.id} outline={outline} />
         ) : otherThread && tab ? (
           <ThreadTab key={tab.id} thread={otherThread} />
         ) : (

@@ -1342,6 +1342,27 @@ export async function snapshotTreeKept(
   return found.ok;
 }
 
+// The files that differ between two snapshot trees and the lines each adds and removes (chat
+// overview spec 1, 2); a binary file has no line counts. Renames are a deletion and an addition.
+export async function diffSnapshotTrees(
+  store: string,
+  from: string,
+  to: string,
+  maxBytes: number,
+  options: GitRunOptions,
+): Promise<
+  | { readonly ok: true; readonly counts: Map<string, LineCount> }
+  | { readonly ok: false; readonly message: string }
+> {
+  const diffed = await runStoreGit(
+    ['diff-tree', '-r', '--numstat', '-z', '--no-renames', '--no-ext-diff', from, to, '--'],
+    { cwd: store, store, maxBytes },
+    options,
+  );
+  if (!diffed.ok) return { ok: false, message: diffed.message };
+  return { ok: true, counts: parseNumstat(diffed.stdout.toString('utf8')) };
+}
+
 // Every file of a snapshot tree, with its size.
 export function readSnapshotTree(
   store: string,

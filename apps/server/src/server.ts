@@ -1,3 +1,4 @@
+import { archiveDoneByAge } from './core/archive-by-age.js';
 import { settingsRegistry, type HostKind, type ServerMessage } from '@wow/contracts';
 import { discoverClaudeFolders, listClaudeSessions } from '@wow/provider-claude';
 import { discoverCodexFolders, listCodexSessions } from '@wow/provider-codex';
@@ -256,6 +257,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     prepareThread: (threadId) => workspaces.prepareThread(threadId),
     snapshots,
     helpers: helperEndpoint,
+    // The image store is made below; a tool's result only arrives once both are.
+    toolImages: (threadId, list) => images.keepToolImages(threadId, list),
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
   // Gives the assistant a turn when a thread it started ends a turn or asks something.
@@ -564,6 +567,15 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     clock: options.clock ?? (() => new Date()),
   });
   scheduler.onTick(() => chief.tick());
+  scheduler.onTick(() =>
+    archiveDoneByAge({
+      db: database.db,
+      engine,
+      settings,
+      logger,
+      clock: options.clock ?? (() => new Date()),
+    }),
+  );
   const services: BackgroundService[] = [workspaces, workflows];
   const stopServices = async () => {
     for (const service of services.splice(0).toReversed()) {

@@ -137,9 +137,9 @@ test.describe('chat', () => {
     await startThread(page, 'Hello there');
     const items = conversation(page);
     await expect(items.getByTestId('item-assistant_text')).toContainText('You said: Hello there');
-    // The message, its Edit and Fork actions, then its turn's start time.
+    // The message, its Edit, Fork and Mark actions, then its turn's start time.
     await expect(items.getByTestId('item-user')).toHaveText(
-      /^Hello thereEditFork from here\d{2}:\d{2}$/,
+      /^Hello thereEditFork from hereMark\d{2}:\d{2}$/,
     );
 
     const reasoning = items.getByTestId('item-reasoning');
@@ -252,6 +252,28 @@ test.describe('chat', () => {
     // Requests reach the route in order, so one made now comes after any the diagrams made.
     await page.evaluate(() => fetch('https://elsewhere.example.test/last').catch(() => undefined));
     expect(asked).toEqual(['/last']);
+  });
+
+  test('archives two picked threads together and brings them back with Undo @chat-overview-15 @chat-overview-16', async ({
+    page,
+  }) => {
+    await startThread(page, 'Pick me first');
+    await expect(conversation(page).getByText('You said: Pick me first')).toBeVisible();
+    await startThread(page, 'Pick me second');
+    await expect(conversation(page).getByText('You said: Pick me second')).toBeVisible();
+    const list = threadList(page);
+    const first = list.getByRole('link', { name: /Pick me first/ });
+    const second = list.getByRole('link', { name: /Pick me second/ });
+    await first.click({ modifiers: ['ControlOrMeta'] });
+    await second.click({ modifiers: ['ControlOrMeta'] });
+    const bar = page.getByTestId('picked-bar');
+    await expect(bar).toContainText('2 picked');
+    await bar.getByRole('button', { name: 'Archive' }).click();
+    await expect(first).toHaveCount(0);
+    await expect(second).toHaveCount(0);
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect(first).toBeVisible();
+    await expect(second).toBeVisible();
   });
 
   test('marks a thread done, reopens it, and a new message reopens it too', async ({ page }) => {

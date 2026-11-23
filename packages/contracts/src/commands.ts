@@ -10,6 +10,8 @@ import {
 } from './assistant.js';
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
+  ChangeCount,
+  ReportedLimit,
   AppNotification,
   Approval,
   BacklogItem,
@@ -58,6 +60,7 @@ import {
   ApprovalDecision,
   BackgroundTask,
   ProviderEvent,
+  ProviderLimit,
   ProviderKind,
   ProviderTestResult,
   ProviderUpdate,
@@ -327,6 +330,13 @@ export const Command = z.discriminatedUnion('type', [
   // The thread was opened, or the user asked to see it as new again (spec 70).
   z.object({ type: z.literal('thread.markSeen'), threadId: Id }),
   z.object({ type: z.literal('thread.markUnread'), threadId: Id }),
+  // Mark a message to find it again, or take the mark off (chat overview spec 22).
+  z.object({
+    type: z.literal('thread.markItem'),
+    threadId: Id,
+    itemId: Id,
+    marked: z.boolean(),
+  }),
   // `note` goes with a denial (agent workbench spec 37); `permissionMode` starts a plan in that
   // mode (spec 42). `allowAlways` stores the rule the approval offers (spec 38).
   z.object({
@@ -830,6 +840,21 @@ export const InternalCommand = z.discriminatedUnion('type', [
   }),
   // The apply service wrote a thread's changes into the project folder, or undid that (parallel
   // threads spec 8, 9): the line on the thread's last turn.
+  // The provider service passes on the plan limits a session reported (chat overview spec 25).
+  z.object({
+    type: z.literal('providerInstance.limitsReported'),
+    providerInstanceId: Id,
+    limits: z.array(ProviderLimit),
+  }),
+  // The snapshot service measured what a chat thread's turn changed, and what the thread has
+  // changed as of then (chat overview spec 1, 4); null where it could not tell.
+  z.object({
+    type: z.literal('thread.turnChangesMeasured'),
+    threadId: Id,
+    turnId: Id,
+    changes: ChangeCount.nullable(),
+    threadChanges: ChangeCount.nullable(),
+  }),
   z.object({
     type: z.literal('thread.changesApplied'),
     threadId: Id,
@@ -1289,7 +1314,12 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('thread.seenChanged'),
     aggregate: Id,
-    payload: z.object({ threadId: Id, seen: z.boolean() }),
+    // `through`: the newest item's index when the user saw the thread (chat overview spec 17).
+    payload: z.object({
+      threadId: Id,
+      seen: z.boolean(),
+      through: z.number().int().min(-1).optional(),
+    }),
   }),
   z.object({
     kind: z.literal('turn.started'),
@@ -1403,6 +1433,18 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   }),
   // The `changes_applied` line (parallel threads spec 8); with `undoOf`, that apply is marked
   // undone.
+  // An instance's plan limits after a report, every window it has (chat overview spec 26).
+  z.object({
+    kind: z.literal('providerInstance.limitsReported'),
+    aggregate: Id,
+    payload: z.object({ providerInstanceId: Id, limits: z.array(ReportedLimit) }),
+  }),
+  // A thread's change count as of its last turn's end (chat overview spec 4).
+  z.object({
+    kind: z.literal('thread.changeCounted'),
+    aggregate: Id,
+    payload: z.object({ threadId: Id, changeCount: ChangeCount.nullable() }),
+  }),
   z.object({
     kind: z.literal('thread.changesApplied'),
     aggregate: Id,

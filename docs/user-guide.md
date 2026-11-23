@@ -100,6 +100,10 @@ Default keys (all changeable in Settings → Keybindings):
 | F                | Chat: fork from the message that has the keyboard            |
 | Up               | Chat, in an empty message box: edit your last message        |
 | End              | Chat: back to the newest output                              |
+| Shift+End        | Chat: go to "New since you looked"                           |
+| B                | Chat: mark or unmark the message that has the keyboard       |
+| Alt+PageUp / Dn  | Chat: previous marked message, next marked message           |
+| Ctrl+Shift+U     | Chat: show the outline                                       |
 | T, N, P          | Calendar: today, next, previous                              |
 | D, W             | Calendar: day view, week view                                |
 | C                | Calendar: new card on the day you are on                     |
@@ -436,6 +440,25 @@ that thread. A session whose folder is gone is listed greyed with the reason. No
 to Claude's or Codex's files; how many sessions are listed and how much of the prompt shows are
 in Settings → Providers.
 
+### Plan limits
+
+When Claude Code reports how much of your claude.ai plan's limits is used (the 5-hour window,
+the week, a model's week), wow keeps the latest of each. From 80 % (**Warn about a plan limit
+at**, `chat.limitWarnPercent`) the composer bar shows the closest one, such as "5 h: 84 % ·
+resets 16:40", amber, and red once it is reached; hover it for every window. wow tells you once
+per window when it crosses the warning and again when it is reached (as `chat.notifications`
+says). Settings → Providers lists every window with when it was reported. Only what the provider
+reports shows: an API key reports no plan limits, and this version shows none for Codex.
+
+### Usage
+
+**Usage** at the foot of the thread list (or "Show usage" in the palette) shows the tokens and
+cost of your turns per day for Today, 7 days, 30 days or This month, with totals per project,
+provider instance and model, and every plan limit on top. Click a total to see only its days,
+and again to see all. A cost the provider did not report shows as "—" (or "+ 2 unknown") and is
+not counted as nothing; turns without any usage reported are counted apart. Usage only shows: it
+sets no budget and stops nothing.
+
 ### Model, effort and mode
 
 The bar at the bottom of the composer, left of Send, reads the thread's model, effort and
@@ -511,6 +534,13 @@ follows or the turn ends, it says what was done, such as "Read 2 files, ran 1 co
 It opens to list every call. Anything else in the turn, such as text, an approval or the
 Assistant's change rows and cards, starts a new row. `chat.groupToolCalls` off shows every call
 on its own row.
+
+**Pictures**: when a tool's result holds a picture (a screenshot a browser tool took, an image
+Claude Code read, Codex's image view), it shows as a thumbnail under the tool's row, also while
+the row is closed; click one, or press Enter on it, to see it full size. A row shows up to four
+(`chat.toolImagesShown`) with "+N more" for the rest. wow keeps them with the thread's images and
+under the same size limit (`chat.imageMaxBytes`); one that is too large or not a picture wow
+shows is named under the row ("1 picture not shown (too large)").
 
 **Subagents**: when the agent hands work to a subagent (Claude Code's Agent tool, a Codex
 collab agent), the call is one row, such as "Agent: explore the auth code · 3 tool calls · 1:32".
@@ -596,7 +626,12 @@ offered on the newest apply until it is used, for `chat.snapshotKeepDays` days. 
 cannot apply.
 
 A turn ends with its usage: input, output and cached tokens, and the cost when the provider
-reports one. With `chat.contextMeter` on, the composer shows
+reports one. The line starts with what the turn did, such as "Changed 3 files +40 −2 · Read 2
+files, ran 1 command · 1 failed". Click the changed files to open Changes narrowed to that turn:
+**This turn only** for the last turn, **Turn 2 only** for an earlier one (the files that turn
+changed and that still differ). wow measures a turn's changes from the snapshots it keeps of the
+folder; without them (a folder outside Git, snapshots off for the project) the line leaves the
+changes out. A workflow step's thread shows what ran only; its changes are the run's. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 
 ### When the agent needs you
@@ -696,6 +731,30 @@ folder (`~/.wow/images`, one folder per thread) and sends them only to the threa
 Assistant and a workflow step's thread take no images. A message with pictures written while a turn runs waits for the turn's
 end, also on Claude Code.
 
+### Text files in a message
+
+Drop or paste a text file (a log, a config, notes) on the composer and its text goes into the
+message as a quoted block named by the file, where you can still edit it before you send. Files
+up to 200 KB are taken (**Largest text file in a message**, `chat.attachTextMaxBytes`). A PDF
+cannot go into a message yet, and neither can a file that is not text; the composer says why.
+Nothing is copied into the thread's folder. To point the agent at a file in its folder, use `@`.
+
+### Another thread or a backlog item in a message
+
+Type `@` in a chat thread's composer and, after the files, the list offers **Threads** (your
+other threads, newest first) and **Backlog** (items that are not done), matched by what you type.
+Pick one and its text goes into your message as a quoted block: for a thread its title, project
+and last answer; for a backlog item its title, state, tags and body. You can edit the block
+before you send. Up to 20 000 characters go in (**Longest thread or item put in a message**,
+`chat.mentionMaxChars`); a longer text is cut and says so. The other thread is not changed.
+
+Issues, pull requests, tickets and pages can go in the same way, but only for a project where you
+turn on **Issues and tickets in @** (`chat.mentionHostItems`, off by default): their text was
+written by others and could try to steer the agent. The list then has **Issues and tickets**:
+the items wow has read for the thread (its chips and what you opened in its panel); wow fetches
+none for this. Each pick asks whether to send the text; on yes it goes in as quoted text marked
+as written by others.
+
 ### Skills
 
 Type `/` at the start of a message or after a space to list skills with their descriptions,
@@ -743,8 +802,32 @@ Backlog item bodies and the publish preview use the same rendering.
 ### Managing threads
 
 The sidebar groups threads under **Needs you**, **Working**, **Idle** and **Done**, with pinned
-threads first (pin from the thread header). Each row's second line says the project and when the
-thread was last active. A thread whose turn failed sits under Idle with a marker. A thread started
+threads first (pin from the thread header). Each row's second line says where the thread stands:
+what it waits for ("Wants to run rm -rf build") or runs ("Running pnpm test"), how far its task
+list is ("3/7"), what it changed ("+42 −7"), its branch when it has its own working copy or else
+its project, and when it was last active. Hover the row for the whole line. Settings → Chat →
+**Second line of a thread in the list** (`chat.threadRowDetail`) chooses which of these parts
+show.
+
+Idle and Done are grouped under **Today**, **Yesterday**, **This week** and **Older**, by when
+each thread was last active (in the calendar's time zone, the week starting on its first day),
+with pinned threads above. Click a group's heading, or press Enter on it, to fold or unfold it;
+wow keeps which groups are folded. Done starts folded; a folded group still shows the thread you
+have open, and while the filter has text every group is open. A done thread that has not been
+active for 14 days is archived by itself (**Archive done threads after**, `chat.doneArchiveDays`;
+0 never does); pinned threads and workflow steps' threads are never archived this way. **Group
+the thread list by** (`chat.threadListGroupBy`, or "Group threads by project" and "Group threads
+by state" in the palette) groups the list by project instead, each project's threads ordered as
+needs you, working, then by last activity.
+
+Right-click a row, or press the context-menu key or Shift+F10 on it, for **Open**, **Open in
+panel**, **Pin**, **Mark done** or **Reopen**, **Archive**, **Rename** and **Mark unread**.
+Hovering a row shows **Pin** and **Archive** at its right. To act on several threads at once,
+Ctrl+click rows (or press Space on them), or Shift+click and Shift+Up/Down to pick a run of rows;
+a bar over the list says how many are picked and offers Pin, Unpin, Mark done, Reopen, Archive
+and Unarchive. Each applies to the picked threads that allow it and says which it skipped and
+why, such as "Skipped 1 is working." Archiving several offers **Undo**. Escape clears the
+pick. A thread whose turn failed sits under Idle with a marker. A thread started
 by a workflow is titled by its step, with the workflow on the second line.
 
 The thread header shows the project (hover it for the folder) and the provider instance; the
@@ -844,6 +927,17 @@ Find, export, restore, fork and edit are in the main view only.
   after. **Ctrl+O** opens or closes all reasoning in the thread; `chat.reasoningOpen` opens it by
   default.
 - **Times**: each message shows when its turn started, each answer when its turn ended.
+- **New since you looked**: open a thread that is bold (it has output you have not read) and it
+  starts at a line **New since you looked**, before what came after you last had it open, instead
+  of at the bottom. **Shift+End** ("Go to what is new" in the palette) goes back to the line; it
+  goes away once you send a message or leave the thread. A thread you have not opened since this
+  version opens at the bottom as before.
+- **Outline and marks**: Details → **Show outline** (**Ctrl+Shift+U**, "Show outline" in the
+  palette) opens a tab in the side panel that lists your messages, each with what its turn did,
+  and the answers you marked. Type in its filter to narrow it; click a row, or press Enter on it,
+  to go to that message. **B** on a message that has the keyboard (or **Mark** on hover) marks
+  it with a bookmark; press B again to take the mark off. **Alt+PageUp** and **Alt+PageDown** go
+  to the marked message before or after. A fork keeps the marks of what it copied.
 - **Moving around**: scrolled up while output arrives, a **New output** pill shows; it or **End**
   goes back down and follows again. End works from the message box too once the cursor is at the
   end of what you typed (before that, it moves the cursor there). **Alt+Up** and **Alt+Down** move from message to message, and
@@ -1163,7 +1257,7 @@ never checks it on a timer. What it read is kept, so the chip shows its state ("
 2 checks failed") after a restart, and the tab says when it was fetched. If the host refuses or
 fails, the tab shows its reason and keeps what it read before; when even the first read failed,
 opening the tab again asks the host again. Links to hosts without a token
-stay plain links. Nothing read from a host is sent to the agent.
+stay plain links. Nothing read from a host is sent to the agent unless you pick it with `@` (see "Another thread or a backlog item in a message").
 
 "Open issue, PR or ticket…" in the palette takes a web address or a key. A link you paste into
 the composer shows its chip above the text with "Open in panel". The thread's Details tab lists

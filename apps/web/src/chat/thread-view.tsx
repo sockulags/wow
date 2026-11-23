@@ -104,7 +104,8 @@ import {
 } from './model';
 import { ModelBar, useModelBarKeys, type ModelBarHandle, type ModelBarProps } from './model-bar';
 import { frontModelBar } from './model-commands';
-import { ThreadChangesChip } from './thread-changes';
+import { openThreadChanges, ThreadChangesChip } from './thread-changes';
+import { turnSummaries } from './turn-summary';
 import { ToolsChip } from '@/panel/tools-tab';
 import { RemoveThreadCopyDialog, WorkingCopyChip } from './working-copy';
 import { ThreadTitle } from './thread-title';
@@ -379,13 +380,48 @@ function useStickToBottom(dependency: unknown) {
     setNewOutput(false);
     if (element) element.scrollTop = element.scrollHeight;
   }, []);
-  return { container, onScroll, newOutput, toEnd };
+  // The reader is somewhere else than the bottom on purpose ("New since you looked").
+  const hold = useCallback(() => {
+    pinned.current = false;
+  }, []);
+  return { container, onScroll, newOutput, toEnd, hold };
+}
+
+const markableKinds = new Set(['user', 'assistant_text']);
+
+const focusRow = (row: HTMLElement | undefined) => {
+  row?.focus();
+  row?.scrollIntoView({ block: 'center' });
+};
+
+// Where "New since you looked" goes (chat overview spec 17, 18, 20): captured as a thread is
+// opened while it is unread, from where the server says the user left off, and gone once a turn
+// starts after that (the user sent a message) or the thread is left.
+function useNewSince(thread: Thread, shown: boolean) {
+  const capture = () => ({
+    threadId: thread.id,
+    after:
+      shown && thread.seen === false && thread.seenThrough != null ? thread.seenThrough : undefined,
+    working: thread.state === 'working',
+    scrolled: false,
+  });
+  const [since, setSince] = useState(capture);
+  if (since.threadId !== thread.id) setSince(capture());
+  else if (since.after !== undefined && !since.working && thread.state === 'working') {
+    setSince({ ...since, after: undefined });
+  }
+  return [since, setSince] as const;
 }
 
 // What the palette and the keys ask of the conversation on screen, as it is at the time.
 interface ConversationActions {
   moveMessage(step: -1 | 1): void;
   toEnd(): void;
+  toNew(): void;
+  isMarked(itemId: string): boolean;
+  toggleMark(itemId: string): void;
+  moveMark(step: -1 | 1): void;
+  focusItem(itemId: string): void;
   openFind(kind: FindRequest['kind']): void;
   copyMarkdown(): Promise<unknown>;
   saveMarkdown(): Promise<unknown>;
@@ -537,7 +573,9 @@ export function ThreadConversation({
   }, [threadId]);
   const { models } = useModels(instance?.id);
   const { when } = useDateFormat();
-  const { container, onScroll, newOutput, toEnd } = useStickToBottom(items);
+  const { container, onScroll, newOutput, toEnd, hold } = useStickToBottom(items);
+  const [since, setSince] = useNewSince(thread, !compact && !extras);
+  const newSinceLine = useRef<HTMLLIElement>(null);
   const list = useRef<HTMLOListElement>(null);
   const ownComposer = useRef<ComposerHandle>(null);
   const composer = extras?.composerRef ?? ownComposer;
@@ -625,6 +663,31 @@ export function ThreadConversation({
   };
   const latestItems = useRef(items);
   latestItems.current = items;
+  // Marks (chat overview spec 21 to 23): on a chat thread's messages in the main view.
+  const markable = !extras && !compact && thread.kind !== 'assistant';
+  const isMarked = (itemId: string) =>
+    (latestItems.current?.find((item) => item.id === itemId)?.payload as { marked?: unknown })
+      ?.marked === true;
+  const toggleMark = (itemId: string) =>
+    void send({ type: 'thread.markItem', threadId, itemId, marked: !isMarked(itemId) });
+  const moveMark = (step: -1 | 1) => {
+    const rows = messageRows();
+    const at = rows.findIndex((row) => row.contains(document.activeElement));
+    const marked = rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => isMarked(row.dataset['itemId'] ?? ''));
+    const target =
+      step === 1
+        ? marked.find(({ index }) => index > at)
+        : marked.findLast(({ index }) => at === -1 || index < at);
+    focusRow(target?.row);
+  };
+  const focusItem = (itemId: string) =>
+    focusRow(
+      messageRows().find((row) => row.dataset['itemId'] === itemId) ??
+        list.current?.querySelector<HTMLElement>(`li[data-item-id="${CSS.escape(itemId)}"]`) ??
+        undefined,
+    );
   // Find and the export belong to a chat thread's conversation in the chat view, a step's thread
   // opened there included; not the Assistant view, nor a step's thread in the side panel (spec 9).
   const findable = !extras && !compact && thread.kind !== 'assistant';
@@ -660,6 +723,19 @@ export function ThreadConversation({
       previousMessage: () => nav.current?.moveMessage(-1),
       nextMessage: () => nav.current?.moveMessage(1),
       toEnd: () => nav.current?.toEnd(),
+      toNew: () => nav.current?.toNew(),
+      ...(markable
+        ? {
+            isMarked: (itemId: string) => nav.current?.isMarked(itemId) ?? false,
+            markFocused: () => {
+              const id = conversationStore.getState().focusedMessage;
+              if (id !== undefined) nav.current?.toggleMark(id);
+            },
+            previousMark: () => nav.current?.moveMark(-1),
+            nextMark: () => nav.current?.moveMark(1),
+            focusItem: (itemId: string) => nav.current?.focusItem(itemId),
+          }
+        : {}),
       copyFocused: () => {
         const id = conversationStore.getState().focusedMessage;
         const focused = latestItems.current?.find((item) => item.id === id);
@@ -678,7 +754,7 @@ export function ThreadConversation({
           }
         : {}),
     });
-  }, [compact, threadId, findable]);
+  }, [compact, threadId, findable, markable]);
   useEffect(() => {
     if (compact) return;
     conversationStore.setState((state) =>
@@ -962,9 +1038,24 @@ export function ThreadConversation({
     }
     return lines;
   }, [storedItems]);
+  const summaries = useMemo(() => turnSummaries(items ?? []), [items]);
+  const kindOf = useMemo(() => new Map((items ?? []).map((item) => [item.id, item.kind])), [items]);
+  // A turn's summary opens its Changes in a chat thread's own view (chat overview spec 2).
+  const turnChanges =
+    !extras && (thread.kind ?? 'chat') === 'chat' && thread.runId === null
+      ? (turn: Turn) =>
+          openThreadChanges(
+            { settings, layout },
+            threadId,
+            routerPanelRoute(router),
+            undefined,
+            turn.id === last?.id ? 'last' : { id: turn.id, number: turn.index + 1 },
+          )
+      : undefined;
   const itemContext = (turnId: string, itemId: string): ItemContext => {
     const turn = turnById.get(turnId);
     const said = words.get(itemId);
+    const summary = summaries.get(itemId);
     return {
       itemId,
       modelLabel: labelOf,
@@ -996,6 +1087,11 @@ export function ThreadConversation({
       ...(itemId === undoApplyId
         ? { onUndoApply: () => void undoApply(connection, threadId, itemId) }
         : {}),
+      ...(summary ? { turnSummary: summary } : {}),
+      ...(markable && markableKinds.has(kindOf.get(itemId) ?? '')
+        ? { marked: isMarked(itemId), onMark: () => toggleMark(itemId) }
+        : {}),
+      ...(summary && turn && turnChanges ? { onTurnChanges: () => turnChanges(turn) } : {}),
       ...(restoreLines.has(itemId)
         ? {
             restoreLine: {
@@ -1051,6 +1147,32 @@ export function ThreadConversation({
       ),
     [top, groupTools, afters, words],
   );
+  // The first entry after where the user left off, which "New since you looked" sits before.
+  const newSinceAt =
+    since.after === undefined
+      ? -1
+      : entries.findIndex((entry) => {
+          const first = entry.kind === 'item' ? entry.item : entry.items[0];
+          return first !== undefined && first.index > (since.after ?? 0);
+        });
+  const toNew = useCallback(() => {
+    const line = newSinceLine.current;
+    if (!line) return;
+    hold();
+    line.scrollIntoView({ block: 'start' });
+  }, [hold]);
+  // It opens there once, instead of at the bottom (spec 17).
+  useLayoutEffect(() => {
+    if (newSinceAt === -1 || since.scrolled) return;
+    toNew();
+    setSince((state) => ({ ...state, scrolled: true }));
+  }, [newSinceAt, since.scrolled, toNew, setSince]);
+  useEffect(() => {
+    if (compact) return;
+    conversationStore.setState((state) =>
+      state.threadId === threadId ? { hasNew: newSinceAt !== -1 } : state,
+    );
+  }, [compact, threadId, newSinceAt]);
   const instanceName = instance?.name ?? thread.providerInstanceId;
   const markdown = () =>
     conversationMarkdown({
@@ -1089,7 +1211,18 @@ export function ThreadConversation({
           description: errorMessage(error),
         }),
     );
-  nav.current = { moveMessage, toEnd, openFind, copyMarkdown, saveMarkdown };
+  nav.current = {
+    moveMessage,
+    toEnd,
+    toNew,
+    openFind,
+    copyMarkdown,
+    saveMarkdown,
+    isMarked,
+    toggleMark,
+    moveMark,
+    focusItem,
+  };
   const findSource = useMemo<FindSource>(
     () => ({
       entries,
@@ -1101,8 +1234,20 @@ export function ThreadConversation({
       outputLines,
       modelLabel: labelOf,
       modeLabel,
+      summaries,
     }),
-    [entries, children, turns, approvals, questions, thread.cwd, outputLines, labelOf, modeLabel],
+    [
+      entries,
+      children,
+      turns,
+      approvals,
+      questions,
+      thread.cwd,
+      outputLines,
+      labelOf,
+      modeLabel,
+      summaries,
+    ],
   );
 
   const backgroundTasks = thread.backgroundTasks ?? [];
@@ -1206,6 +1351,18 @@ export function ThreadConversation({
                     turn?.state === 'interrupted' && nextTurn !== turn.id ? turn : undefined;
                   return (
                     <Fragment key={entry.kind === 'item' ? entry.item.id : entry.id}>
+                      {index === newSinceAt && (
+                        <li ref={newSinceLine} data-testid="new-since">
+                          <div
+                            role="separator"
+                            className="flex items-center gap-2 text-2xs font-medium text-primary"
+                          >
+                            <span aria-hidden className="h-px flex-1 bg-primary/50" />
+                            New since you looked
+                            <span aria-hidden className="h-px flex-1 bg-primary/50" />
+                          </div>
+                        </li>
+                      )}
                       {entry.kind === 'item' &&
                       words.get(entry.item.id) === null ? null : entry.kind === 'item' ? (
                         <ConversationItem

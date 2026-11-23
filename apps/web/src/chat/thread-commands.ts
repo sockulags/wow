@@ -17,6 +17,10 @@ export interface ThreadListState {
   readonly renaming: string | undefined;
   // Raised by the filter command; the list focuses its filter field when it changes.
   readonly focusRequest: number;
+  // The rows picked with Ctrl+click, Shift+click or Space (chat overview spec 15), and the row a
+  // Shift+click extends from.
+  readonly picked: readonly string[];
+  readonly anchor: string | undefined;
 }
 
 export const threadListStore = createStore<ThreadListState>(() => ({
@@ -24,6 +28,8 @@ export const threadListStore = createStore<ThreadListState>(() => ({
   projectId: undefined,
   renaming: undefined,
   focusRequest: 0,
+  picked: [],
+  anchor: undefined,
 }));
 
 // The server's message-text hits for what is typed in the palette (spec 69), written by
@@ -176,6 +182,22 @@ export function threadListCommands({
       group: 'Chat',
       keywords: ['project', 'chip', 'thread list'],
       run: showProject(undefined),
+    });
+  }
+  // Group the list by state or by project (chat overview spec 12).
+  for (const [groupBy, title] of [
+    ['state', 'Group threads by state'],
+    ['project', 'Group threads by project'],
+  ] as const) {
+    commands.push({
+      id: groupBy === 'state' ? 'chat.groupByState' : 'chat.groupByProject',
+      title,
+      group: 'Chat',
+      keywords: ['thread list', 'group', 'sort', groupBy],
+      run: ({ settings, navigate }) => {
+        if (!inChat) void navigate({ to: '/chat' });
+        void settings.write('chat.threadListGroupBy', groupBy);
+      },
     });
   }
   const next = nextUnread(listOrder(threads), openThread?.id);

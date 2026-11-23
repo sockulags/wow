@@ -10,9 +10,12 @@ import {
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
+  ImagesOmitted,
+  ProviderLimit,
   TaskStatus,
   ThreadState,
   ToolFacts,
+  ToolStoredImage,
 } from './provider.js';
 import { QuestionOption, QuestionReply } from './questions.js';
 import { SentSkill, SkillRef } from './skills.js';
@@ -114,6 +117,15 @@ export type ResumePointRef = z.infer<typeof ResumePointRef>;
 export const ForkOrigin = z.object({ threadId: Id, turnId: Id });
 export type ForkOrigin = z.infer<typeof ForkOrigin>;
 
+// Files and lines changed (chat overview spec 1, 4): a turn's from its start snapshot to its end
+// snapshot, a thread's as its Changes count them.
+export const ChangeCount = z.object({
+  files: z.number().int().nonnegative(),
+  added: z.number().int().nonnegative(),
+  removed: z.number().int().nonnegative(),
+});
+export type ChangeCount = z.infer<typeof ChangeCount>;
+
 export const Thread = z.object({
   id: Id,
   kind: ThreadKind.optional(),
@@ -138,6 +150,18 @@ export const Thread = z.object({
   // False once a turn ended or the thread started to need the user since it was last opened
   // (spec 70). The server keeps it, so every window and the tray agree. Absent means seen.
   seen: z.boolean().optional(),
+  // The index of the newest item when the user last saw the thread (chat overview spec 17), so
+  // the next time it opens unread it starts at what came after. Null or absent before.
+  seenThrough: z.number().int().min(-1).nullable().optional(),
+  // What the thread changed as of its last turn's end (chat overview spec 4), for its row in the
+  // thread list. Null when it could not be measured; absent in rows from before.
+  changeCount: ChangeCount.nullable().optional(),
+  // How far the thread's latest task list is (chat overview spec 6): done and all tasks. Null or
+  // absent when it has none.
+  tasks: z
+    .object({ done: z.number().int().nonnegative(), total: z.number().int().nonnegative() })
+    .nullable()
+    .optional(),
   // The message waiting for the running turn to end; null or absent when none waits.
   queued: QueuedMessage.nullable().optional(),
   // When the thread came to its current state, so a thread that waits is ordered by when the wait
@@ -267,6 +291,8 @@ export const TextItemPayload = z.object({
   // An agent's text written by a subagent: the row id of the subagent call it belongs under
   // (agent workbench spec 44). Absent for the thread's own agent and for older items.
   parentItemId: Id.optional(),
+  // The user marked this message to find it again (chat overview spec 22). Absent: not marked.
+  marked: z.boolean().optional(),
 });
 export type TextItemPayload = z.infer<typeof TextItemPayload>;
 
@@ -294,6 +320,10 @@ export const ToolCallItemPayload = ToolFacts.partial().extend({
   // provider reported them.
   toolCount: z.number().int().nonnegative().optional(),
   answer: z.string().optional(),
+  // Pictures the result held, stored for the thread, and how many were not kept and why (chat
+  // overview spec 32, 33).
+  images: z.array(ToolStoredImage).optional(),
+  imagesOmitted: ImagesOmitted.optional(),
 });
 export type ToolCallItemPayload = z.infer<typeof ToolCallItemPayload>;
 
@@ -348,6 +378,9 @@ export const UsageItemPayload = Usage.partial().extend({
     .object({ usedTokens: z.number().int().nonnegative(), maxTokens: z.number().int().positive() })
     .optional(),
   model: z.string().min(1).optional(),
+  // What the turn changed in a chat thread's folder (chat overview spec 1, 2): null when it could
+  // not be measured, absent while it is being measured, for a step's thread and before.
+  changes: ChangeCount.nullable().optional(),
 });
 export type UsageItemPayload = z.infer<typeof UsageItemPayload>;
 
@@ -719,6 +752,8 @@ export const NotificationKind = z.enum([
   'finished',
   'briefing',
   'reminder',
+  // A plan limit crossed the warning or was reached (chat overview spec 29).
+  'limit',
 ]);
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
@@ -905,6 +940,16 @@ export type EventRecord = z.infer<typeof EventRecord>;
 // turn only, so the overview needs no thread's items: the running tool call as its payload (the
 // web names it as the working line does), how many calls the turn made, and the last line of its
 // last answer, cut at `chat.activityTextMaxLength`.
+// The plan limits a provider instance last reported, one per window, each with when it was
+// reported (chat overview spec 26).
+export const ReportedLimit = ProviderLimit.extend({ reportedAt: Timestamp });
+export type ReportedLimit = z.infer<typeof ReportedLimit>;
+export const ProviderLimits = z.object({
+  providerInstanceId: Id,
+  limits: z.array(ReportedLimit),
+});
+export type ProviderLimits = z.infer<typeof ProviderLimits>;
+
 export const ThreadActivity = z.object({
   threadId: Id,
   turnId: Id.nullable(),

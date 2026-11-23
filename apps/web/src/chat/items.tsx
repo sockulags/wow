@@ -21,6 +21,8 @@ import {
   type Turn,
 } from '@wow/contracts';
 import {
+  BookmarkIcon,
+  BookmarkXIcon,
   BrainIcon,
   ChevronRightIcon,
   FoldVerticalIcon,
@@ -63,6 +65,7 @@ import { openKey, useOpenState } from './open-state';
 import { TaskList, TaskMarker } from './task-pin';
 import { ToolCall } from './tools/index';
 import { useNow } from './tools/time';
+import type { TurnSummary } from './turn-summary';
 import { effortLabel, formatElapsed, type WorkingFacts } from './view-model';
 
 export interface StopGoingBack {
@@ -131,6 +134,14 @@ export interface ItemContext {
     { readonly messageText: string; readonly onUndo?: (() => void) | undefined } | undefined;
   // Undo on the thread's newest apply line while it is offered (parallel threads spec 9).
   readonly onUndoApply?: (() => void) | undefined;
+  // A usage row's summary of its turn, and what opens that turn's Changes (chat overview spec 1,
+  // 2).
+  readonly turnSummary?: TurnSummary | undefined;
+  readonly onTurnChanges?: (() => void) | undefined;
+  // A message the user marked, and what marks or unmarks it (chat overview spec 22); absent
+  // where messages are not marked.
+  readonly marked?: boolean | undefined;
+  readonly onMark?: (() => void) | undefined;
   // The exchanges Edit replaced with this message, oldest first ("Earlier version", spec 62).
   readonly earlier?: readonly EarlierExchange[] | undefined;
 }
@@ -340,7 +351,8 @@ function UserMessage({
         </span>
       )}
       <div className="flex items-center gap-1">
-        {(context.onEdit || context.onFork || context.onRestore) && (
+        {context.marked && <MarkSign />}
+        {(context.onEdit || context.onFork || context.onRestore || context.onMark) && (
           <div
             data-testid="message-go-back"
             className="flex gap-0.5 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
@@ -363,6 +375,7 @@ function UserMessage({
                 Restore files to here
               </Button>
             )}
+            {context.onMark && <MarkButton marked={context.marked} onMark={context.onMark} />}
           </div>
         )}
         {context.at && (
@@ -435,7 +448,9 @@ function AssistantText({
           >
             <CopyButton text={payload.text} label="Copy" />
             <CopyButton text={shownText} label="Copy text" />
+            {context.onMark && <MarkButton marked={context.marked} onMark={context.onMark} />}
           </div>
+          {context.marked && <MarkSign />}
           {context.endedAt && (
             <time
               data-testid="message-time"
@@ -502,6 +517,27 @@ function Reasoning({ payload, context }: { payload: ReasoningItemPayload; contex
       </summary>
       <div className="mt-1 border-l border-border pl-3 whitespace-pre-wrap">{payload.text}</div>
     </details>
+  );
+}
+
+// A marked message carries the sign (chat overview spec 22); the button marks and unmarks.
+function MarkSign() {
+  return (
+    <BookmarkIcon
+      role="img"
+      aria-label="Marked"
+      data-testid="message-marked"
+      className="size-3.5 fill-current text-primary"
+    />
+  );
+}
+
+function MarkButton({ marked, onMark }: { marked: boolean | undefined; onMark: () => void }) {
+  return (
+    <Button size="xs" variant="ghost" data-testid="message-mark" onClick={onMark}>
+      {marked ? <BookmarkXIcon /> : <BookmarkIcon />}
+      {marked ? 'Unmark' : 'Mark'}
+    </Button>
   );
 }
 
@@ -606,16 +642,41 @@ export function ChatQuestions({
 }
 
 function UsageRow({ payload, context }: { payload: UsageItemPayload; context: ItemContext }) {
-  if (payload.inputTokens === undefined && payload.outputTokens === undefined) return null;
-  const parts = [
-    ...(payload.model === undefined ? [] : [(context.modelLabel ?? String)(payload.model)]),
-    `${formatTokens(payload.inputTokens ?? 0)} in`,
-    `${formatTokens(payload.outputTokens ?? 0)} out`,
-    `${formatTokens(payload.cachedInputTokens ?? 0)} cached`,
-    ...(payload.costUsd === undefined ? [] : [formatCost(payload.costUsd)]),
-  ];
+  const summary = context.turnSummary;
+  const noTokens = payload.inputTokens === undefined && payload.outputTokens === undefined;
+  if (noTokens && summary === undefined) return null;
+  const parts = noTokens
+    ? []
+    : [
+        ...(payload.model === undefined ? [] : [(context.modelLabel ?? String)(payload.model)]),
+        `${formatTokens(payload.inputTokens ?? 0)} in`,
+        `${formatTokens(payload.outputTokens ?? 0)} out`,
+        `${formatTokens(payload.cachedInputTokens ?? 0)} cached`,
+        ...(payload.costUsd === undefined ? [] : [formatCost(payload.costUsd)]),
+      ];
+  const onChanges = summary?.opensChanges ? context.onTurnChanges : undefined;
   return (
     <p aria-label="Turn usage" className="text-2xs text-muted-foreground tabular-nums">
+      {summary && (
+        <span data-testid="turn-summary" className="text-foreground/80">
+          {summary.changes !== undefined &&
+            (onChanges ? (
+              <button
+                type="button"
+                data-testid="turn-summary-changes"
+                className="rounded-sm underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                onClick={onChanges}
+              >
+                {summary.changes}
+              </button>
+            ) : (
+              summary.changes
+            ))}
+          {summary.changes !== undefined && summary.ran !== undefined && ' · '}
+          {summary.ran}
+          {parts.length > 0 && ' · '}
+        </span>
+      )}
       {parts.join(' · ')}
     </p>
   );
@@ -701,7 +762,7 @@ function ItemBody({
     case 'tool_call': {
       const parsed = ToolCallItemPayload.safeParse(item.payload);
       return parsed.success ? (
-        <ToolCall payload={parsed.data} context={context} />
+        <ToolCall payload={parsed.data} context={context} threadId={item.threadId} />
       ) : (
         <Unreadable item={item} />
       );

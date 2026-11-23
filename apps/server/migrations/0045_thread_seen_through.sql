@@ -1,0 +1,1 @@
+ALTER TABLE `threads` ADD `seen_through` integer;

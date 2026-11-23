@@ -11,6 +11,15 @@ export interface ConversationHandle {
   previousMessage(): void;
   nextMessage(): void;
   toEnd(): void;
+  // Goes to the line "New since you looked" (chat overview spec 19).
+  toNew?(): void;
+  // Marks (chat overview spec 21 to 23): whether a message is marked, mark or unmark the focused
+  // one, move between marked ones, and go to a message the outline names.
+  isMarked?(itemId: string): boolean;
+  markFocused?(): void;
+  previousMark?(): void;
+  nextMark?(): void;
+  focusItem?(itemId: string): void;
   copyFocused(): unknown;
   // A chat thread's conversation (the chat view, also for a step's thread opened there) finds
   // and exports (thread work spec 1, 6, 7); the Assistant view has neither (spec 9).
@@ -101,6 +110,8 @@ interface ConversationState {
   readonly handle: ConversationHandle | undefined;
   // The reader scrolled up while output came: "New output" shows, End returns.
   readonly scrolledUp: boolean;
+  // The conversation shows "New since you looked" (chat overview spec 17).
+  readonly hasNew?: boolean;
   // The message that has the keyboard, which C copies.
   readonly focusedMessage: string | undefined;
   // Per thread, whether Ctrl+O opened or closed all reasoning; absent, the setting decides. The
@@ -275,12 +286,50 @@ export function toggleReasoning(threadId: string, openByDefault: boolean): void 
   });
 }
 
+// B marks the message that has the keyboard; the keys move between marked ones (chat overview
+// spec 22, 23).
+function marksCommands(handle: ConversationHandle, focused: string | undefined): AppCommand[] {
+  const commands: AppCommand[] = [];
+  if (focused !== undefined && handle.markFocused) {
+    const marked = handle.isMarked?.(focused) ?? false;
+    commands.push({
+      id: 'chat.markMessage',
+      title: marked ? 'Unmark message' : 'Mark message',
+      group: 'Chat',
+      keywords: ['mark', 'bookmark', 'pin', 'find again', 'outline'],
+      keybinding: 'keybindings.markMessage',
+      run: () => handle.markFocused?.(),
+    });
+  }
+  if (handle.previousMark) {
+    commands.push({
+      id: 'chat.previousMark',
+      title: 'Previous marked message',
+      group: 'Chat',
+      keywords: ['mark', 'bookmark', 'up'],
+      keybinding: 'keybindings.previousMark',
+      run: () => handle.previousMark?.(),
+    });
+  }
+  if (handle.nextMark) {
+    commands.push({
+      id: 'chat.nextMark',
+      title: 'Next marked message',
+      group: 'Chat',
+      keywords: ['mark', 'bookmark', 'down'],
+      keybinding: 'keybindings.nextMark',
+      run: () => handle.nextMark?.(),
+    });
+  }
+  return commands;
+}
+
 export function conversationCommands(
   state: Pick<
     ConversationState,
     'threadId' | 'handle' | 'scrolledUp' | 'focusedMessage' | 'goBack'
   > &
-    Partial<Pick<ConversationState, 'restore'>> & {
+    Partial<Pick<ConversationState, 'restore' | 'hasNew'>> & {
       readonly reasoningOpen: boolean;
     },
   openByDefault: boolean,
@@ -315,6 +364,19 @@ export function conversationCommands(
       keybinding: 'keybindings.toggleReasoning',
       run: () => toggleReasoning(threadId, openByDefault),
     },
+    ...marksCommands(handle, state.focusedMessage),
+    ...(state.hasNew && handle.toNew
+      ? [
+          {
+            id: 'chat.toNew',
+            title: 'Go to what is new',
+            group: 'Chat' as const,
+            keywords: ['new', 'unread', 'since', 'left off'],
+            keybinding: 'keybindings.jumpToNew' as const,
+            run: () => handle.toNew?.(),
+          },
+        ]
+      : []),
     ...(state.scrolledUp
       ? [
           {

@@ -183,7 +183,11 @@ threads          id, projectId?, cwd, branch?, providerInstanceId, providerSessi
                  main thread, with startedBy 'helper' (migration 0042_helper_threads); stateSince (0031); goBack(json:
                  GoBack)?, forkedFrom(json: {threadId, turnId})? for Edit and Fork (migration
                  0032_fork_and_edit); workingCopy(json: WorkingCopy)? a chat thread's own
-                 working copy, null for older rows (migration 0035_thread_working_copy)
+                 working copy, null for older rows (migration 0035_thread_working_copy);
+                 changeCount(json: ChangeCount)? what the thread changed as of its last turn's
+                 end (migration 0043_thread_change_count); tasks(json: {done, total})? how far
+                 its latest task list is, set by the projector as a `task_list` item is added
+                 (migration 0044_thread_tasks)
 turns            id, threadId, index, state, startedAt, endedAt, usage(json),
                  fileMark(json: FileHash[])?   -- the changed files' hashes as a chat thread's
                  turn began, for "This turn only" (migration 0029_thread_changes);
@@ -1698,7 +1702,11 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helpers` (project-scoped), `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
-  "Threads at work and a thread in the panel"), `chat.commitTimeoutMs`,
+  "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
+  `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
+  notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.limitWarnPercent` (see
+  "Plan limits"), `chat.attachTextMaxBytes`, `chat.mentionMaxChars`, `chat.mentionHostItems`
+  (project-scoped) (see "Images in the composer"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3359,6 +3367,25 @@ in `app-assistant.spec.ts` (run in the `assistant` project, since it uses that c
 
 ### Images in the composer
 
+A dropped or pasted file that is no image (chat overview spec 35) does not go to the server:
+`textFileBlock` (`chat/text-files.ts`) reads it in the browser and puts its text into the
+composer as a fenced block headed by its name, fenced past any backticks inside, up to
+`chat.attachTextMaxBytes`. A PDF, a file over the limit and one with NUL or undecodable bytes
+are refused in the composer's error line.
+
+The `@` list also offers other chat threads and backlog items not done or dropped (chat overview spec 36,
+`chat/mention-blocks.ts`: `threadMatches`, `backlogMatches`), five of each. A pick puts a fenced
+block into the text: a thread's title, project and last answer of its own agent (its
+`threadItems` read once with a subscription that closes after the first rows), or a backlog
+item's title, state, tags and body, cut at `chat.mentionMaxChars`. Nothing goes to the named
+thread.
+
+With the project setting `chat.mentionHostItems` on, the list also offers the thread's
+`hostItemReads` that hold data (chat overview spec 37, `hostMatches`). This is the one place host
+text reaches an agent, so a pick asks with `window.confirm` every time, and `hostBlock` quotes the
+item as last read, page HTML reduced to its text, in a block that says it was written by others
+and is information, not instructions. wow fetches nothing for it.
+
 Agent workbench spec 53 to 55 and 61. Contracts in `packages/contracts/src/attachments.ts`.
 
 - **Once to the server, then by id.** Ctrl+V of an image file, a dropped file, or the palette's
@@ -3456,6 +3483,16 @@ lines" and Copy (which copies all of it). A group (`group.tsx`) is closed once s
 it or its turn ended with no call running, and then reads what it did ("Read 2 files, ran 1
 command · 1 failed", `groupSummary`); before that it draws its latest call with its time.
 
+Pictures (chat overview spec 31 to 34): the Claude adapter takes the image blocks of a
+`tool_result` and the Codex adapter the image content of an MCP result and the file of an
+`imageView` item, as `toolCallCompleted.images` (`{base64, mediaType}` or `{path}`). Before the
+event is batched, the provider service has `ImageStore.keepToolImages` store each one in the
+thread's image folder, sniffed by its bytes and within `chat.imageMaxBytes`, and puts
+`storedImages` and `imagesOmitted` in its place, so no picture's bytes reach the event log. The
+tool row (`tools/row.tsx`) shows `ToolImages` (`image-chip.tsx`) under its line while closed, the
+first `chat.toolImagesShown` with "+N more", and all of them when open; the group line counts
+them. Find and the export use `picturesText` ("2 pictures").
+
 `chat/task-pin.tsx`: the latest `task_list` of the running turn, or else the last turn, is pinned
 above the composer as "3/7 · <task in progress>" (`TaskPin`), opening to the list; Ctrl+T
 (`keybindings.toggleTasks`, palette "Show task list" / "Hide task list", acting on the newest pin
@@ -3485,6 +3522,52 @@ lands on something else in the conversation (`rowActionScope`), or the row unmou
 (`StoppedLine`, from the turn's `endedAt`), which carries Resume on the last turn. The line reads
 the turn's stored state, so a turn stopped before this change gets it too: it was stopped, and no
 item, divider or marker is added to it (spec 48 is about new items, not about reading old ones).
+
+### A turn's summary (chat overview U1)
+
+A turn's usage row starts with what the turn did (chat overview spec 1 to 5). The change part is
+measured on the server: after a chat thread's end snapshot is kept, `FolderSnapshots.#measure`
+diffs the turn's start and end trees in wow's store (`diffSnapshotTrees`, `git diff-tree -r
+--numstat --no-renames`, binary files counted with no lines) and reads the thread's Changes
+(`readThreadDiff` with no mark, the header chip's measure), then dispatches the server-only
+`thread.turnChangesMeasured {threadId, turnId, changes, threadChanges}`. The engine patches
+`changes` onto the turn's usage row (`UsageItemPayload.changes`, null when the turn has no two
+snapshots, which the row then leaves out) and emits `thread.changeCounted`, which sets `Thread.changeCount`. A turn without a
+usage row gets no row: one added then would sit after a later turn's items. What the turn ran is
+not stored: `chat/turn-summary.ts` (`turnSummaries`) reads it from the turn's top-level tool rows
+in `groupSummary`'s words, with "N failed". The change part opens Changes narrowed to the turn
+(`openThreadChanges(…, turn)`): the last turn as "This turn only", an earlier one as "Turn N
+only", for which `threads.diff {turnId}` answers the files of its two snapshots as `turnPaths`
+(`FolderSnapshots.turnPaths`). Find reads the summary from `FindSource.summaries`; the Markdown
+export writes "Turn: …" at the turn's end.
+
+### Plan limits (chat overview U7)
+
+The Claude adapter turns Claude Code's `rate_limit_event` (`rate_limit_info`: `rateLimitType`,
+`utilization` as a fraction or a percent, `resetsAt` in seconds, `status`) into a `limits`
+provider event of `ProviderLimit {window: fiveHour | week | weekModel | other, label,
+usedPercent, resetsAt, state: ok | warning | reached}`. Codex sends none: the generated protocol
+has no rate-limit fields. The provider service does not batch it as a thread item; it dispatches
+the server-only `providerInstance.limitsReported` for the thread's instance. `core/
+provider-limits.ts` keeps the latest of each window with its `reportedAt` (event
+`providerInstance.limitsReported`, table `provider_limits`, migration 0046_provider_limits,
+topic `providerLimits`) and emits a `notification.sent` of kind `limit` when a window crosses
+`chat.limitWarnPercent` or is reached, once per window and reset, unless `chat.notifications` is
+off. The web shows `LimitChip` (`chat/limits.tsx`) in the composer bar from the warning on, and
+`LimitList` in Settings → Providers; a window whose reset time has passed reads "reset at …, not
+reported since". No account detail is kept with the limits.
+
+### Usage (chat overview U12)
+
+`usage.summary {from, to, timeZone}` (`usage/summary.ts`) reads every turn that ended in the
+range with its thread and its `usage` row, and sums per day (the turn's end in `timeZone`),
+project, provider instance, model (the row's, else the thread's) and whether it is the
+Assistant's: turns, input, output and cached tokens, cost, turns whose provider reported no
+cost (`unknownCost`) and turns without usage (`noUsage`). `/chat/usage` (`chat/usage-view.tsx`,
+palette "Show usage", the Usage link at the foot of the thread list) asks it for Today, 7 days,
+30 days or This month, shows the plan limits of every instance on top, a bar per day and totals
+per project, instance and model; a click on a total narrows the days to it. An unknown cost
+shows as "—" or "+ N unknown" and is never summed as zero. The view reads only.
 
 ### Subagents and background work
 
@@ -3560,6 +3643,23 @@ stored by the server; the web app only draws it.
   remounts every row so one opened by hand follows too.
 - **Times.** A user row shows its turn's start, the turn's last `assistant_text` its `endedAt`
   (`turnEndRows`), always visible (`message-time`).
+- **New since you looked** (chat overview spec 17 to 20). `thread.markSeen` stores
+  `Thread.seenThrough`, the newest item's index then (`thread.seenChanged` `through`, migration
+  0045_thread_seen_through). `useNewSince` in thread-view.tsx captures it as a chat thread opens
+  in the main view while `seen` is false, and the conversation draws the line before the first
+  entry after it, opens there once (`useStickToBottom`'s `hold` keeps the stream from pulling it
+  down) and keeps it until a turn starts or the thread is left. It is no item, so Find and the
+  export do not see it. Shift+End (`keybindings.jumpToNew`, palette "Go to what is new", offered
+  while `conversationStore.hasNew`) goes to it.
+- **Outline and marks** (chat overview spec 21 to 23). `thread.markItem {threadId, itemId,
+marked}` patches `marked` onto a user or assistant message's payload (`threadItem.patched`),
+  so the mark lives with the message: a fork copies it and an earlier version keeps it. The
+  conversation shows a bookmark sign and Mark / Unmark on hover; the handle it registers adds
+  `isMarked`, `markFocused` (B, `keybindings.markMessage`), `previousMark` / `nextMark`
+  (Alt+PageUp / Alt+PageDown) and `focusItem`. The panel tab `outline` (`chat/outline.tsx`,
+  Details → Show outline, `keybindings.threadOutline`) lists `outlineRows`: each user message of
+  a turn Edit did not replace, with its turn's summary, and the marked answers; a row calls
+  `focusItem` on the conversation on screen.
 - **Scroll and keys.** `useStickToBottom` in thread-view.tsx follows the stream; once the user
   scrolled up, new items show the "New output" pill, which or End (`keybindings.conversationEnd`,
   palette "Go to the newest output" while it shows) goes back down and follows again. End is a
@@ -4227,6 +4327,38 @@ bell", "watch the tests", "run the tests once" and "plan the work"; its Codex de
 with a note without a message and goes on until stopped.
 
 ### Thread list, unread and chat notifications
+
+A row's second line (`chat/thread-row.ts`, chat overview spec 6 to 8) is, after "Helper of …"
+and the workflow's name where they apply: what the thread does or waits for (the decision
+queue's title for the thread, "Waits for you", "Running <the running call>" from the
+`threadActivity` topic, or "Working"), its task progress ("3/7" from `Thread.tasks` while tasks
+are open), its changes ("+42 −7" from `Thread.changeCount`), its branch when it has its own
+working copy or else its project or folder, and when it was last active. `chat.threadRowDetail`
+names the parts shown; the order stays. Each part is a `data-part` span, and the whole line is
+the row's hover title. Nothing counts on a clock of the list's own.
+
+The groups come from `chat/thread-sections.ts` (chat overview spec 9, 10, 12). By state
+(`chat.threadListGroupBy` `state`), Needs you and Working are flat, and Idle and Done hold their
+pinned threads first and then Today, Yesterday, This week and Older by `updatedAt` in the
+calendar's zone, the week starting on the calendar's first day; the day is read from the
+browser's clock, which only places rows and decides no state. By project, each project is a
+group ordered by name, "Other folders" last, with pinned threads, then state, then last activity.
+Every group has a key (`needs`, `idle.older`, `project:<id>`); a heading is a button that folds
+its group, writing `chat.threadListFolded` (`done` by default). While the filter has text no
+group is folded, and a folded group still lists the thread on screen. On every scheduler tick
+`core/archive-by-age.ts` archives, with the ordinary `thread.setArchived`, each chat thread that
+is done, not pinned, not a step's and not active for `chat.doneArchiveDays` days (0: never).
+The palette has "Group threads by state" and "Group threads by project".
+
+Each row is the trigger of a shadcn `ContextMenu` (`chat/row-menu.tsx`, chat overview spec 13 to 16) with Open, Open in panel, the row's actions from `chat/row-actions.ts` (`rowMenuActions`:
+pin, unpin, mark done, reopen, archive, unarchive, each where `refusal` finds no reason against
+it), Rename and Mark unread; Pin and Archive also sit at the row's right on hover or focus, out of
+the tab order. Ctrl+click and Space pick or unpick a row, Shift+click and Shift+arrows pick from
+the anchor (`threadListStore.picked`, `anchor`), Escape clears. While rows are picked, the
+`PickedBar` over the list offers the actions at least one of them takes; `runBulk` sends one
+ordinary command per thread that takes it, says what it skipped and why ("Skipped 1 is
+working."), and an archive offers Undo, which unarchives the same threads. There is no bulk
+command on the server.
 
 The list has a filter field on top (`keybindings.threadFilter`, Ctrl+Shift+F anywhere, and
 `keybindings.threadFilterInList`, `/` while the list has the keyboard) and, when threads sit in

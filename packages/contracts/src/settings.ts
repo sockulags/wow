@@ -17,6 +17,10 @@ import {
   type WorkflowTemplateStep,
 } from './workflow.js';
 
+// The parts of a thread row's second line (chat overview spec 6, 7), in the order shown.
+export const ThreadRowPart = z.enum(['activity', 'tasks', 'changes', 'place', 'time']);
+export type ThreadRowPart = z.infer<typeof ThreadRowPart>;
+
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
 
@@ -625,6 +629,95 @@ export const settingsRegistry = {
       "How many characters of a helper's answer wow sends back to the thread that started it. A longer answer is cut, and the agent reads the rest with read_helper.",
     default: 20_000,
     scope: 'global',
+  }),
+  'chat.threadRowDetail': defineSetting({
+    schema: z.array(ThreadRowPart),
+    group: 'chat',
+    label: 'Second line of a thread in the list',
+    description:
+      'What a row of the thread list says under its title, in this order: what the thread does or waits for, how far its task list is, what it changed, its branch or project, and when it was last active.',
+    default: [...ThreadRowPart.options],
+    scope: 'global',
+    options: {
+      activity: { label: 'What it does or waits for' },
+      tasks: { label: 'Task progress' },
+      changes: { label: 'What it changed' },
+      place: { label: 'Branch or project' },
+      time: { label: 'When it was last active' },
+    },
+  }),
+  'chat.threadListGroupBy': defineSetting({
+    schema: z.enum(['state', 'project']),
+    group: 'chat',
+    label: 'Group the thread list by',
+    description:
+      'State: Needs you, Working, Idle and Done, with Idle and Done grouped by when each thread was last active. Project: one group per project.',
+    default: 'state',
+    scope: 'global',
+    options: { state: { label: 'State' }, project: { label: 'Project' } },
+  }),
+  'chat.threadListFolded': defineSetting({
+    schema: z.array(z.string().min(1)),
+    group: 'chat',
+    label: 'Folded groups of the thread list',
+    description:
+      'The groups of the thread list that are folded, kept when a group is folded or unfolded.',
+    default: ['done'],
+    scope: 'global',
+  }),
+  'chat.doneArchiveDays': defineSetting({
+    schema: z.number().int().min(0).max(365),
+    group: 'chat',
+    label: 'Archive done threads after (days)',
+    description:
+      'A thread marked done and not active for this many days is archived; the filter and the palette still find it. Pinned threads and workflow steps are never archived this way. 0 never archives.',
+    default: 14,
+    scope: 'global',
+  }),
+  'chat.toolImagesShown': defineSetting({
+    schema: z.number().int().min(1).max(20),
+    group: 'chat',
+    label: 'Pictures shown on a tool row',
+    description:
+      'How many pictures of a tool result show as thumbnails under its row; the rest are behind "+N more", which opens the row.',
+    default: 4,
+    scope: 'global',
+  }),
+  'chat.limitWarnPercent': defineSetting({
+    schema: z.number().int().min(1).max(100),
+    group: 'chat',
+    label: 'Warn about a plan limit at (%)',
+    description:
+      "From how much of a plan limit window used the composer shows it in amber and wow tells you once per window. Only what the provider reports counts; Claude Code reports a claude.ai plan's limits.",
+    default: 80,
+    scope: 'global',
+  }),
+  'chat.attachTextMaxBytes': defineSetting({
+    schema: z.number().int().min(1_000).max(5_000_000),
+    group: 'chat',
+    label: 'Largest text file in a message (bytes)',
+    description:
+      'A text file dropped or pasted on the composer goes into the message as a quoted block, up to this size; a larger one is refused with the reason.',
+    default: 200_000,
+    scope: 'global',
+  }),
+  'chat.mentionMaxChars': defineSetting({
+    schema: z.number().int().min(500).max(200_000),
+    group: 'chat',
+    label: 'Longest thread or item put in a message (characters)',
+    description:
+      "How much of another thread's last answer or a backlog item's text `@` puts into a message; longer text is cut with a line saying so.",
+    default: 20_000,
+    scope: 'global',
+  }),
+  'chat.mentionHostItems': defineSetting({
+    schema: z.boolean(),
+    group: 'chat',
+    label: 'Issues and tickets in @',
+    description:
+      'Offer the issues, pull requests, tickets and pages wow has read for a thread in its @ list. Their text is written by others; wow asks before each message whether to send it to the agent as quoted text.',
+    default: false,
+    scope: 'project',
   }),
   'chat.activityTextMaxLength': defineSetting({
     schema: z.number().int().min(20).max(5000),
@@ -2477,6 +2570,31 @@ export const settingsRegistry = {
     'Chat: back to the newest output',
     'Scroll the conversation back to the bottom after you scrolled up, so it follows new output again.',
     'End',
+  ),
+  'keybindings.threadOutline': keybinding(
+    'Chat: show the outline',
+    "Open the thread's outline in the side panel: your messages, what each turn did and the messages you marked.",
+    'Mod+Shift+U',
+  ),
+  'keybindings.markMessage': keybinding(
+    'Chat: mark the focused message',
+    'Mark the message that has the keyboard to find it again in the outline, or take its mark off.',
+    'B',
+  ),
+  'keybindings.previousMark': keybinding(
+    'Chat: previous marked message',
+    'Go to the marked message before the one that has the keyboard.',
+    'Alt+PageUp',
+  ),
+  'keybindings.nextMark': keybinding(
+    'Chat: next marked message',
+    'Go to the marked message after the one that has the keyboard.',
+    'Alt+PageDown',
+  ),
+  'keybindings.jumpToNew': keybinding(
+    'Chat: go to what is new',
+    'Go to the line "New since you looked" in a thread you opened with output you had not read.',
+    'Shift+End',
   ),
   'keybindings.nextBoldThread': keybinding(
     'Chat: next bold thread',

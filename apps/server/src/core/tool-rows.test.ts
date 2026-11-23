@@ -164,6 +164,11 @@ const list = (done: number): ProviderEvent => ({
   })),
 });
 
+const tasks = () =>
+  (snapshot(database.db, { topic: 'threads' }) as { id: string; tasks?: unknown }[]).find(
+    (row) => row.id === 't1',
+  )?.tasks;
+
 describe('task list updates (spec 31)', () => {
   it('stores every update as an item of its own, stamped with its time', () => {
     events(list(0));
@@ -184,6 +189,14 @@ describe('task list updates (spec 31)', () => {
       at(2),
       at(2),
     ]);
+  });
+
+  it("keeps the latest list's progress on the thread for its row (chat overview spec 6)", () => {
+    expect(tasks()).toBeNull();
+    events(list(1));
+    expect(tasks()).toEqual({ done: 1, total: 3 });
+    events(list(3));
+    expect(tasks()).toEqual({ done: 3, total: 3 });
   });
 
   it('adds nothing for a list equal to the last one, in one batch or the next', () => {

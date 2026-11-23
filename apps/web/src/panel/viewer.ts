@@ -8,6 +8,7 @@ import {
   type PanelTabs,
   type ViewerChanges,
   type ViewerTools,
+  type ViewerOutline,
   type ViewerThread,
   type ViewerFile,
   type ViewerHostItem,
@@ -60,6 +61,7 @@ export const hostTabId = (host: Pick<ViewerHostItem, 'threadId' | 'item'>): stri
   `host:${host.threadId}:${hostItemKey(host.item)}`;
 export const changesTabId = (threadId: string): string => `changes:${threadId}`;
 export const toolsTabId = (threadId: string): string => `tools:${threadId}`;
+export const outlineTabId = (threadId: string): string => `outline:${threadId}`;
 export const threadTabId = (threadId: string): string => `thread:${threadId}`;
 
 // The short name a tab shows: the file's own name. Host items name themselves in tabs.tsx.
@@ -75,9 +77,11 @@ export const tabName = (tab: PanelTab): string =>
         ? 'Changes'
         : tab.kind === 'tools'
           ? 'Tools'
-          : tab.kind === 'thread'
-            ? tab.thread.title
-            : tab.host.item.id;
+          : tab.kind === 'outline'
+            ? 'Outline'
+            : tab.kind === 'thread'
+              ? tab.thread.title
+              : tab.host.item.id;
 
 // A route whose last tab closes leaves no entry behind.
 function updateTabs(layout: LayoutStore, route: string, change: (tabs: PanelTabs) => PanelTabs) {
@@ -170,6 +174,10 @@ export function openChanges(context: ViewerContext, changes: ViewerChanges): voi
 // What a chat thread's session can use (thread work spec 37), in a tab of its view.
 export function openTools(context: ViewerContext, tools: ViewerTools): void {
   openTab(context, tools.from, { kind: 'tools', id: toolsTabId(tools.threadId), tools });
+}
+
+export function openOutline(context: ViewerContext, outline: ViewerOutline): void {
+  openTab(context, outline.from, { kind: 'outline', id: outlineTabId(outline.threadId), outline });
 }
 
 // Another thread beside the view (parallel threads spec 15, 16), one tab per thread per view.

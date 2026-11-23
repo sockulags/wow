@@ -213,6 +213,7 @@ const launch = () =>
             return [
               { type: 'session', threadId, providerSessionId: `mock-${threadId}` },
               { type: 'textDelta', threadId, itemId: `${threadId}-a`, delta: 'Done' },
+              { type: 'usage', threadId, inputTokens: 10, outputTokens: 2, cachedInputTokens: 0 },
               ...(/wait/i.test(command.prompt)
                 ? []
                 : [{ type: 'turnCompleted' as const, threadId }]),
@@ -439,6 +440,62 @@ const unreachableTrees = () =>
   git(storeOf(), 'fsck', '--unreachable', '--no-reflogs', '--no-progress')
     .split('\n')
     .filter((line) => line.startsWith('unreachable tree'));
+
+const usageRows = (id = 't1') =>
+  (snapshot(server.database.db, { topic: 'threadItems', threadId: id }) as ThreadItem[]).filter(
+    (item) => item.kind === 'usage',
+  );
+const threadRow = (id = 't1') =>
+  server.database.db.select().from(threads).where(eq(threads.id, id)).get();
+
+describe("a turn's changes (chat overview spec 1 to 4)", () => {
+  it("puts each turn's own changes on its usage row and the thread's on the thread", async () => {
+    await twoTurns();
+    expect(usageRows().map((item) => (item.payload as { changes?: unknown }).changes)).toEqual([
+      { files: 1, added: 1, removed: 0 },
+      { files: 2, added: 1, removed: 1 },
+    ]);
+    expect(threadRow()?.changeCount).toEqual({ files: 3, added: 2, removed: 1 });
+  });
+
+  it('counts a turn that changed nothing as nothing', async () => {
+    agent = () => undefined;
+    send('Only look around');
+    await turnEnds(0);
+    expect((usageRows()[0]?.payload as { changes?: unknown } | undefined)?.changes).toEqual({
+      files: 0,
+      added: 0,
+      removed: 0,
+    });
+    expect(threadRow()?.changeCount).toEqual({ files: 0, added: 0, removed: 0 });
+  });
+
+  it('lists the files of an earlier turn from its snapshots for its Changes', async () => {
+    await twoTurns();
+    const [first, second] = turnRows();
+    const earlier = resultOf(await rpc('threads.diff', { threadId: 't1', turnId: first?.id })) as {
+      turnPaths: string[] | null;
+    };
+    expect(earlier.turnPaths).toEqual(['src/bell.ts']);
+    const last = resultOf(await rpc('threads.diff', { threadId: 't1', turnId: second?.id })) as {
+      turnPaths: string[] | null;
+    };
+    expect(last.turnPaths?.toSorted()).toEqual(['docs/notes.md', 'docs/old.md']);
+  });
+
+  it('says it could not measure a turn without snapshots', async () => {
+    dispatch({
+      type: 'setting.set',
+      key: 'chat.snapshots',
+      scope: 'project:chat',
+      value: false,
+    });
+    send('Make the bell ring twice: edit the bell');
+    await turnEnds(0);
+    expect((usageRows()[0]?.payload as { changes?: unknown } | undefined)?.changes).toBeNull();
+    expect(threadRow()?.changeCount).toEqual({ files: 1, added: 1, removed: 0 });
+  });
+});
 
 describe('Restore files to here (spec 20, 22, 24, 25)', () => {
   it('lists what changes, puts the files back to the first snapshot and undoes it', async () => {

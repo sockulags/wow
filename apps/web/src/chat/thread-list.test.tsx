@@ -4,6 +4,7 @@ import {
   createSettingsStore,
   type Connection,
   type ConnectionState,
+  settingValue,
 } from '@wow/client-runtime';
 import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -254,5 +255,299 @@ describe('the thread list (spec 66, 69, 70)', () => {
     expect(await screen.findByRole('option', { name: /Untitled musings/ })).toBeTruthy();
     expect(screen.queryByRole('option', { name: /Kettle timer/ })).toBeNull();
     expect(request).toHaveBeenCalledWith('threads.search', { query: 'teapot' });
+  });
+});
+
+const detail = (title: string) => {
+  const row = screen
+    .getAllByTestId('thread-row-title')
+    .find((element) => element.textContent === title)
+    ?.closest('a');
+  const line = row ? within(row).getByTestId('thread-row-detail') : undefined;
+  return [...(line?.querySelectorAll('[data-part]') ?? [])].map((part) => [
+    part.getAttribute('data-part'),
+    part.textContent?.replace(/^ · /, ''),
+  ]);
+};
+
+describe('rows that say where a thread stands (chat overview spec 6, 7)', () => {
+  const working = thread('t1', 'Ring the bell', {
+    state: 'working',
+    projectId: 'p-tea',
+    branch: 'wow/ring-the-bell-t1',
+    workingCopy: {
+      path: '/work/copies/tea-t1',
+      state: 'ready',
+      startSha: 'a'.repeat(40),
+      defaultBranch: null,
+      note: null,
+      unpushed: null,
+      error: null,
+      branch: 'wow/ring-the-bell-t1',
+    },
+    tasks: { done: 3, total: 7 },
+    changeCount: { files: 5, added: 42, removed: 7 },
+  });
+  const waiting = thread('t2', 'Clean the build', { state: 'needs_you', projectId: 'p-tea' });
+  const topics = () => ({
+    projects: [project('p-tea', 'Tea')],
+    threads: [working, waiting],
+    threadActivity: [
+      {
+        threadId: 't1',
+        turnId: 't1:turn:0',
+        turnState: 'running',
+        startedAt: '2026-11-02T08:00:00.000Z',
+        endedAt: null,
+        toolCalls: 4,
+        runningTool: {
+          name: 'Bash',
+          input: {},
+          output: '',
+          status: 'running',
+          kind: 'command',
+          command: 'pnpm test',
+        },
+        lastText: null,
+      },
+    ],
+    decisions: [
+      {
+        id: 'approval:a1',
+        kind: 'approval',
+        at: '2026-11-02T08:00:00.000Z',
+        title: 'Wants to run rm -rf build',
+        where: 'Tea',
+        path: '/chat/t2',
+        threadId: 't2',
+        runId: null,
+        proposalId: null,
+        approvalId: 'a1',
+        questionId: null,
+        cardId: null,
+        holdsTurn: true,
+        cardStart: null,
+        fixed: [],
+        brief: null,
+        briefPending: false,
+      },
+    ],
+  });
+
+  it('says what it runs or waits for, its tasks, its changes, its branch and when', async () => {
+    const { runtime } = fake(topics());
+    await renderApp('/chat', runtime);
+    await listed();
+    expect(detail('Ring the bell')).toEqual([
+      ['activity', 'Running pnpm test'],
+      ['tasks', '3/7'],
+      ['changes', '+42 −7'],
+      ['place', 'wow/ring-the-bell-t1'],
+      ['time', expect.any(String)],
+    ]);
+    expect(detail('Clean the build')).toEqual([
+      ['activity', 'Wants to run rm -rf build'],
+      ['place', 'Tea'],
+      ['time', expect.any(String)],
+    ]);
+  });
+
+  it('leaves out the parts the setting turns off', async () => {
+    const { runtime } = fake(topics());
+    await renderApp('/chat', {
+      ...runtime,
+      settings: createSettingsStore(
+        createMemorySettingsSource(undefined, {
+          'providers.offerSetup': false,
+          'chat.threadRowDetail': ['activity', 'place'],
+        }),
+      ),
+    });
+    await listed();
+    expect(detail('Ring the bell')).toEqual([
+      ['activity', 'Running pnpm test'],
+      ['place', 'wow/ring-the-bell-t1'],
+    ]);
+  });
+});
+
+const settingsWith = (values: Record<string, unknown>) =>
+  createSettingsStore(
+    createMemorySettingsSource(undefined, {
+      'providers.offerSetup': false,
+      'calendar.zone': 'Europe/Stockholm',
+      'calendar.firstDayOfWeek': 'monday',
+      ...values,
+    }),
+  );
+const groupTitles = (name: string) =>
+  within(screen.getByRole('region', { name }))
+    .getAllByTestId('thread-group-toggle')
+    .map((toggle) => toggle.textContent);
+
+describe('a list that stays tidy (chat overview spec 9, 10, 12)', () => {
+  // A Wednesday at noon in Stockholm; the week starts on Monday.
+  const noon = new Date('2026-11-18T11:00:00.000Z');
+  const idle = [
+    thread('t1', 'Earlier today', { updatedAt: '2026-11-18T07:00:00.000Z' }),
+    thread('t2', 'Yesterday evening', { updatedAt: '2026-11-17T20:00:00.000Z' }),
+    thread('t3', 'Monday morning', { updatedAt: '2026-11-16T06:00:00.000Z' }),
+    thread('t4', 'Last month', { updatedAt: '2026-10-02T08:00:00.000Z' }),
+    thread('t5', 'Pinned long ago', { pinned: true, updatedAt: '2026-09-02T08:00:00.000Z' }),
+  ];
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('groups Idle by when each thread was last active, pinned threads first', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(noon);
+    const { runtime } = fake({ projects: [], threads: idle });
+    await renderApp('/chat', { ...runtime, settings: settingsWith({}) });
+    await listed();
+    expect(groupTitles('Idle')).toEqual(['Idle5', 'Today1', 'Yesterday1', 'This week1', 'Older1']);
+    expect(rowTitles()).toEqual([
+      'Pinned long ago',
+      'Earlier today',
+      'Yesterday evening',
+      'Monday morning',
+      'Last month',
+    ]);
+  });
+
+  it('folds a group and keeps it folded in the setting; Done starts folded', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(noon);
+    const settings = settingsWith({});
+    const { runtime } = fake({
+      projects: [],
+      threads: [...idle, thread('t6', 'Put away', { state: 'done' })],
+    });
+    await renderApp('/chat', { ...runtime, settings });
+    const user = userEvent.setup();
+    await listed();
+    expect(rowTitles()).not.toContain('Put away');
+    const older = within(screen.getByRole('region', { name: 'Older' })).getByRole('button', {
+      name: /Older/,
+    });
+    await user.click(older);
+    expect(older.getAttribute('aria-expanded')).toBe('false');
+    expect(rowTitles()).not.toContain('Last month');
+    expect(settingValue(settings.getState().values, 'chat.threadListFolded')).toEqual([
+      'done',
+      'idle.older',
+    ]);
+  });
+
+  it('groups by project, each project ordered by state', async () => {
+    const { runtime } = fake({
+      projects: [project('p-tea', 'Tea'), project('p-garden', 'Garden')],
+      threads: [
+        thread('t1', 'Steep', { projectId: 'p-tea', updatedAt: '2026-11-03T08:00:00.000Z' }),
+        thread('t2', 'Ask about water', { projectId: 'p-tea', state: 'needs_you' }),
+        thread('t3', 'Water the plants', { projectId: 'p-garden' }),
+        thread('t4', 'Loose folder', { cwd: '/work/loose' }),
+      ],
+    });
+    await renderApp('/chat', {
+      ...runtime,
+      settings: settingsWith({ 'chat.threadListGroupBy': 'project' }),
+    });
+    await listed();
+    expect(
+      screen.getAllByTestId('thread-group-toggle').map((toggle) => toggle.textContent),
+    ).toEqual(['Garden1', 'Tea2', 'Other folders1']);
+    expect(rowTitles()).toEqual(['Water the plants', 'Ask about water', 'Steep', 'Loose folder']);
+  });
+});
+
+const rowLink = (title: string) => {
+  const element = screen
+    .getAllByTestId('thread-row-title')
+    .find((candidate) => candidate.textContent === title)
+    ?.closest('a');
+  if (!element) throw new Error(`no row ${title}`);
+  return element;
+};
+
+describe('actions on the row and on several rows (chat overview spec 13 to 16)', () => {
+  it('has a menu on right-click whose Pin pins the thread', async () => {
+    const { runtime, request } = fake({ projects: [], threads: [thread('t1', 'Kettle timer')] });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    await listed();
+    await user.pointer({ keys: '[MouseRight]', target: rowLink('Kettle timer') });
+    const menu = await screen.findByTestId('thread-row-menu');
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Open', 'Open in panel', 'Pin', 'Mark done', 'Archive', 'Rename', 'Mark unread']);
+    await user.click(within(menu).getByRole('menuitem', { name: 'Pin' }));
+    expect(sentCommands(request)).toContainEqual({
+      type: 'thread.setPinned',
+      threadId: 't1',
+      pinned: true,
+    });
+  });
+
+  it('archives two picked rows together and brings both back with Undo', async () => {
+    const { runtime, request } = fake({
+      projects: [],
+      threads: [thread('t1', 'Kettle timer'), thread('t2', 'Tea list'), thread('t3', 'Bell')],
+    });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    await listed();
+    await user.keyboard('{Control>}');
+    await user.click(rowLink('Kettle timer'));
+    await user.click(rowLink('Tea list'));
+    await user.keyboard('{/Control}');
+    const bar = screen.getByTestId('picked-bar');
+    expect(bar.textContent).toContain('2 picked');
+    await user.click(within(bar).getByRole('button', { name: 'Archive' }));
+    expect(
+      sentCommands(request).filter((command) => command.type === 'thread.setArchived'),
+    ).toEqual([
+      { type: 'thread.setArchived', threadId: 't1', archived: true },
+      { type: 'thread.setArchived', threadId: 't2', archived: true },
+    ]);
+    expect(screen.queryByTestId('picked-bar')).toBeNull();
+    await user.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(
+      sentCommands(request).filter((command) => command.type === 'thread.setArchived'),
+    ).toEqual([
+      { type: 'thread.setArchived', threadId: 't1', archived: true },
+      { type: 'thread.setArchived', threadId: 't2', archived: true },
+      { type: 'thread.setArchived', threadId: 't1', archived: false },
+      { type: 'thread.setArchived', threadId: 't2', archived: false },
+    ]);
+  });
+
+  it('skips a working thread for Mark done and says why; Escape clears the pick', async () => {
+    const { runtime, request } = fake({
+      projects: [],
+      threads: [thread('t1', 'Kettle timer'), thread('t2', 'Tea list', { state: 'working' })],
+    });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    await listed();
+    // Working comes before Idle, so the working thread is the first row.
+    rowLink('Tea list').focus();
+    await user.keyboard('{Shift>}{ArrowDown}{/Shift}');
+    expect(screen.getByTestId('picked-bar').textContent).toContain('2 picked');
+    await user.click(
+      within(screen.getByTestId('picked-bar')).getByRole('button', { name: 'Mark done' }),
+    );
+    expect(sentCommands(request).filter((command) => command.type === 'thread.setDone')).toEqual([
+      { type: 'thread.setDone', threadId: 't1', done: true },
+    ]);
+    expect(await screen.findByText('Skipped 1 is working.')).toBeTruthy();
+    rowLink('Tea list').focus();
+    await user.keyboard(' ');
+    expect(screen.getByTestId('picked-bar').textContent).toContain('1 picked');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByTestId('picked-bar')).toBeNull();
   });
 });

@@ -1,3 +1,18 @@
+import type { BacklogItem, HostItemRead, Thread, ThreadItem } from '@wow/contracts';
+import {
+  backlogBlock,
+  backlogMatches,
+  backlogValue,
+  hostBlock,
+  hostMatches,
+  hostTitle,
+  hostValue,
+  lastAnswer,
+  threadBlock,
+  threadMatches,
+  threadValue,
+} from './mention-blocks';
+import { textFileBlock } from './text-files';
 import {
   ambiguousOwnSkill,
   ownSkillFolder,
@@ -154,6 +169,9 @@ const listPlacement = (below: boolean) => (below ? 'top-full mt-1' : 'bottom-ful
 function FilePicker({
   id,
   matches,
+  threads = [],
+  backlog = [],
+  hosts = [],
   note,
   active,
   below,
@@ -163,6 +181,9 @@ function FilePicker({
   id: string;
   below: boolean;
   matches: readonly string[];
+  threads?: readonly Thread[];
+  backlog?: readonly BacklogItem[];
+  hosts?: readonly HostItemRead[];
   note: string | undefined;
   active: string | undefined;
   onPick(path: string): void;
@@ -188,6 +209,56 @@ function FilePicker({
                   onSelect={() => onPick(path)}
                 >
                   <FileRow path={path} />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {threads.length > 0 && (
+            <CommandGroup heading="Threads">
+              {threads.map((thread) => (
+                <CommandItem
+                  key={thread.id}
+                  value={threadValue(thread.id)}
+                  data-testid="mention-thread"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onPointerMove={() => onHover(threadValue(thread.id))}
+                  onSelect={() => onPick(threadValue(thread.id))}
+                >
+                  <span className="truncate">{thread.title}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {backlog.length > 0 && (
+            <CommandGroup heading="Backlog">
+              {backlog.map((item) => (
+                <CommandItem
+                  key={item.id}
+                  value={backlogValue(item.id)}
+                  data-testid="mention-backlog"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onPointerMove={() => onHover(backlogValue(item.id))}
+                  onSelect={() => onPick(backlogValue(item.id))}
+                >
+                  <span className="truncate">{item.title}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {hosts.length > 0 && (
+            <CommandGroup heading="Issues and tickets">
+              {hosts.map((read) => (
+                <CommandItem
+                  key={read.id}
+                  value={hostValue(read.id)}
+                  data-testid="mention-host"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onPointerMove={() => onHover(hostValue(read.id))}
+                  onSelect={() => onPick(hostValue(read.id))}
+                >
+                  <span className="truncate">
+                    {read.item.id} · {hostTitle(read)}
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -496,6 +567,7 @@ export function Composer({
   const fileTrigger = useSetting('chat.fileTrigger');
   const matchesShown = useSetting('viewer.fileMatchesShown');
   const imageMaxBytes = useSetting('chat.imageMaxBytes');
+  const textMaxBytes = useSetting('chat.attachTextMaxBytes');
   const takesImages = imageTarget !== undefined && connection !== undefined;
   const palette = useStore(paletteCommandsStore, (state) => state.commands);
   const takesSkills = providerKind !== undefined;
@@ -532,8 +604,35 @@ export function Composer({
       ? filterFiles(fileList.files, fileQuery.query, matchesShown)
       : [];
   const fileNote = fileQuery ? fileListNote(fileList, fileMatches.length, matchesShown) : undefined;
-  const fileIndex = Math.min(fileActive, Math.max(0, fileMatches.length - 1));
-  const activeFile = fileMatches[fileIndex];
+  // Other threads and backlog items in the same list (chat overview spec 36), in a chat thread's
+  // own composer only.
+  const allThreads = useTopic('threads') ?? [];
+  const backlog = useTopic('backlogItems') ?? [];
+  const projectsList = useTopic('projects') ?? [];
+  const mentionMax = useSetting('chat.mentionMaxChars');
+  const threadPicks =
+    fileQuery && imageTarget
+      ? threadMatches(allThreads, fileQuery.query, imageTarget.threadId, 5)
+      : [];
+  const backlogPicks = fileQuery && imageTarget ? backlogMatches(backlog, fileQuery.query, 5) : [];
+  // Issues and tickets wow read for this thread, only with the project's setting on (chat
+  // overview spec 37).
+  const ownProject = allThreads.find((thread) => thread.id === imageTarget?.threadId)?.projectId;
+  const hostOn =
+    (useTopic('settings') ?? []).find(
+      (row) => row.key === 'chat.mentionHostItems' && row.scope === `project:${ownProject ?? ''}`,
+    )?.value === true;
+  const hostReads = useTopic('hostItemReads', imageTarget?.threadId) ?? [];
+  const hostPicks =
+    fileQuery && imageTarget && hostOn ? hostMatches(hostReads, fileQuery.query, 5) : [];
+  const listValues = [
+    ...fileMatches,
+    ...threadPicks.map((thread) => threadValue(thread.id)),
+    ...backlogPicks.map((item) => backlogValue(item.id)),
+    ...hostPicks.map((read) => hostValue(read.id)),
+  ];
+  const fileIndex = Math.min(fileActive, Math.max(0, listValues.length - 1));
+  const activeFile = listValues[fileIndex];
 
   // Another thread on screen: its own draft comes in, and nothing of this one goes with it.
   useLayoutEffect(() => {
@@ -580,7 +679,7 @@ export function Composer({
     filePickerId,
     activeValue,
     picks.length,
-    fileMatches.length,
+    listValues.length,
   ]);
 
   const update = (value: string, at: number, opened = openAt, fileOpened = fileOpenAt) => {
@@ -652,8 +751,51 @@ export function Composer({
     textarea.current?.setSelectionRange(at, at);
   };
 
+  // A picked thread or backlog item puts its block into the text (chat overview spec 36).
+  const pickMention = (value: string) => {
+    if (!fileQuery || !connection) return;
+    const next = withoutQuery(text, fileQuery, caret);
+    const put = (block: string) => {
+      const withBlock = `${next.text}${next.text === '' ? '' : '\n\n'}${block}`;
+      pendingCaret.current = withBlock.length;
+      update(withBlock, withBlock.length, undefined, undefined);
+      textarea.current?.focus();
+    };
+    const host = hostReads.find((candidate) => hostValue(candidate.id) === value);
+    if (host) {
+      // Text from a host is written by others: it goes in only on a yes, each time.
+      const yes = window.confirm(
+        `The text of ${host.item.id} was written on ${host.hostName} by others. Send it to the agent as quoted text?`,
+      );
+      if (yes) put(hostBlock(host, mentionMax));
+      return;
+    }
+    const item = backlog.find((candidate) => backlogValue(candidate.id) === value);
+    if (item) {
+      put(backlogBlock(item, mentionMax));
+      return;
+    }
+    const thread = allThreads.find((candidate) => threadValue(candidate.id) === value);
+    if (!thread) return;
+    const project = projectsList.find((candidate) => candidate.id === thread.projectId)?.name;
+    // The thread's items are read once, for its last answer.
+    let stop: (() => void) | undefined = undefined;
+    let done = false;
+    stop = connection.subscribe('threadItems', { threadId: thread.id }, (rows) => {
+      if (done) return;
+      done = true;
+      put(threadBlock(thread, project, lastAnswer(rows as ThreadItem[]), mentionMax));
+      queueMicrotask(() => stop?.());
+    });
+    if (done) stop();
+  };
+
   // A picked file is a chip; the typed `@word` goes (spec 56).
   const pickFile = (path: string) => {
+    if (path.startsWith('thread:') || path.startsWith('backlog:') || path.startsWith('host:')) {
+      pickMention(path);
+      return;
+    }
     if (!fileQuery) return;
     const next = withoutQuery(text, fileQuery, caret);
     pendingCaret.current = next.caret;
@@ -716,10 +858,27 @@ export function Composer({
 
   // Each image goes to the server once, when it is added (agent workbench Interface); a refused
   // one says why and is not added (spec 54).
+  // A file that is no image goes into the text as a quoted block named by the file (chat
+  // overview spec 35), read here and never written anywhere; a PDF or a binary file is refused.
+  const addTextFile = (file: File) => {
+    void textFileBlock(file, textMaxBytes).then((block) => {
+      if (typeof block !== 'string') {
+        setError(block.refused);
+        return;
+      }
+      const value = `${text}${text === '' ? '' : '\n\n'}${block}`;
+      update(value, value.length);
+      textarea.current?.focus();
+    });
+  };
   const addImages = (added: readonly File[]) => {
     if (!imageTarget || !connection || disabled) return;
     setError(undefined);
     for (const file of added) {
+      if (!file.type.startsWith('image/')) {
+        addTextFile(file);
+        continue;
+      }
       const refused = localImageRefusal(file, imageMaxBytes);
       if (refused !== undefined) {
         setError(refused);
@@ -875,7 +1034,7 @@ export function Composer({
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         const step = event.key === 'ArrowDown' ? 1 : -1;
-        const count = Math.max(1, fileMatches.length);
+        const count = Math.max(1, listValues.length);
         setFileActive((fileIndex + step + count) % count);
         return;
       }
@@ -1077,10 +1236,13 @@ export function Composer({
             id={filePickerId}
             below={listsBelow}
             matches={fileMatches}
+            threads={threadPicks}
+            backlog={backlogPicks}
+            hosts={hostPicks}
             note={fileNote}
             active={activeFile}
             onPick={pickFile}
-            onHover={(path) => setFileActive(Math.max(0, fileMatches.indexOf(path)))}
+            onHover={(path) => setFileActive(Math.max(0, listValues.indexOf(path)))}
           />
         )}
         {files.length > 0 && (

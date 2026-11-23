@@ -57,6 +57,9 @@ interface ThreadChangesState {
   readonly threadId: string | undefined;
   readonly path: string | undefined;
   readonly turnOnly: boolean;
+  // With "This turn only", an earlier turn whose files are listed instead of the last turn's
+  // (chat overview spec 2): its id and its number as the user counts turns.
+  readonly turn: { readonly id: string; readonly number: number } | undefined;
   readonly refresh: number;
 }
 
@@ -64,6 +67,7 @@ export const threadChangesStore = createStore<ThreadChangesState>(() => ({
   threadId: undefined,
   path: undefined,
   turnOnly: false,
+  turn: undefined,
   refresh: 0,
 }));
 
@@ -72,18 +76,25 @@ interface PanelContext {
   readonly layout: LayoutStore;
 }
 
-// `from` is the route of the thread's view, whose panel gets the tab.
+// `from` is the route of the thread's view, whose panel gets the tab. `turn` opens them narrowed
+// to one turn: the last one, or an earlier one by its id (chat overview spec 2).
 export function openThreadChanges(
   context: PanelContext,
   threadId: string,
   from: string,
   path?: string,
+  turn?: 'last' | { readonly id: string; readonly number: number },
 ): void {
-  threadChangesStore.setState((state) => ({
-    threadId,
-    path,
-    turnOnly: state.threadId === threadId ? state.turnOnly : false,
-  }));
+  threadChangesStore.setState((state) =>
+    turn === undefined
+      ? {
+          threadId,
+          path,
+          turnOnly: state.threadId === threadId ? state.turnOnly : false,
+          turn: state.threadId === threadId ? state.turn : undefined,
+        }
+      : { threadId, path, turnOnly: true, turn: turn === 'last' ? undefined : turn },
+  );
   openChanges(context, { threadId, from });
 }
 
@@ -113,19 +124,24 @@ function parsed(received: unknown): ThreadDiff {
 export function useThreadDiff(
   threadId: string,
   path?: string,
+  turnId?: string,
 ): { readonly diff: ThreadDiff | undefined; readonly error: string | undefined } {
   const { connection } = useRuntime();
   const turns = useTopic('turns', threadId) ?? [];
   const refresh = useStore(threadChangesStore, (state) => state.refresh);
   const key = turnsKey(turns);
   const [answer, setAnswer] = useState<{ diff?: ThreadDiff; error?: string; for: string }>();
-  const what = `${threadId}\n${path ?? ''}`;
+  const what = `${threadId}\n${path ?? ''}\n${turnId ?? ''}`;
   const asked = `${what}\n${key}\n${refresh}`;
   useEffect(() => {
     if (!connection) return;
     let current = true;
     connection
-      .request('threads.diff', path === undefined ? { threadId } : { threadId, path })
+      .request('threads.diff', {
+        threadId,
+        ...(path === undefined ? {} : { path }),
+        ...(turnId === undefined ? {} : { turnId }),
+      })
       .then(parsed)
       .then(
         (diff) => current && setAnswer({ diff, for: asked }),
@@ -134,7 +150,7 @@ export function useThreadDiff(
     return () => {
       current = false;
     };
-  }, [connection, threadId, path, asked]);
+  }, [connection, threadId, path, turnId, asked]);
   // An older read of the same thread and file stays on screen until the new one comes; one for
   // another thread or file is never shown in its place.
   const shown = answer !== undefined && answer.for.startsWith(`${what}\n`) ? answer : undefined;
@@ -273,11 +289,12 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
   // GitLab calls it a merge request (thread work spec 31).
   const host = useHostLinkRules(threadId).repository?.host;
   const editor = useOpenInEditor();
-  const { diff, error } = useThreadDiff(threadId);
+  const turnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
+  const turn = useStore(threadChangesStore, (state) => (state.turnOnly ? state.turn : undefined));
+  const { diff, error } = useThreadDiff(threadId, undefined, turn?.id);
   // A thread in its own working copy can bring its changes home (parallel threads spec 1).
   const ownCopy =
     useTopic('threads')?.find((thread) => thread.id === threadId)?.workingCopy?.startSha != null;
-  const turnOnly = useStore(threadChangesStore, (state) => state.turnOnly);
   const selected = useStore(threadChangesStore, (state) => state.path);
   const switchId = useId();
   const files = diff?.status === 'ok' ? diff.files : [];
@@ -304,10 +321,12 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
             id={switchId}
             checked={turnOnly}
             disabled={!turnPaths}
-            onCheckedChange={(checked) => threadChangesStore.setState({ turnOnly: checked })}
+            onCheckedChange={(checked) =>
+              threadChangesStore.setState({ turnOnly: checked, turn: undefined })
+            }
           />
           <Label htmlFor={switchId} className="text-xs font-normal">
-            This turn only
+            {turn ? `Turn ${turn.number} only` : 'This turn only'}
           </Label>
           <ShortcutHint shortcut="keybindings.changesStepOnly" />
 
@@ -361,9 +380,11 @@ export function ThreadChanges({ changes }: { readonly changes: ViewerChanges }) 
         </EmptyState>
       ) : shown.length === 0 ? (
         <EmptyState compact icon={GitCompareIcon} title="No changes">
-          {turnOnly
-            ? 'Nothing changed in this folder since the last turn began.'
-            : 'Nothing changed in this folder since the thread began.'}
+          {turn
+            ? `Turn ${turn.number} changed no file that still differs.`
+            : turnOnly
+              ? 'Nothing changed in this folder since the last turn began.'
+              : 'Nothing changed in this folder since the thread began.'}
         </EmptyState>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -520,7 +541,7 @@ export function threadChangesCommands(
       group: 'Chat',
       keywords: ['changes', 'turn', 'only', 'narrow'],
       keybinding: 'keybindings.changesStepOnly',
-      run: () => threadChangesStore.setState({ turnOnly: !turnOnly }),
+      run: () => threadChangesStore.setState({ turnOnly: !turnOnly, turn: undefined }),
     });
   }
   return commands;

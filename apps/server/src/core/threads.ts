@@ -104,6 +104,7 @@ type ThreadCommand = Extract<
       | 'thread.setArchived'
       | 'thread.markSeen'
       | 'thread.markUnread'
+      | 'thread.markItem'
       | 'thread.workingCopyReady'
       | 'thread.workingCopyFailed'
       | 'thread.workingCopyBranching'
@@ -118,6 +119,7 @@ type ThreadCommand = Extract<
       | 'thread.applyToProject'
       | 'thread.undoApply'
       | 'thread.changesApplied'
+      | 'thread.turnChangesMeasured'
       | 'approval.answer'
       | 'question.answer'
       | 'provider.events';
@@ -1207,12 +1209,34 @@ export function decideThread(
         },
       ];
     }
+    // A mark sits on the message itself, so a fork and an earlier version keep it (chat
+    // overview spec 22).
+    case 'thread.markItem': {
+      const thread = requireThread(read, command.threadId);
+      const item = read.threadItem(command.itemId);
+      if (!item || item.threadId !== thread.id) {
+        throw new CommandRejected('not_found', `No message ${command.itemId} in this thread`);
+      }
+      if (item.kind !== 'user' && item.kind !== 'assistant_text') {
+        throw new CommandRejected('rejected', 'Only a message can be marked.');
+      }
+      const markedNow = (item.payload as { marked?: unknown } | null)?.marked === true;
+      if (markedNow === command.marked) return [];
+      return [
+        {
+          kind: 'threadItem.patched',
+          aggregate: thread.id,
+          payload: { itemId: item.id, patch: { marked: command.marked } },
+        },
+      ];
+    }
     case 'thread.markSeen':
     case 'thread.markUnread': {
       const thread = requireThread(read, command.threadId);
       const seen = command.type === 'thread.markSeen';
       if ((thread.seen ?? true) === seen) return [];
-      return [seenChanged(thread.id, seen)];
+      // Where the user left off, for "New since you looked" next time (chat overview spec 17).
+      return [seenChanged(thread.id, seen, seen ? read.nextItemIndex(thread.id) - 1 : undefined)];
     }
     case 'approval.answer':
       return answerApproval(command, read, context);
@@ -1257,6 +1281,31 @@ export function decideThread(
               streaming: false,
             },
           },
+        },
+      ];
+    }
+    // The turn's changes go on its usage row, which a turn without usage does not have: a row
+    // added now would sit after a later turn's items (chat overview spec 1, 3).
+    case 'thread.turnChangesMeasured': {
+      const thread = requireThread(read, command.threadId);
+      if (!read.threadTurns(thread.id).some((turn) => turn.id === command.turnId)) {
+        throw new CommandRejected('not_found', `No turn ${command.turnId}`);
+      }
+      const usageId = `${command.turnId}:usage`;
+      return [
+        ...(read.itemExists(usageId)
+          ? [
+              {
+                kind: 'threadItem.patched' as const,
+                aggregate: thread.id,
+                payload: { itemId: usageId, patch: { changes: command.changes } },
+              },
+            ]
+          : []),
+        {
+          kind: 'thread.changeCounted',
+          aggregate: thread.id,
+          payload: { threadId: thread.id, changeCount: command.threadChanges },
         },
       ];
     }
@@ -1417,10 +1466,10 @@ export function decideThread(
   }
 }
 
-const seenChanged = (threadId: string, seen: boolean): DomainEvent => ({
+const seenChanged = (threadId: string, seen: boolean, through?: number): DomainEvent => ({
   kind: 'thread.seenChanged',
   aggregate: threadId,
-  payload: { threadId, seen },
+  payload: through === undefined ? { threadId, seen } : { threadId, seen, through },
 });
 
 const settingValue = (key: string, read: ReadModel, context: DecideContext): unknown => {
@@ -1997,6 +2046,12 @@ function decideProviderEvents(
               ...(event.toolCount === undefined ? {} : { toolCount: event.toolCount }),
               ...(event.answer === undefined ? {} : { answer: event.answer }),
               ...(event.agentState === undefined ? {} : { agentState: event.agentState }),
+              // The pictures the provider service stored before the event got here (chat
+              // overview spec 32); raw bytes never reach the item.
+              ...(event.storedImages === undefined || event.storedImages.length === 0
+                ? {}
+                : { images: event.storedImages }),
+              ...(event.imagesOmitted === undefined ? {} : { imagesOmitted: event.imagesOmitted }),
               ...(event.diff === undefined
                 ? {}
                 : {

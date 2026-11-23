@@ -334,6 +334,10 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'helper.followed': serverOnly,
   'thread.undoApply': chatOnly,
   'thread.changesApplied': serverOnly,
+  'thread.turnChangesMeasured': serverOnly,
+  'providerInstance.limitsReported': serverOnly,
+  // Marks are the user's way back into a conversation (chat overview spec 22).
+  'thread.markItem': chatOnly,
   'thread.snapshotTaken': serverOnly,
   'thread.filesRestored': serverOnly,
   'thread.snapshotsDropped': serverOnly,

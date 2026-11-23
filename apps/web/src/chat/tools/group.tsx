@@ -7,6 +7,10 @@ import { failedToolCalls } from '../view-model';
 import { groupSummary, payloadOf } from './facts';
 import { toolParts } from './index';
 
+// The group's line counts its calls' pictures (chat overview spec 33); they show once it opens.
+const pictureCount = (payloads: readonly { images?: readonly unknown[] | undefined }[]) =>
+  payloads.reduce((sum, payload) => sum + (payload.images?.length ?? 0), 0);
+
 // A run of tool calls as one row (`chat.groupToolCalls`). While it is open to more calls (its
 // turn runs and nothing came after it, or a call still runs) it draws its latest call, with that
 // call's time; closed, it says what was done: "Read 2 files, ran 1 command · 1 failed" (spec
@@ -66,6 +70,12 @@ export function ToolCallGroup({
           {done ? (
             <span data-testid="tool-group-summary" className="min-w-0 truncate">
               {groupSummary(payloads)}
+              {pictureCount(payloads) > 0 && (
+                <span data-testid="tool-group-images">
+                  {' · '}
+                  {pictureCount(payloads)} {pictureCount(payloads) === 1 ? 'picture' : 'pictures'}
+                </span>
+              )}
               {failed > 0 && (
                 <>
                   {' · '}

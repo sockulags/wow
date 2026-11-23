@@ -1426,6 +1426,75 @@ describe('CodexAdapter', () => {
     ]);
   });
 
+  it("hands an MCP result's pictures and an image view's file over, without base64 in the text (chat overview spec 31)", async () => {
+    const { adapter, take, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send(startTurn);
+    take();
+    const params = { threadId: 'codex-thread', turnId: 'turn-1' };
+    const mcp = {
+      type: 'mcpToolCall',
+      id: 'mcp-2',
+      server: 'browser',
+      tool: 'screenshot',
+      status: 'inProgress',
+      arguments: {},
+      appContext: null,
+      mcpAppUi: null,
+      pluginId: null,
+      readOnlyHint: null,
+      result: null,
+      error: null,
+      durationMs: null,
+    };
+    current().emit({ method: 'item/started', params: { ...params, item: mcp } });
+    current().emit({
+      method: 'item/completed',
+      params: {
+        ...params,
+        item: {
+          ...mcp,
+          status: 'completed',
+          result: {
+            content: [
+              { type: 'text', text: 'Took a screenshot' },
+              { type: 'image', data: 'iVBORw0K', mimeType: 'image/png' },
+            ],
+            structuredContent: null,
+            _meta: null,
+          },
+        },
+      },
+    });
+    const view = { type: 'imageView', id: 'view-1', path: '/work/demo/shot.png' };
+    current().emit({ method: 'item/started', params: { ...params, item: view } });
+    current().emit({ method: 'item/completed', params: { ...params, item: view } });
+    const done = take().filter(
+      (event) => event.type === 'toolCallOutput' || event.type === 'toolCallCompleted',
+    );
+    expect(done).toEqual([
+      {
+        type: 'toolCallOutput',
+        threadId: 'thread-1',
+        itemId: 'mcp-2',
+        output: 'Took a screenshot',
+      },
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'mcp-2',
+        status: 'ok',
+        images: [{ base64: 'iVBORw0K', mediaType: 'image/png' }],
+      },
+      {
+        type: 'toolCallCompleted',
+        threadId: 'thread-1',
+        itemId: 'view-1',
+        status: 'ok',
+        images: [{ path: '/work/demo/shot.png' }],
+      },
+    ]);
+  });
+
   // Agent workbench spec 44: a spawned agent is a subagent row with its prompt and state; the
   // calls that report on it (wait) give its state and final message to that row. What the
   // agent's own thread sends, where it reaches wow, is nested under the row.

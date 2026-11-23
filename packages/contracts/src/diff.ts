@@ -63,10 +63,12 @@ export type RunDiff = z.infer<typeof RunDiff>;
 // A chat thread's changes (agent workbench spec 34, 35): the thread's folder against the commit
 // it was on when its first turn began. `noBase` is a thread stored before bases were recorded.
 // `turnPaths` are the listed files whose content changed since the last turn began, for "This
-// turn only"; null when that turn has no mark.
+// turn only"; null when that turn has no mark. With `turnId` of an earlier turn, `turnPaths` are
+// the files that turn changed, from its start and end snapshots (chat overview spec 2).
 export const ThreadDiffParams = z.object({
   threadId: z.string().min(1),
   path: z.string().min(1).optional(),
+  turnId: z.string().min(1).optional(),
 });
 export type ThreadDiffParams = z.infer<typeof ThreadDiffParams>;
 

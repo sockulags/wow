@@ -7,6 +7,7 @@ import {
   DomainEvent,
   TextItemPayload,
   ChangesAppliedItemPayload,
+  TaskListItemPayload,
   FilesRestoredItemPayload,
   isTurnSnapshot,
   type StoredSnapshot,
@@ -58,6 +59,7 @@ import {
   planRuns,
   projects,
   providerInstances,
+  providerLimits,
   questions,
   settings,
   skills,
@@ -377,7 +379,11 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       return threadTopics;
     case 'thread.seenChanged':
       tx.update(threads)
-        .set({ seen: event.payload.seen })
+        .set(
+          event.payload.through === undefined
+            ? { seen: event.payload.seen }
+            : { seen: event.payload.seen, seenThrough: event.payload.through },
+        )
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return threadTopics;
@@ -536,6 +542,20 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       }
       return ['threadItems'];
     }
+    case 'providerInstance.limitsReported': {
+      const { providerInstanceId, limits } = event.payload;
+      tx.insert(providerLimits)
+        .values({ providerInstanceId, limits })
+        .onConflictDoUpdate({ target: providerLimits.providerInstanceId, set: { limits } })
+        .run();
+      return ['providerLimits'];
+    }
+    case 'thread.changeCounted':
+      tx.update(threads)
+        .set({ changeCount: event.payload.changeCount })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return threadTopics;
     case 'thread.changesApplied': {
       const { item } = event.payload;
       tx.insert(threadItems).values(item).run();
@@ -579,9 +599,19 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       for (const item of items) tx.insert(threadItems).values(item).run();
       return ['turns', 'threadItems'];
     }
-    case 'threadItem.added':
+    case 'threadItem.added': {
       tx.insert(threadItems).values(event.payload).run();
-      return ['threadItems'];
+      // The thread row says how far its latest task list is (chat overview spec 6).
+      if (event.payload.kind !== 'task_list') return ['threadItems'];
+      const list = TaskListItemPayload.safeParse(event.payload.payload);
+      if (!list.success) return ['threadItems'];
+      const done = list.data.tasks.filter((task) => task.status === 'completed').length;
+      tx.update(threads)
+        .set({ tasks: { done, total: list.data.tasks.length } })
+        .where(eq(threads.id, event.payload.threadId))
+        .run();
+      return ['threadItems', ...threadTopics];
+    }
     case 'threadItem.appended': {
       const { itemId, field, delta, at } = event.payload;
       const row = tx
@@ -970,6 +1000,9 @@ export function readModel(tx: DbOrTx): ReadModel {
         .from(providerInstances)
         .orderBy(sql`rowid`)
         .all(),
+    providerLimits: (id) =>
+      tx.select().from(providerLimits).where(eq(providerLimits.providerInstanceId, id)).get()
+        ?.limits ?? [],
     instanceUsage: (id) => ({
       // The assistant thread does not hold an instance: it moves to another one (spec 27).
       threads:

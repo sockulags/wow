@@ -186,6 +186,44 @@ export type ToolKind = z.infer<typeof ToolKind>;
 export const AgentState = z.enum(['starting', 'running', 'done', 'failed', 'stopped', 'missing']);
 export type AgentState = z.infer<typeof AgentState>;
 
+// How much of a plan limit is used, as the provider reports it (chat overview spec 25): which
+// window (Claude's five-hour and weekly ones, a weekly one per model family, or another the
+// provider names in `label`), the share used, when it resets and how the provider rates it.
+export const LimitWindow = z.enum(['fiveHour', 'week', 'weekModel', 'other']);
+export type LimitWindow = z.infer<typeof LimitWindow>;
+export const LimitState = z.enum(['ok', 'warning', 'reached']);
+export type LimitState = z.infer<typeof LimitState>;
+export const ProviderLimit = z.object({
+  window: LimitWindow,
+  label: z.string().min(1).nullable(),
+  usedPercent: z.number().min(0).max(100).nullable(),
+  resetsAt: z.iso.datetime({ offset: true }).nullable(),
+  state: LimitState,
+});
+export type ProviderLimit = z.infer<typeof ProviderLimit>;
+
+// A picture in a tool's result, as the adapter got it (chat overview spec 31): its bytes, or the
+// path of a file the tool showed (Codex's image view), which the server reads within its limits.
+export const ToolImage = z.union([
+  z.object({ base64: z.string().min(1), mediaType: z.string() }),
+  z.object({ path: z.string().min(1) }),
+]);
+export type ToolImage = z.infer<typeof ToolImage>;
+
+// The same picture once stored by the server: the id `attachments.read` reads it back by.
+export const ToolStoredImage = z.object({
+  id: z.string().min(1),
+  mediaType: z.string().min(1),
+});
+export type ToolStoredImage = z.infer<typeof ToolStoredImage>;
+
+// Pictures of a result that were not kept, and why in words ("too large", "not a picture").
+export const ImagesOmitted = z.object({
+  count: z.number().int().positive(),
+  reason: z.string().min(1),
+});
+export type ImagesOmitted = z.infer<typeof ImagesOmitted>;
+
 // The facts an adapter reads from a tool call's input, each only where the provider gives it.
 export const ToolFacts = z.object({
   kind: ToolKind,
@@ -267,6 +305,9 @@ export const ProviderEvent = z.discriminatedUnion('type', [
   // The provider started a turn by itself (after background work ended); it ends with the usual
   // turnCompleted, turnFailed or turnInterrupted.
   z.object({ type: z.literal('turnStartedByProvider'), ...ThreadScoped }),
+  // Plan limits the provider reported during the thread's session (chat overview spec 25). Not
+  // a thread item: the server keeps them per provider instance.
+  z.object({ type: z.literal('limits'), ...ThreadScoped, limits: z.array(ProviderLimit) }),
   // Every background task still running, after a change: the list replaces the one before.
   z.object({
     type: z.literal('backgroundTasks'),
@@ -321,6 +362,12 @@ export const ProviderEvent = z.discriminatedUnion('type', [
     toolCount: z.number().int().nonnegative().optional(),
     answer: z.string().optional(),
     agentState: AgentState.optional(),
+    // Pictures the tool's result holds (chat overview spec 31): a screenshot, an image read from
+    // disk. The server stores them as the thread's attachments before the event goes on, and
+    // replaces them with `storedImages` and, for any it did not keep, `imagesOmitted`.
+    images: z.array(ToolImage).optional(),
+    storedImages: z.array(ToolStoredImage).optional(),
+    imagesOmitted: ImagesOmitted.optional(),
   }),
   z.object({
     type: z.literal('approvalRequested'),

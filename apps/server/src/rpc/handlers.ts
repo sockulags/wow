@@ -1,3 +1,4 @@
+import { usageSummary } from '../usage/summary.js';
 import {
   Thread,
   WorkflowRun,
@@ -287,6 +288,7 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return { removed: deps.subscriptions.unsubscribe(subscriptionId) };
     },
     'settings.resolve': (context) => deps.settings.resolveAll(context),
+    'usage.summary': (range) => usageSummary(deps.db, range),
     'threads.search': ({ query }) => ({
       threadIds: searchThreads(deps.db, query, deps.settings.get('chat.threadSearchMaxLength')),
     }),
@@ -411,19 +413,19 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
     'threads.refreshTools': async ({ threadId }) => ({
       outcome: await deps.providers.refreshTools(threadId),
     }),
-    'threads.diff': async ({ threadId, path: asked }) => {
+    'threads.diff': async ({ threadId, path: asked, turnId }) => {
       const thread = deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
       if (!thread) throw new RpcFault('not_found', `No thread ${threadId}`);
       if (thread.runId !== null || thread.kind !== 'chat') {
         throw new RpcFault('rejected', "A step's changes are its run's Changes tab.");
       }
       const last = deps.db
-        .select({ fileMark: turns.fileMark })
+        .select({ id: turns.id, fileMark: turns.fileMark })
         .from(turns)
         .where(eq(turns.threadId, threadId))
         .orderBy(desc(turns.index))
         .get();
-      return readThreadDiff({
+      const diff = await readThreadDiff({
         folder: thread.cwd,
         baseSha: thread.baseSha,
         baseFiles: thread.baseFiles,
@@ -431,6 +433,9 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         path: asked,
         options: changesOptions(deps.settings),
       });
+      // An earlier turn's files come from its snapshots (chat overview spec 2).
+      if (turnId === undefined || turnId === last?.id || diff.status !== 'ok') return diff;
+      return { ...diff, turnPaths: (await deps.snapshots.turnPaths(threadId, turnId)) ?? null };
     },
     'threads.commitPlan': ({ threadId }) =>
       threadGitCall(() => deps.threadGit.commitPlan(threadId)),

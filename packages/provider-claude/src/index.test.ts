@@ -227,6 +227,14 @@ const boundary = (
   } as unknown as SDKMessage,
 });
 
+const rateLimit = (info: Record<string, unknown>): FakeStep => ({
+  message: {
+    type: 'rate_limit_event',
+    rate_limit_info: info,
+    uuid: 'rl',
+    session_id: 'sess-1',
+  } as unknown as SDKMessage,
+});
 describe('@wow/provider-claude', () => {
   it('is the claude provider', () => {
     expect(providerKind).toBe('claude');
@@ -479,6 +487,98 @@ describe('@wow/provider-claude', () => {
       },
       { type: 'toolCallOutput', threadId: 't1', itemId: 'toolu_t', output: '1 failed' },
       { type: 'toolCallCompleted', threadId: 't1', itemId: 'toolu_t', status: 'error' },
+    ]);
+  });
+
+  it("hands a tool result's pictures over and leaves them out of its text (chat overview spec 31)", async () => {
+    const shot: FakeStep = {
+      message: {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_s',
+              content: [
+                { type: 'text', text: 'Took a screenshot' },
+                {
+                  type: 'image',
+                  source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' },
+                },
+              ],
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+        session_id: 'sess-1',
+      } as unknown as SDKMessage,
+    };
+    const h = harness([
+      [assistantToolUse('toolu_s', 'mcp__browser__screenshot', {}), shot, result(0)],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    const calls = h.events.filter(
+      (event) => event.type === 'toolCallOutput' || event.type === 'toolCallCompleted',
+    );
+    expect(calls).toEqual([
+      { type: 'toolCallOutput', threadId: 't1', itemId: 'toolu_s', output: 'Took a screenshot' },
+      {
+        type: 'toolCallCompleted',
+        threadId: 't1',
+        itemId: 'toolu_s',
+        status: 'ok',
+        images: [{ base64: 'iVBORw0K', mediaType: 'image/png' }],
+      },
+    ]);
+  });
+
+  it("passes a plan's rate limit on as a limit in wow's words (chat overview spec 25)", async () => {
+    const h = harness([
+      [
+        rateLimit({
+          status: 'allowed_warning',
+          rateLimitType: 'five_hour',
+          utilization: 0.84,
+          resetsAt: 1_795_400_000,
+        }),
+        rateLimit({ status: 'rejected', rateLimitType: 'seven_day_opus', utilization: 100 }),
+        rateLimit({ status: 'allowed', rateLimitType: 'something_new' }),
+        result(0),
+      ],
+    ]);
+    const done = h.next('turnCompleted');
+    await h.adapter.send(startTurn());
+    await done;
+    expect(h.events.filter((event) => event.type === 'limits')).toEqual([
+      {
+        type: 'limits',
+        threadId: 't1',
+        limits: [
+          {
+            window: 'fiveHour',
+            label: null,
+            usedPercent: 84,
+            resetsAt: new Date(1_795_400_000_000).toISOString(),
+            state: 'warning',
+          },
+        ],
+      },
+      {
+        type: 'limits',
+        threadId: 't1',
+        limits: [
+          {
+            window: 'weekModel',
+            label: 'Opus',
+            usedPercent: 100,
+            resetsAt: null,
+            state: 'reached',
+          },
+        ],
+      },
     ]);
   });
 

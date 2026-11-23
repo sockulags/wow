@@ -4,6 +4,7 @@ import {
   AlertTriangleIcon,
   BellIcon,
   CircleCheckIcon,
+  GaugeIcon,
   PlayIcon,
   SkipForwardIcon,
   SunIcon,
@@ -44,6 +45,7 @@ const icons = {
   finished: CircleCheckIcon,
   briefing: SunIcon,
   reminder: BellIcon,
+  limit: GaugeIcon,
 } as const;
 const iconClass = {
   started: 'text-state-working',
@@ -53,6 +55,7 @@ const iconClass = {
   finished: 'text-state-done',
   briefing: 'text-muted-foreground',
   reminder: 'text-state-needs-you-text',
+  limit: 'text-state-needs-you-text',
 } as const;
 
 // The web app's side of the server's notification channel: a toast per new notification (spec 9),

@@ -7,7 +7,7 @@ import {
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -469,5 +469,68 @@ describe('images in the composer', () => {
     expect(path.dirname(threadImageFolder(server.home, '../../x'))).toBe(
       path.join(server.home, 'images'),
     );
+  });
+});
+
+describe('pictures in tool rows (chat overview spec 31 to 34)', () => {
+  it("stores a tool result's pictures for the thread and counts what it did not keep", async () => {
+    thread('t1', 'claude', 'mock-model');
+    const ended = committed('turn.ended');
+    dispatch({ type: 'thread.sendMessage', threadId: 't1', text: 'Take a screenshot' });
+    await ended;
+    const shot = path.join(root, 'shot.jpg');
+    await mkdir(root, { recursive: true });
+    await writeFile(shot, jpeg());
+    const done = committed('turn.ended');
+    // A turn the provider starts by itself, as after background work.
+    adapters
+      .find((adapter) => adapter.kind === 'claude')
+      ?.emit([
+        { type: 'turnStartedByProvider', threadId: 't1' },
+        {
+          type: 'toolCallStarted',
+          threadId: 't1',
+          itemId: 'shot',
+          name: 'browser_screenshot',
+          input: {},
+          kind: 'mcp',
+          server: 'browser',
+          tool: 'screenshot',
+        },
+        {
+          type: 'toolCallCompleted',
+          threadId: 't1',
+          itemId: 'shot',
+          status: 'ok',
+          images: [
+            { base64: png().toString('base64'), mediaType: 'image/png' },
+            { path: shot },
+            { base64: bmp().toString('base64'), mediaType: 'image/bmp' },
+          ],
+        },
+        { type: 'turnCompleted', threadId: 't1' },
+      ]);
+    await done;
+    const row = (
+      snapshot(server.database.db, { topic: 'threadItems', threadId: 't1' }) as {
+        kind: string;
+        payload: { images?: { id: string; mediaType: string }[]; imagesOmitted?: unknown };
+      }[]
+    ).find((item) => item.kind === 'tool_call');
+    expect(row?.payload.images?.map((image) => image.mediaType)).toEqual([
+      'image/png',
+      'image/jpeg',
+    ]);
+    expect(row?.payload.imagesOmitted).toEqual({ count: 1, reason: 'not a picture wow shows' });
+    const [first] = row?.payload.images ?? [];
+    expect(
+      resultOf<{ base64: string }>(await rpc('attachments.read', { threadId: 't1', id: first?.id }))
+        .base64,
+    ).toBe(png().toString('base64'));
+    // The bytes never go into the event log.
+    const logged = JSON.stringify(
+      server.database.sqlite.prepare('select payload from events').all(),
+    );
+    expect(logged).not.toContain(png().toString('base64'));
   });
 });
