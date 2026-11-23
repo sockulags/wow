@@ -8,7 +8,6 @@ import {
   heldSecretSentence,
   providerChatOptions,
   rpcMethods,
-  assistantPermissionLabels,
   type AssistantChange,
   type AssistantPermissionUse,
   type AssistantProposal,
@@ -51,11 +50,11 @@ import {
   waitingText,
   withoutSecret,
   type Held,
-  type Placed,
 } from './model';
+import { PlacedRows } from './app-tool-rows';
 import { AssistantQuestions, askState } from './questions';
 import { DecisionQueue } from './queue';
-import { ChangeRow, PermissionUseRow, ProposalCard, WaitingLine } from './rows';
+import { WaitingLine } from './rows';
 
 // The Assistant section (app assistant spec 1, 3, 7 to 18): the one assistant conversation,
 // reusing the chat view's conversation and composer, with change rows, proposals and the cards
@@ -98,49 +97,6 @@ function useOpenProblem(): {
     };
   }, [connection, instancesKey, configured, allowCodex, model, effort]);
   return state;
-}
-
-function Rows({ placed, patterns }: { placed: Placed; patterns: readonly string[] }) {
-  const send = useDispatch();
-  if (placed.changes.length === 0 && placed.proposals.length === 0 && placed.uses.length === 0)
-    return null;
-  const usedFor = new Map(placed.uses.map((use) => [use.id, use]));
-  const changed = new Set(placed.changes.map((change) => change.id));
-  return (
-    <div className="flex flex-col gap-2">
-      {placed.changes.map((change) => {
-        const use = usedFor.get(change.id);
-        return (
-          <ChangeRow
-            key={change.id}
-            change={change}
-            {...(use ? { under: assistantPermissionLabels[use.kind] } : {})}
-            onUndo={() => send({ type: 'assistant.undo', changeId: change.id })}
-          />
-        );
-      })}
-      {placed.uses
-        .filter((use) => !changed.has(use.id))
-        .map((use) => (
-          <PermissionUseRow key={use.id} use={use} />
-        ))}
-      {placed.proposals.map((proposal) => (
-        <ProposalCard
-          key={proposal.id}
-          proposal={proposal}
-          secretPatterns={patterns}
-          onYes={() => send({ type: 'assistant.proposal.accept', proposalId: proposal.id })}
-          onNo={(reason) =>
-            send({
-              type: 'assistant.proposal.decline',
-              proposalId: proposal.id,
-              ...(reason === undefined ? {} : { reason }),
-            })
-          }
-        />
-      ))}
-    </div>
-  );
 }
 
 // The line above the composer while a message is held (spec 17): what looks like a secret,
@@ -366,7 +322,7 @@ export function AssistantView() {
           )}
           {ask?.kind === 'secretVariable' && <SecretVariableCard request={ask.request} />}
           {ask?.kind === 'projectWork' && <ProjectWorkCard offer={ask.offer} />}
-          {placed && <Rows placed={placed} patterns={patterns} />}
+          {placed && <PlacedRows placed={placed} patterns={patterns} />}
         </div>
       );
     },
@@ -494,7 +450,7 @@ export function AssistantView() {
             extras={{
               after: extraAfter,
               ...(rest.changes.length + rest.proposals.length + rest.uses.length > 0
-                ? { end: <Rows placed={rest} patterns={patterns} /> }
+                ? { end: <PlacedRows placed={rest} patterns={patterns} /> }
                 : {}),
               composerRef: composer,
               placeholder: 'Tell the assistant what to set up or change in wow',

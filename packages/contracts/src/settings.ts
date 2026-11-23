@@ -594,6 +594,25 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
+  'chat.defaultInstance': defineSetting({
+    personal: 'machine',
+    schema: z.string(),
+    group: 'chat',
+    label: 'Provider of a new thread',
+    description:
+      'The provider instance a new thread starts on, by its id. Empty: the project names one, else the instance of your last thread. You can change it in the new thread before the first message.',
+    default: '',
+    scope: 'global',
+  }),
+  'chat.defaultModel': defineSetting({
+    schema: z.string(),
+    group: 'chat',
+    label: 'Model of a new thread',
+    description:
+      'The model a new thread on the provider of a new thread starts with. Empty: the project names one, else the last thread on that instance used, else the instance default.',
+    default: '',
+    scope: 'global',
+  }),
   'chat.helperDepth': defineSetting({
     schema: z.number().int().min(1).max(5),
     group: 'chat',

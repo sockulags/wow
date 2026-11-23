@@ -67,6 +67,7 @@ import {
 import { folderKey } from '../files/folder-key.js';
 import { editGoBack, forkEvents } from './go-back.js';
 import { decideThreadCopy, ownCopyOf } from './thread-copy.js';
+import { threadFolderOf } from './thread-folder.js';
 import { messageWithSkills } from './skills.js';
 import { decideThreadTools } from './thread-tools.js';
 
@@ -704,6 +705,16 @@ export function decideThread(
         throw new CommandRejected('not_found', `No project ${command.projectId}`);
       }
       const own = command.ownWorkingCopy ? ownCopyOf(read, context, command) : undefined;
+      // No folder named: the project's, else one of the thread's own in wow's home (orchestrator
+      // threads spec 1).
+      const project = command.projectId === undefined ? undefined : read.project(command.projectId);
+      const folder =
+        command.cwd ??
+        project?.cwd ??
+        (context.home === undefined ? undefined : threadFolderOf(context.home, command.threadId));
+      if (folder === undefined) {
+        throw new CommandRejected('rejected', 'A thread needs a project or a folder.');
+      }
       if (command.resumeSessionId !== undefined) {
         const holder = sessionHolder(
           read,
@@ -725,7 +736,7 @@ export function decideThread(
           payload: {
             id: command.threadId,
             projectId: command.projectId ?? null,
-            cwd: own?.cwd ?? command.cwd,
+            cwd: own?.cwd ?? folder,
             branch: own?.branch ?? command.branch ?? null,
             ...(own ? { workingCopy: own.workingCopy } : {}),
             providerInstanceId: command.providerInstanceId,
@@ -938,16 +949,19 @@ export function decideThread(
     }
     case 'thread.answerQuestions': {
       const stored = requireThread(read, command.threadId);
-      if (stored.kind !== 'assistant') {
+      // The assistant's, and a main thread's since it has the app tools (orchestrator threads
+      // spec 24).
+      const main = stored.kind === 'chat' && !stored.parentThreadId && stored.runId === null;
+      if (stored.kind !== 'assistant' && !main) {
         throw new CommandRejected(
           'rejected',
-          "Only the assistant's questions are answered this way; an agent's question is answered on its card.",
+          "Only the questions of wow's ask_questions tool are answered this way; an agent's own question is answered on its card.",
         );
       }
       if (read.runningTurn(stored.id)) {
         throw new CommandRejected(
           'rejected',
-          'The assistant is still working. Answer its questions when its turn has ended.',
+          'The agent is still working. Answer its questions when its turn has ended.',
         );
       }
       const item = read.threadItem(command.itemId);

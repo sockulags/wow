@@ -89,6 +89,7 @@ import {
   type ItemContext,
 } from './items';
 import { GateDock } from './gate-card';
+import { useAppToolRows } from '@/assistant/app-tool-rows';
 import { TaskPin } from './task-pin';
 import { ToolCallGroup } from './tools/group';
 import {
@@ -1015,7 +1016,13 @@ export function ThreadConversation({
     [instance],
   );
   const reasoningOpen = reasoningToggle?.open ?? reasoningByDefault;
-  const toolWords = extras?.toolWords;
+  // A main thread draws its own app tool calls' rows and cards (orchestrator threads spec 24).
+  const appRows = useAppToolRows(
+    items,
+    turns,
+    !extras && thread.kind !== 'assistant' && !thread.parentThreadId && thread.runId === null,
+  );
+  const toolWords = extras?.toolWords ?? appRows?.toolWords;
   const words = useMemo(
     () =>
       new Map(
@@ -1130,7 +1137,7 @@ export function ThreadConversation({
     };
   };
 
-  const afterOf = extras?.after;
+  const afterOf = extras?.after ?? appRows?.after;
   const afters = useMemo(
     () => new Map(top.map((item) => [item.id, afterOf?.(item)])),
     [top, afterOf],

@@ -31,6 +31,7 @@ import { randomUUID } from 'node:crypto';
 import { instructionsWithNotes } from '../assistant/memory.js';
 import { AssistantRedactor } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
+import { prepareThreadFolder, threadFolderOf } from '../core/thread-folder.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
@@ -832,6 +833,11 @@ export class ProviderService {
   ): Promise<StartTurn> {
     const failed = await this.#deps.prepareThread?.(command.threadId);
     if (failed !== undefined) throw new Error(failed);
+    // A thread with a folder of its own in wow's home starts with it empty (orchestrator threads
+    // spec 1).
+    if (index === 0 && command.cwd === threadFolderOf(this.#deps.home, command.threadId)) {
+      await prepareThreadFolder(command.cwd);
+    }
     const snapshots = this.#deps.snapshots;
     if (restore) {
       const refused = snapshots

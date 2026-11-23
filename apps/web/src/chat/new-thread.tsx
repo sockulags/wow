@@ -45,6 +45,9 @@ export function threadDefaults(
   models: readonly ProviderModel[],
   last: Pick<Thread, 'providerInstanceId' | 'model' | 'effort' | 'permissionMode'> | undefined,
   project?: ProjectDefaults,
+  // `chat.defaultModel`, when this instance is the one a new thread starts on (orchestrator threads
+  // spec 2); it comes first.
+  settingModel = '',
 ): ThreadSettingsValue {
   const named =
     project &&
@@ -56,7 +59,9 @@ export function threadDefaults(
       ? project
       : undefined;
   const fromLast = last?.providerInstanceId === instance.id ? last : undefined;
+  const listed = (id: string) => models.length === 0 || models.some((model) => model.id === id);
   const model =
+    (settingModel && listed(settingModel) ? settingModel : '') ||
     named?.defaultModel ||
     fromLast?.model ||
     instance.defaultModel ||
@@ -118,6 +123,8 @@ export function NewThreadView() {
   const backlog = useTopic('backlogItems') ?? [];
   const starterCount = useSetting('chat.starterCount');
   const skillTrigger = useSetting('chat.skillTrigger');
+  const defaultInstanceId = useSetting('chat.defaultInstance');
+  const defaultModel = useSetting('chat.defaultModel');
   const picked = useStore(draft);
   const composer = useRef<ComposerHandle>(null);
   const bar = useRef<ModelBarHandle>(null);
@@ -144,6 +151,7 @@ export function NewThreadView() {
   const project = projects.find((candidate) => candidate.id === projectId);
   const instance =
     instances?.find((candidate) => candidate.id === picked.providerInstanceId) ??
+    instances?.find((candidate) => candidate.id === defaultInstanceId) ??
     instances?.find((candidate) => candidate.id === project?.defaultProviderInstanceId) ??
     instances?.find((candidate) => candidate.id === lastInstanceId) ??
     instances?.find((candidate) => candidate.status === 'ready') ??
@@ -157,7 +165,13 @@ export function NewThreadView() {
     instance &&
     (seeded
       ? { model: seeded.model, effort: seeded.effort, permissionMode: seeded.permissionMode }
-      : threadDefaults(instance, models, last, project));
+      : threadDefaults(
+          instance,
+          models,
+          last,
+          project,
+          defaultInstanceId === '' || defaultInstanceId === instance.id ? defaultModel : '',
+        ));
 
   const cwd = (untouched && !project ? last?.cwd : picked.cwd) ?? project?.cwd ?? '';
   const copyPlan = useWorkingCopyPlan(project?.id);
@@ -207,11 +221,9 @@ export function NewThreadView() {
 
   const blockedReason = !instance
     ? 'Pick a provider first'
-    : cwd.trim() === ''
-      ? 'Pick a project or a folder first'
-      : settings?.model === ''
-        ? 'Pick a model first'
-        : undefined;
+    : settings?.model === ''
+      ? 'Pick a model first'
+      : undefined;
 
   const start = async (
     text: string,
@@ -231,7 +243,9 @@ export function NewThreadView() {
         providerInstanceId: instance.id,
         ...(project ? { projectId: project.id } : {}),
         ...(ownCopy ? { ownWorkingCopy: true } : {}),
-        cwd: cwd.trim(),
+        // Neither a project nor a folder: wow gives the thread one of its own (orchestrator threads
+        // spec 1).
+        ...(cwd.trim() === '' ? {} : { cwd: cwd.trim() }),
         title: firstMessageTitle(
           text,
           (chosen ?? []).map((skill) => skill.name),

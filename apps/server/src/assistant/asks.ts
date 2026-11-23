@@ -125,7 +125,12 @@ export const asks = {
       const turn = deps.db
         .select({ id: t.turns.id })
         .from(t.turns)
-        .where(and(eq(t.turns.threadId, assistantThreadId), eq(t.turns.state, 'running')))
+        .where(
+          and(
+            eq(t.turns.threadId, deps.threadId ?? assistantThreadId),
+            eq(t.turns.state, 'running'),
+          ),
+        )
         .get();
       const earlier =
         turn &&

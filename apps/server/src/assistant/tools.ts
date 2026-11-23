@@ -212,6 +212,14 @@ export const builtTools: Readonly<Record<string, BuiltTool>> = {
   }),
 };
 
+// What a main thread's agent does not get (orchestrator threads spec 24, 26): the assistant's
+// delegation and brief tools, which helpers replace, and its notes about the person.
+const mainThreadLeavesOut: Readonly<Record<string, unknown>> = {
+  ...delegationTools,
+  ...memoryTools,
+  ...memoryReaders,
+};
+const offeredInMainThread = (name: string) => !Object.hasOwn(mainThreadLeavesOut, name);
 function commandShape(type: CommandType) {
   const option = Command.options.find((candidate) => candidate.shape.type.value === type);
   if (!option) throw new Error(`No command ${type}`);
@@ -316,8 +324,30 @@ export class AssistantTools {
     }));
   }
 
-  async call(name: string, args: unknown): Promise<ToolResult> {
-    const { content, isError } = await this.#run(name, args);
+  // The app tools for a main thread's agent (orchestrator threads spec 24, 26): every tool but
+  // the assistant's delegation, brief and memory tools, which helpers and the thread itself
+  // replace, with the ask tools reading that thread.
+  forThread(threadId: string): {
+    list(): ToolDescription[];
+    call(name: string, args: unknown): Promise<ToolResult>;
+  } {
+    return {
+      list: () => this.list().filter((tool) => offeredInMainThread(tool.name)),
+      call: (name, args) =>
+        offeredInMainThread(name)
+          ? this.call(name, args, threadId)
+          : Promise.resolve({
+              text: JSON.stringify({
+                outcome: 'unknown tool',
+                reason: `There is no tool ${name}.`,
+              }),
+              isError: true,
+            }),
+    };
+  }
+
+  async call(name: string, args: unknown, threadId?: string): Promise<ToolResult> {
+    const { content, isError } = await this.#run(name, args, threadId);
     // The log says which tool ran and how it ended, never what went in or came out. A name
     // that is not a tool's is something that went in.
     this.#deps.logger.debug('assistant tool', {
@@ -331,17 +361,22 @@ export class AssistantTools {
     return secretPatterns(this.#deps.settings.get('assistant.secretPatterns'));
   }
 
-  async #run(name: string, args: unknown): Promise<{ content: unknown; isError: boolean }> {
+  async #run(
+    name: string,
+    args: unknown,
+    threadId?: string,
+  ): Promise<{ content: unknown; isError: boolean }> {
+    const deps = threadId === undefined ? this.#deps : { ...this.#deps, threadId };
     const input = this.#inputs.get(name);
     if (!input) return failed('unknown tool', `There is no tool ${name}.`);
     const parsed = input.safeParse(args ?? {});
     if (!parsed.success) return failed('invalid input', problems(parsed.error));
     try {
       const look = Object.hasOwn(looks, name) ? looks[name] : undefined;
-      if (look) return { content: await look.read(parsed.data, this.#deps), isError: false };
+      if (look) return { content: await look.read(parsed.data, deps), isError: false };
       const builder = Object.hasOwn(builtTools, name) ? builtTools[name] : undefined;
       if (builder) {
-        const command = await builder.build(parsed.data, this.#deps);
+        const command = await builder.build(parsed.data, deps);
         if (command === null) return this.#unchanged();
         if ('refused' in command) return failed('refused', command.refused);
         return this.#dispatch(command, {});

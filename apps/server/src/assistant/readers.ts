@@ -36,6 +36,9 @@ export interface ReaderDeps {
   readonly registry: Readonly<Record<string, SettingDefinition>>;
   // What the installed provider of an instance offers (`listModels`).
   readonly listModels: (providerInstanceId: string) => Promise<ProviderModel[]>;
+  // The thread whose agent called the tool: a main thread (orchestrator threads spec 24), or
+  // absent for the assistant's own.
+  readonly threadId?: string | undefined;
 }
 
 export interface Reader<S extends z.ZodType = z.ZodType> {
