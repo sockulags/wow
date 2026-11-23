@@ -137,9 +137,9 @@ test.describe('chat', () => {
     await startThread(page, 'Hello there');
     const items = conversation(page);
     await expect(items.getByTestId('item-assistant_text')).toContainText('You said: Hello there');
-    // The message, its Edit and Fork actions, then its turn's start time.
+    // The message, its Edit, Fork and Mark actions, then its turn's start time.
     await expect(items.getByTestId('item-user')).toHaveText(
-      /^Hello thereEditFork from here\d{2}:\d{2}$/,
+      /^Hello thereEditFork from hereMark\d{2}:\d{2}$/,
     );
 
     const reasoning = items.getByTestId('item-reasoning');

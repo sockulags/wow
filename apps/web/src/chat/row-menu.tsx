@@ -107,7 +107,7 @@ export function RowButtons({ thread }: { readonly thread: Thread }) {
   return (
     <span className="pointer-events-none absolute top-1 right-1 flex gap-0.5 rounded-md bg-sidebar opacity-0 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100">
       <IconButton
-        label={thread.pinned ? 'Unpin thread' : 'Pin thread'}
+        label={`${thread.pinned ? 'Unpin' : 'Pin'} ${thread.title}`}
         size="icon-xs"
         tabIndex={-1}
         data-testid="thread-row-pin"
@@ -117,7 +117,7 @@ export function RowButtons({ thread }: { readonly thread: Thread }) {
       </IconButton>
       {(archived || thread.runId === null) && (
         <IconButton
-          label={archived ? 'Unarchive thread' : 'Archive thread'}
+          label={`${archived ? 'Unarchive' : 'Archive'} ${thread.title}`}
           size="icon-xs"
           tabIndex={-1}
           data-testid="thread-row-archive"
