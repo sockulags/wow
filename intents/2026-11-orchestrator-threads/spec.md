@@ -1,6 +1,6 @@
 ---
 intent: 2026-11-orchestrator-threads
-rev: 2
+rev: 3
 built_on: intent@1
 status: accepted
 ---
@@ -130,7 +130,11 @@ tools (`2026-11-app-assistant`), threads' working copies and Apply (`2026-11-thr
 24. The assistant's app tools (settings, projects, trackers, workflows, cards, backlog, the
     readers of mail and calendar, `ask_questions`, `show_secret_field`) are served on `/threads/mcp`
     to every main thread, under each tool's rules from `2026-11-app-assistant`: changes that let
-    the app do more on its own still wait for the user's yes. A helper does not get them.
+    the app do more on its own still wait for the user's yes. A helper does not get them, and a
+    main thread does not get the assistant's delegation, brief or memory tools (spec 26). What a
+    tool shows the user (a change row with Undo, a proposal with Yes and No, a question card, a
+    secret field) is drawn in the thread where the tool ran, right after its call, as the
+    Assistant view draws it today.
 25. The assistant thread (`kind: assistant`) becomes an ordinary main thread without a project, on
     the same instance and model, with its conversation and provider session kept, titled
     "Assistant". The `assistant.*` settings that chose its instance, model and instructions move:
