@@ -69,6 +69,42 @@ const script = (command: ProviderCommand) => {
   if (command.type === 'interrupt')
     return [{ type: 'turnInterrupted' as const, threadId: command.threadId }];
   if (command.type !== 'startTurn') return [];
+  // A main thread's agent asks the user with wow's ask_questions tool (orchestrator threads
+  // spec 24), as Claude Code reports the call.
+  if (/^ask me/i.test(command.prompt)) {
+    const itemId = `${command.threadId}-ask`;
+    return [
+      {
+        type: 'toolCallStarted' as const,
+        threadId: command.threadId,
+        itemId,
+        name: 'mcp__wow__ask_questions',
+        input: {
+          questions: [
+            {
+              question: 'Which kettle?',
+              header: 'Kettle',
+              options: [{ label: 'Steel' }, { label: 'Glass' }],
+              multiSelect: false,
+            },
+          ],
+        },
+      },
+      {
+        type: 'toolCallOutput' as const,
+        threadId: command.threadId,
+        itemId,
+        output: JSON.stringify({ outcome: 'asked', questions: 1 }),
+      },
+      {
+        type: 'toolCallCompleted' as const,
+        threadId: command.threadId,
+        itemId,
+        status: 'ok' as const,
+      },
+      { type: 'turnCompleted' as const, threadId: command.threadId },
+    ];
+  }
   if (/^approve/i.test(command.prompt)) {
     return [
       {
@@ -1151,5 +1187,48 @@ describe('main threads without a project, with the app tools (orchestrator threa
     await helperStarted(helperId);
     expect(threadRow(helperId)).toMatchObject({ cwd: root, parentThreadId: 'bare' });
     await client.close();
+  });
+});
+
+describe('answers and folders of main threads (orchestrator threads spec 1, 24, review)', () => {
+  it('goes on in the main thread with the answer to its ask_questions card, and makes no assistant thread', async () => {
+    create('t1', 'tea');
+    await turnOf('t1', 'Ask me which kettle');
+    const asked = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 't1'))
+      .all()
+      .find((item) => item.kind === 'tool_call');
+    if (!asked) throw new Error('no ask');
+    dispatch({
+      type: 'thread.answerQuestions',
+      threadId: 't1',
+      itemId: asked.id,
+      replies: [{ picked: ['Glass'], text: '' }],
+    });
+    await turnsSent('t1', 2);
+    expect(startTurnsOf('t1')[1]?.prompt).toContain('Glass');
+    expect(threadRow('assistant')).toBeUndefined();
+  });
+
+  it('refuses a folder that holds something on every try until a turn reached the provider', async () => {
+    createBare('crowded');
+    const folder = path.join(root, 'wow home', 'threads', 'crowded');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'AGENTS.md'), 'Invented instructions\n');
+    for (const attempt of [1, 2]) {
+      dispatch({ type: 'thread.sendMessage', threadId: 'crowded', text: `Try ${attempt}` });
+      await turnEnds('crowded');
+      await server.providerService.idle();
+    }
+    const errors = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'crowded'))
+      .all()
+      .filter((item) => item.kind === 'error');
+    expect(errors).toHaveLength(2);
+    expect(startTurnsOf('crowded')).toEqual([]);
   });
 });

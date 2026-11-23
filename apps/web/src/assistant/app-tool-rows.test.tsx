@@ -19,6 +19,7 @@ import { createStore } from 'zustand';
 import { describe, expect, it, vi } from 'vitest';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
 import { createDraftStore } from '@/chat/draft';
+import { ownThreadFolder } from '@/chat/new-thread';
 import { ThreadConversation } from '@/chat/thread-view';
 
 // The app tools in a main thread (orchestrator threads spec 24): what a call of wow's tools made
@@ -187,5 +188,16 @@ describe("a main thread's app tool rows (spec 24)", () => {
     setup({ ...main, id: 'helper', parentThreadId: 'main', startedBy: 'helper' });
     const conversation = await screen.findByRole('list', { name: 'Conversation' });
     expect(conversation.textContent).not.toContain('Always allow pnpm test in Tea');
+  });
+});
+
+describe('a new thread after one without a project (spec 1)', () => {
+  it('does not carry over a folder wow gave the last thread, but one the user chose', () => {
+    expect(ownThreadFolder({ id: 'bare', cwd: '/home/ada/.wow/threads/bare' })).toBe(true);
+    expect(ownThreadFolder({ id: 'bare', cwd: String.raw`C:\Users\ada\.wow\threads\bare` })).toBe(
+      true,
+    );
+    expect(ownThreadFolder({ id: 'other', cwd: '/home/ada/.wow/threads/bare' })).toBe(false);
+    expect(ownThreadFolder({ id: 'chosen', cwd: '/home/ada/tea' })).toBe(false);
   });
 });

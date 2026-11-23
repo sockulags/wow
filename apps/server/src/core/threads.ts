@@ -997,11 +997,22 @@ export function decideThread(
         const problem = replyProblem(question, command.replies[index] ?? { picked: [], text: '' });
         if (problem) throw new CommandRejected('rejected', `"${question.question}": ${problem}`);
       });
+      const answer = askAnswerPrompt(ask, command.replies);
+      // A main thread's answer goes on in that thread, with none of the assistant's notes.
+      if (stored.kind !== 'assistant') {
+        return [
+          turnStarted(read, stored, now, {
+            text: askAnswerText(ask, command.replies),
+            prompt: answer,
+            assistant: false,
+            answers: { askItemId: item.id, replies: command.replies },
+          }),
+        ];
+      }
       const opened = assistantThreadEvents(read, context);
       const notes = [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
         (entry): entry is string => entry !== null,
       );
-      const answer = askAnswerPrompt(ask, command.replies);
       return [
         ...opened.events,
         turnStarted(read, opened.thread, now, {

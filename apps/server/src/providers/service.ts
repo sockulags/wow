@@ -834,9 +834,15 @@ export class ProviderService {
     const failed = await this.#deps.prepareThread?.(command.threadId);
     if (failed !== undefined) throw new Error(failed);
     // A thread with a folder of its own in wow's home starts with it empty (orchestrator threads
-    // spec 1).
-    if (index === 0 && command.cwd === threadFolderOf(this.#deps.home, command.threadId)) {
-      await prepareThreadFolder(command.cwd);
+    // spec 1): checked until a turn has reached the provider, so sending again after a refusal
+    // does not get past it.
+    if (command.cwd === threadFolderOf(this.#deps.home, command.threadId)) {
+      const session = this.#deps.db
+        .select({ id: threads.providerSessionId })
+        .from(threads)
+        .where(eq(threads.id, command.threadId))
+        .get()?.id;
+      if (!session) await prepareThreadFolder(command.cwd);
     }
     const snapshots = this.#deps.snapshots;
     if (restore) {

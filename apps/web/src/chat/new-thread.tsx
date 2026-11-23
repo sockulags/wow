@@ -173,7 +173,10 @@ export function NewThreadView() {
           defaultInstanceId === '' || defaultInstanceId === instance.id ? defaultModel : '',
         ));
 
-  const cwd = (untouched && !project ? last?.cwd : picked.cwd) ?? project?.cwd ?? '';
+  // A folder of the last thread's own in wow's home (orchestrator threads spec 1) is not carried
+  // over: the new thread gets one of its own.
+  const lastFolder = last && !ownThreadFolder(last) ? last.cwd : undefined;
+  const cwd = (untouched && !project ? lastFolder : picked.cwd) ?? project?.cwd ?? '';
   const copyPlan = useWorkingCopyPlan(project?.id);
   const ownCopy = project !== undefined && draftCopyOn(copyPlan, picked.ownWorkingCopy);
   const copyOffered = project !== undefined && copyPlan?.status === 'ok';
@@ -494,3 +497,7 @@ export function NewThreadView() {
     </div>
   );
 }
+
+// Whether a thread works in the folder wow gave it, `<wow home>/threads/<its id>`.
+export const ownThreadFolder = (thread: Pick<Thread, 'id' | 'cwd'>): boolean =>
+  thread.cwd.replaceAll('\\', '/').endsWith(`/threads/${thread.id}`);
