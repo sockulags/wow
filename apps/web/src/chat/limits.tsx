@@ -27,10 +27,11 @@ export function limitName(limit: Pick<ReportedLimit, 'window' | 'label'>): strin
 export const isStale = (limit: ReportedLimit, now: number): boolean =>
   limit.resetsAt !== null && Date.parse(limit.resetsAt) <= now;
 
+const rank = (limit: ReportedLimit) =>
+  limit.state === 'reached' ? 101 : (limit.usedPercent ?? (limit.state === 'warning' ? 100 : 0));
+
 // The window closest to its limit among those still current.
 export function topLimit(limits: readonly ReportedLimit[], now: number): ReportedLimit | undefined {
-  const rank = (limit: ReportedLimit) =>
-    limit.state === 'reached' ? 101 : (limit.usedPercent ?? (limit.state === 'warning' ? 100 : 0));
   return limits.filter((limit) => !isStale(limit, now)).toSorted((a, b) => rank(b) - rank(a))[0];
 }
 

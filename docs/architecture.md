@@ -1704,7 +1704,8 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
   `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
-  notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.commitTimeoutMs`,
+  notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.limitWarnPercent` (see
+  "Plan limits"), `chat.commitTimeoutMs`,
   `chat.pushTimeoutMs`, `chat.commitOutputMaxBytes`, `chat.proposalTimeoutMs`,
   `chat.proposalPatchMaxBytes`, `chat.commitMessageTemplate` and `chat.pullRequestTemplate`
   (project-scoped), `chat.pullRequestDraft` (project-scoped) (see "Commit and pull request from
@@ -3519,6 +3520,22 @@ in `groupSummary`'s words, with "N failed". The change part opens Changes narrow
 only", for which `threads.diff {turnId}` answers the files of its two snapshots as `turnPaths`
 (`FolderSnapshots.turnPaths`). Find reads the summary from `FindSource.summaries`; the Markdown
 export writes "Turn: …" at the turn's end.
+
+### Plan limits (chat overview U7)
+
+The Claude adapter turns Claude Code's `rate_limit_event` (`rate_limit_info`: `rateLimitType`,
+`utilization` as a fraction or a percent, `resetsAt` in seconds, `status`) into a `limits`
+provider event of `ProviderLimit {window: fiveHour | week | weekModel | other, label,
+usedPercent, resetsAt, state: ok | warning | reached}`. Codex sends none: the generated protocol
+has no rate-limit fields. The provider service does not batch it as a thread item; it dispatches
+the server-only `providerInstance.limitsReported` for the thread's instance. `core/
+provider-limits.ts` keeps the latest of each window with its `reportedAt` (event
+`providerInstance.limitsReported`, table `provider_limits`, migration 0046_provider_limits,
+topic `providerLimits`) and emits a `notification.sent` of kind `limit` when a window crosses
+`chat.limitWarnPercent` or is reached, once per window and reset, unless `chat.notifications` is
+off. The web shows `LimitChip` (`chat/limits.tsx`) in the composer bar from the warning on, and
+`LimitList` in Settings → Providers; a window whose reset time has passed reads "reset at …, not
+reported since". No account detail is kept with the limits.
 
 ### Subagents and background work
 

@@ -237,7 +237,10 @@ function planLimit(info: {
   const used =
     info.utilization === undefined || !Number.isFinite(info.utilization)
       ? null
-      : Math.min(100, Math.max(0, info.utilization <= 1 ? info.utilization * 100 : info.utilization));
+      : Math.min(
+          100,
+          Math.max(0, info.utilization <= 1 ? info.utilization * 100 : info.utilization),
+        );
   const resets =
     info.resetsAt === undefined || !Number.isFinite(info.resetsAt)
       ? null

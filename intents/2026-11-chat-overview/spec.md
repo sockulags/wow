@@ -154,8 +154,8 @@ It names their files as they are at 0.5.0.
 
     The sources are:
     - Claude Code sends them as rate-limit events in the stream.
-    - Codex sends them with its token counts and its account notifications, where its version
-      does.
+    - Codex: the protocol wow is built against (`packages/provider-codex/src/protocol/generated`)
+      has no rate-limit fields, so this version shows no limits for Codex.
 
     Nothing is fetched or estimated otherwise, and a provider that says nothing shows nothing.
 

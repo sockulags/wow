@@ -440,6 +440,16 @@ that thread. A session whose folder is gone is listed greyed with the reason. No
 to Claude's or Codex's files; how many sessions are listed and how much of the prompt shows are
 in Settings → Providers.
 
+### Plan limits
+
+When Claude Code reports how much of your claude.ai plan's limits is used (the 5-hour window,
+the week, a model's week), wow keeps the latest of each. From 80 % (**Warn about a plan limit
+at**, `chat.limitWarnPercent`) the composer bar shows the closest one, such as "5 h: 84 % ·
+resets 16:40", amber, and red once it is reached; hover it for every window. wow tells you once
+per window when it crosses the warning and again when it is reached (as `chat.notifications`
+says). Settings → Providers lists every window with when it was reported. Only what the provider
+reports shows: an API key reports no plan limits, and this version shows none for Codex.
+
 ### Model, effort and mode
 
 The bar at the bottom of the composer, left of Send, reads the thread's model, effort and

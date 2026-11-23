@@ -227,6 +227,14 @@ const boundary = (
   } as unknown as SDKMessage,
 });
 
+const rateLimit = (info: Record<string, unknown>): FakeStep => ({
+  message: {
+    type: 'rate_limit_event',
+    rate_limit_info: info,
+    uuid: 'rl',
+    session_id: 'sess-1',
+  } as unknown as SDKMessage,
+});
 describe('@wow/provider-claude', () => {
   it('is the claude provider', () => {
     expect(providerKind).toBe('claude');
@@ -528,24 +536,16 @@ describe('@wow/provider-claude', () => {
   });
 
   it("passes a plan's rate limit on as a limit in wow's words (chat overview spec 25)", async () => {
-    const limit = (info: Record<string, unknown>): FakeStep => ({
-      message: {
-        type: 'rate_limit_event',
-        rate_limit_info: info,
-        uuid: 'rl',
-        session_id: 'sess-1',
-      } as unknown as SDKMessage,
-    });
     const h = harness([
       [
-        limit({
+        rateLimit({
           status: 'allowed_warning',
           rateLimitType: 'five_hour',
           utilization: 0.84,
           resetsAt: 1_795_400_000,
         }),
-        limit({ status: 'rejected', rateLimitType: 'seven_day_opus', utilization: 100 }),
-        limit({ status: 'allowed', rateLimitType: 'something_new' }),
+        rateLimit({ status: 'rejected', rateLimitType: 'seven_day_opus', utilization: 100 }),
+        rateLimit({ status: 'allowed', rateLimitType: 'something_new' }),
         result(0),
       ],
     ]);
