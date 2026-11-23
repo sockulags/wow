@@ -239,6 +239,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       engine,
       logger,
       home,
+      mergeBrief: () => settings.get('chat.mergeBrief'),
       git: () => ({
         timeoutMs: settings.get('trackers.gitTimeoutMs'),
         stopWaitMs: settings.get('advanced.gitStopWaitMs'),

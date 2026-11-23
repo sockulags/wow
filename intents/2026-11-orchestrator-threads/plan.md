@@ -1,7 +1,7 @@
 ---
 intent: 2026-11-orchestrator-threads
-rev: 1
-built_on: spec@1
+rev: 2
+built_on: spec@2
 status: accepted
 source: files
 ---
@@ -72,31 +72,36 @@ Open risks:
 
 ### U2 Bringing helpers' work together
 
-Outcome: the main agent can see each helper's branch and commits and get a worktree of its own
-to merge them in, so the user reviews one merged branch in the main thread's Changes.
-Boundaries: wow runs no merge itself; the project folder is never touched; Apply and Commit and
-pull request are as today.
+Outcome: the agent can see each helper's branch and commits, and `merge_helpers` starts a merge
+helper in its own copy that merges the named helpers' branches, so the user reviews one merged
+branch in that helper's Changes.
+Boundaries: wow runs no merge itself, the merge helper's agent does; the project folder is never
+touched; Apply and Commit and pull request are as today; no new web rows (the merge helper is an
+ordinary helper row).
 Change surface: `apps/server/src/helpers/helper-tools.ts` (`read_helper` fields, `merge_helpers`,
-tool texts per spec 11), `apps/server/src/projects/git.ts` (branch, ahead count),
-`apps/server/src/workspaces/` and the thread working copy code that `isolation: 'copy'` uses.
+tool texts per spec 11), `apps/server/src/projects/git.ts` (current branch, commits ahead);
+`packages/contracts/src/settings.ts` (`chat.mergeBrief`). The merge helper starts through the
+same `helper.start` as any copy helper.
 Acceptance:
 
 - Given two helpers with copies of one repository, then `read_helper` answers each one's folder,
   repository, branch and commits ahead (spec 6).
-- Given `merge_helpers` from a main thread without a worktree in that repository, then a worktree
-  on `wow/thread/<id>` is made from `HEAD` and its path answered, and `git status` of the project
-  folder is unchanged (spec 12).
-- Given a main thread that already has a worktree there, then `merge_helpers` answers its path and
-  makes nothing (spec 12).
-- Given the merged branch, then the main thread's Changes lists the merged files and Apply to
-  project folder works from it (spec 13).
+- Given `merge_helpers` naming two of the caller's idle copy helpers, then a helper of the caller
+  starts in a new copy of their repository, and its brief names both branches in order; `git
+status` of the project folder is unchanged (spec 12).
+- Given fewer than two helpers, one that is not the caller's, one without a copy, one that works,
+  or copies of two repositories, then `merge_helpers` answers why and starts nothing (spec 12).
+- Given the merge helper's copy after a merge commit of both branches, then its Changes lists
+  both helpers' files and Apply to project folder brings them home (spec 13).
 
 Ground truth: `pnpm --filter @wow/server test` with a temporary Git repository fixture, repository
 checks.
-Dependencies: U1 for `folder`, copies from any repository and the helper tree.
+Dependencies: U1 for `folder`, copies from the repository's main worktree, `WorkingCopy.repository`
+and the helper tree.
 Evidence and settled decisions:
 
-- The agent merges with its own Git tools; wow only prepares the worktree (spec Decisions).
+- A merge helper, not a worktree for the main thread: a thread cannot move folders once its
+  session started, and Codex writes only in its own folder (spec Decisions, owner's choice).
 
 Delivery target: pull request.
 Open risks: none.
