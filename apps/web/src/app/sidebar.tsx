@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ThreadList } from '@/chat/thread-list';
+import { cn } from '@/lib/utils';
 import { openThreadOf } from './notifications';
 import { sections, type Section } from './sections';
 
@@ -21,20 +22,20 @@ export const pages: readonly Section[] = pageIds.flatMap(
   (id) => sections.find((section) => section.id === id) ?? [],
 );
 
-function PagesMenu() {
+function PagesMenu({ rail }: { readonly rail: boolean }) {
   const navigate = useNavigate();
   return (
-    <div className="flex shrink-0 border-t border-sidebar-border px-2 py-1 max-xl:px-1">
+    <div className={cn('flex shrink-0 border-t border-sidebar-border px-2 py-1', rail && 'px-1')}>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="sm"
-            title="Settings"
-            className="w-full justify-start max-xl:justify-center max-xl:px-0"
+            title={rail ? 'Settings' : undefined}
+            className={cn('w-full justify-start', rail && 'justify-center px-0')}
           >
             <SettingsIcon />
-            <span className="max-xl:sr-only">Settings</span>
+            <span className={cn(rail && 'sr-only')}>Settings</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" className="w-56">
@@ -88,5 +89,5 @@ export function useEscapeToThread(): void {
 }
 
 export function Sidebar() {
-  return <ThreadList footer={<PagesMenu />} />;
+  return <ThreadList footer={(rail) => <PagesMenu rail={rail} />} />;
 }

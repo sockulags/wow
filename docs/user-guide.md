@@ -71,7 +71,8 @@ wow opens on chat. The left side is the list of your threads. The **Settings** b
 opens a menu with **Calendar**, **Backlog**, **Workflows** and **Settings**; each opens its page in
 the main area, and **Escape** there takes you back to the thread you had open. Each page keeps its
 key (Ctrl+1 for Calendar and so on) and its "Go to" command in the palette. Below 1280 pixels
-wide the list narrows to the threads' marks; hover one for its title. When the window cannot
+wide the list narrows to the threads' marks; hover one for its title. **Ctrl+Shift+F**, a filter or a
+picked project or row shows the whole list again. When the window cannot
 reach the wow server, a bar under the header says so and offers **Retry now**; lists keep what they last showed, dimmed,
 until the connection is back. Everything you can do is in
 the command palette: press **Ctrl+K** and type. The palette searches threads, cards, backlog items,

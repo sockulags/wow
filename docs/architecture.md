@@ -4312,9 +4312,12 @@ for the user from any depth is drawn there), `working` when it or any helper und
 the `threads` topic again, since answering a gate card changes no thread row by itself. The
 mark for "Waits for you" is an exclamation mark in a ring of `--state-needs-you`; Working is a
 pulsing dot of `--state-working`, Unread a dot of `--primary`, Done a hollow dot. Below 1280 px
-(`max-xl`) the list is a 3rem rail: each row shows only its mark, with the title as its hover
-title and for screen readers, and the filter, the chips and the row buttons are hidden, so a
-narrow window keeps the room `panel/model.ts` `overlayCap` counts on.
+(`useBelow('list')`) the list is a 3rem rail (`data-rail`): each row shows only its mark, with
+its title, project, Failed and Archived as its hover title and for screen readers, and the
+filter, the chips and the row buttons are hidden, so a narrow window keeps the room
+`panel/model.ts` `overlayCap` counts on. While the filter has text, a project is picked, rows are
+picked, or "Filter threads" asked for the field, the list is whole again, so nothing that narrows
+it is out of sight.
 `chat/thread-sections.ts` orders the rows by status, Waits for you, Working, Unread, Done, and
 within a status pinned threads first, then the newest `updatedAt`. "Next unread thread" walks
 the same order. There are no groups; migration `0049_retire_thread_list_groups` deletes the stored
@@ -5576,7 +5579,7 @@ Tokens add `--warning`, `--info`, `--destructive-foreground`, `--overlay` and `-
 the calendar's `--event-outlook`, `--event-outlook-border`, `--event-card`, `--event-card-border`,
 `--event-work-hours` and `--event-now`, and an 11px `text-2xs` step; type uses only `text-2xs`, `text-xs`, `text-sm` and `text-base`. The
 left side is the thread list (see "Thread list, unread and chat notifications"); below 1280 px
-(`max-xl`) it narrows to a 3rem rail of status marks.
+it narrows to a 3rem rail of status marks while none of it is in use.
 
 ## Testing strategy
 

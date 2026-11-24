@@ -3,8 +3,11 @@ import { useSyncExternalStore } from 'react';
 // Window widths where the layout changes, like Tailwind's breakpoints: layout facts, not
 // preferences. The user's own choices are settings (appearance.contextPanel); below `narrow` the
 // context panel stops taking room from the view and opens over it instead (audit A-12).
+// Below `list` the thread list is a rail of status marks while nothing in it is being used
+// (orchestrator threads spec 30), as the sections were before.
 export const breakpoints = {
   narrow: 1200,
+  list: 1280,
 } as const;
 
 export type Breakpoint = keyof typeof breakpoints;

@@ -3,6 +3,7 @@ import { settingValue } from '@wow/client-runtime';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon, SparklesIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useBelow } from '@/lib/use-breakpoint';
 import { useStore } from 'zustand';
 import { eventToBinding, normalizeBinding } from '@/app/keybindings';
 import { openThreadOf } from '@/app/notifications';
@@ -33,7 +34,9 @@ import { listTitle } from './view-model';
 // with their title, project and status, ordered by status. It keeps the filter, the project
 // chips, pin, archive, mark done, the row menu and picking several rows. Below 1280px it narrows to
 // a 3rem rail of status marks, as the sections did (audit A-12), so a narrow window keeps its room
-// for the view; the title moves into the row's hover title.
+// for the view; the title moves into the row's hover title. While the filter, a project or picked
+// rows are in use, or the filter is asked for, it is the whole list again, so nothing it narrows
+// to is hidden.
 
 // The open thread is read as soon as it is on screen in a focused window, and again whenever a
 // turn ends or a request arrives while it is (agent workbench spec 70). A second request in a
@@ -122,7 +125,12 @@ const togglePick = (threadId: string) =>
     anchor: threadId,
   }));
 
-export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
+export function ThreadList({
+  footer,
+}: {
+  // Drawn under the list; told whether the list is a rail.
+  readonly footer?: ReactNode | ((rail: boolean) => ReactNode);
+}) {
   const { rows: threads, status } = useTopicState('threads');
   const runs = useTopic('workflowRuns') ?? [];
   const workflows = useTopic('workflows') ?? [];
@@ -135,10 +143,13 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
   const filterField = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const { hits, error: searchError } = useThreadSearch(filter);
+  const narrow = useBelow('list');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const wantsFocus = useRef(false);
   useEffect(() => {
     if (focusRequest === 0) return;
-    filterField.current?.focus();
-    filterField.current?.select();
+    wantsFocus.current = true;
+    setFilterOpen(true);
   }, [focusRequest]);
 
   const workflowName = (runId: string | null) => {
@@ -149,6 +160,15 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
   const mains = threads?.filter(isMainThread) ?? [];
   const chips = projectChips(mains, projects);
   const picked = pickedProject(mains, projects, projectId);
+  const rail =
+    narrow && filter === '' && picked === undefined && pickedRows.length === 0 && !filterOpen;
+  // The filter takes the keyboard once the list is whole again.
+  useEffect(() => {
+    if (!wantsFocus.current || rail) return;
+    wantsFocus.current = false;
+    filterField.current?.focus();
+    filterField.current?.select();
+  }, [rail, focusRequest]);
   const visible = threadListOrder(
     filteredThreads(mains, projects, { filter, projectId: picked, hits }),
   );
@@ -180,7 +200,7 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
     const binding = settingValue(settings.getState().values, 'keybindings.threadFilterInList');
     if (pressed && binding !== '' && normalizeBinding(binding) === pressed) {
       event.preventDefault();
-      filterField.current?.focus();
+      threadListStore.setState((state) => ({ focusRequest: state.focusRequest + 1 }));
       return;
     }
     if (!(event.target instanceof HTMLElement) || !event.target.matches(rowSelector)) return;
@@ -216,6 +236,14 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
     const unread = isUnread(thread);
     const place = threadRowPlace(thread, projects);
     const isPicked = pickedRows.includes(thread.id);
+    const failed = thread.state === 'failed';
+    const archived = isArchived(thread);
+    // In the rail the hover title says what the row's text would.
+    const hover = rail
+      ? [listTitle(thread, workflow), place, failed && 'Failed', archived && 'Archived']
+          .filter(Boolean)
+          .join(' · ')
+      : undefined;
     return (
       <li key={thread.id} className="group/row relative">
         <ThreadRowMenu thread={thread}>
@@ -226,9 +254,10 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
             data-thread-id={thread.id}
             data-picked={isPicked || undefined}
             aria-description={isPicked ? 'Picked' : undefined}
-            title={listTitle(thread, workflow)}
+            title={hover}
             className={cn(
-              'flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring max-xl:items-center max-xl:px-0',
+              'flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring',
+              rail && 'items-center px-0',
               isPicked && 'bg-primary/15 ring-1 ring-primary/40',
             )}
             activeProps={{ className: 'bg-sidebar-accent', 'aria-current': 'page' }}
@@ -246,7 +275,11 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
               <StatusMark status={listStatusOf(thread)} />
               <span
                 data-testid="thread-row-title"
-                className={cn('min-w-0 flex-1 truncate max-xl:sr-only', unread && 'font-semibold')}
+                className={cn(
+                  'min-w-0 flex-1 truncate',
+                  unread && 'font-semibold',
+                  rail && 'sr-only',
+                )}
               >
                 {listTitle(thread, workflow)}
               </span>
@@ -254,20 +287,25 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
                 <SparklesIcon
                   aria-label="Started by the assistant"
                   data-testid="thread-row-assistant"
-                  className="size-3.5 shrink-0 text-muted-foreground max-xl:hidden"
+                  className={cn('size-3.5 shrink-0 text-muted-foreground', rail && 'sr-only')}
                 />
               )}
               {thread.pinned && (
                 <PinIcon
                   aria-label="Pinned"
-                  className="size-3.5 shrink-0 fill-current text-muted-foreground max-xl:hidden"
+                  className={cn(
+                    'size-3.5 shrink-0 fill-current text-muted-foreground',
+                    rail && 'sr-only',
+                  )}
                 />
               )}
-              {thread.state === 'failed' && (
-                <span className="shrink-0 text-2xs text-state-failed max-xl:hidden">Failed</span>
+              {failed && (
+                <span className={cn('shrink-0 text-2xs text-state-failed', rail && 'sr-only')}>
+                  Failed
+                </span>
               )}
-              {isArchived(thread) && (
-                <span className="shrink-0 text-2xs text-muted-foreground max-xl:hidden">
+              {archived && (
+                <span className={cn('shrink-0 text-2xs text-muted-foreground', rail && 'sr-only')}>
                   Archived
                 </span>
               )}
@@ -275,15 +313,13 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
             <span
               data-testid="thread-row-detail"
               title={place}
-              className="truncate pl-5.5 text-2xs text-muted-foreground max-xl:hidden"
+              className={cn('truncate pl-5.5 text-2xs text-muted-foreground', rail && 'sr-only')}
             >
               {place}
             </span>
           </Link>
         </ThreadRowMenu>
-        <span className="max-xl:hidden">
-          <RowButtons thread={thread} />
-        </span>
+        {!rail && <RowButtons thread={thread} />}
       </li>
     );
   };
@@ -291,24 +327,28 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
   return (
     <nav
       aria-label="Threads"
-      className="flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground max-xl:w-12"
+      data-rail={rail || undefined}
+      className={cn(
+        'flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
+        rail && 'w-12',
+      )}
       onKeyDown={onListKey}
     >
-      <div className="flex h-11 shrink-0 items-center gap-1 px-2 max-xl:px-1">
+      <div className={cn('flex h-11 shrink-0 items-center gap-1 px-2', rail && 'px-1')}>
         <Button
           asChild
           variant="ghost"
           size="sm"
-          className="w-full justify-start max-xl:justify-center max-xl:px-0"
+          className={cn('w-full justify-start', rail && 'justify-center px-0')}
         >
-          <Link to="/chat/new" title="New thread">
+          <Link to="/chat/new" title={rail ? 'New thread' : undefined}>
             <PlusIcon />
-            <span className="max-xl:sr-only">New thread</span>
-            <ShortcutHint shortcut="keybindings.newThread" className="ml-auto max-xl:hidden" />
+            <span className={cn(rail && 'sr-only')}>New thread</span>
+            {!rail && <ShortcutHint shortcut="keybindings.newThread" className="ml-auto" />}
           </Link>
         </Button>
       </div>
-      <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-1 max-xl:hidden">
+      <div className={cn('flex shrink-0 flex-col gap-1.5 px-2 pb-1', rail && 'hidden')}>
         <div className="relative">
           <SearchIcon
             aria-hidden
@@ -321,6 +361,7 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
             placeholder="Filter threads"
             value={filter}
             onChange={(event) => threadListStore.setState({ filter: event.target.value })}
+            onBlur={() => setFilterOpen(false)}
             onKeyDown={(event) => {
               if (event.key === 'ArrowDown') {
                 event.preventDefault();
@@ -373,14 +414,14 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
         )}
       </div>
       <PickedBar threads={threads ?? []} />
-      <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 max-xl:px-1">
+      <div ref={list} className={cn('min-h-0 flex-1 overflow-y-auto px-2 pb-2', rail && 'px-1')}>
         {threads === undefined ? (
-          <div className="max-xl:hidden">
+          <div className={cn(rail && 'hidden')}>
             <TopicPlaceholder status={status} compact rows={4} />
           </div>
         ) : mains.length === 0 ? (
           <EmptyState
-            className="max-xl:hidden"
+            className={cn(rail && 'hidden')}
             compact
             icon={MessagesSquareIcon}
             title="No threads yet"
@@ -388,7 +429,6 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
           />
         ) : visible.length === 0 ? (
           <EmptyState
-            className="max-xl:hidden"
             compact
             icon={SearchIcon}
             title="No thread matches"
@@ -400,7 +440,7 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
           </ul>
         )}
       </div>
-      {footer}
+      {typeof footer === 'function' ? footer(rail) : footer}
     </nav>
   );
 }

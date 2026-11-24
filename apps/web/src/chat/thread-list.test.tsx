@@ -346,6 +346,55 @@ describe('main threads by status (orchestrator threads spec 30, 31)', () => {
   });
 });
 
+// jsdom has no matchMedia; a narrow window is one whose max-width queries match.
+const narrowWindow = () =>
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query.includes('max-width'),
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
+const nav = () => screen.getByRole('navigation', { name: 'Threads' });
+
+describe('a narrow window (orchestrator threads spec 30)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('is a rail of marks whose rows keep their titles, and the filter command makes it whole', async () => {
+    narrowWindow();
+    const { runtime } = fake({
+      projects: [],
+      threads: [thread('t1', 'Kettle timer', { state: 'failed', listStatus: 'unread' })],
+    });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    expect(await listed()).toEqual(['Kettle timer']);
+    expect(nav().hasAttribute('data-rail')).toBe(true);
+    const row = screen.getByRole('link', { name: /Kettle timer/ });
+    expect(row.getAttribute('title')).toBe('Kettle timer · No project · Failed');
+    // Tailwind's classes do not apply in jsdom: the filter is in a block the rail hides.
+    expect(
+      screen.getByRole('searchbox', { name: 'Filter threads' }).closest('.hidden'),
+    ).not.toBeNull();
+    await user.keyboard('{Control>}{Shift>}f{/Shift}{/Control}');
+    const field = await screen.findByRole('searchbox', { name: 'Filter threads' });
+    expect(document.activeElement).toBe(field);
+    expect(field.closest('.hidden')).toBeNull();
+    expect(nav().hasAttribute('data-rail')).toBe(false);
+  });
+
+  it('stays whole while a filter is set, so what it narrows to is never hidden', async () => {
+    narrowWindow();
+    threadListStore.setState({ filter: 'kettle' });
+    const { runtime } = fake({ projects: [], threads: [thread('t1', 'Tea list')] });
+    await renderApp('/chat', runtime);
+    expect(await screen.findByText('No thread matches')).toBeTruthy();
+    expect(nav().hasAttribute('data-rail')).toBe(false);
+    expect(screen.getByRole('searchbox', { name: 'Filter threads' })).toBeTruthy();
+  });
+});
+
 const rowLink = (title: string) => {
   const element = screen
     .getAllByTestId('thread-row-title')
