@@ -1463,13 +1463,17 @@ planId, intentId, unitKey, title}`) and has the id `<planRunId>.<unitKey>`.
 
 ## Scheduler and triggers
 
-A local card with a workflow and a project has one trigger, id `<cardId>:trigger`, at its start
+A local card with a workflow has one trigger, id `<cardId>:trigger`, at its start
 (`core/triggers.ts`); a repeating card's trigger waits at its next occurrence instead (see
-"Repeating cards" below). `card.create` and a `card.update` that changes the start, zone, project or
-workflow bring it in line: a start in the future makes it `scheduled`, a start already past makes
-it `missed` with `offerRunNow` (the user placed the card in the past, so it is not run on its own),
-and a card without a workflow or project cancels it. A card that has started a run keeps its fired
-trigger. Every change is one `trigger.set` event with the whole row.
+"Repeating cards" below). The workflow is a workflow file by its name (`CalendarItem.workflowName`,
+see "Workflows as text"); a card made before workflows were files names its stored workflow in
+`workflowId`, and that workflow's name is the file the one-time export wrote. A project is not
+needed. `card.create` and a `card.update` that changes the start, zone, project or workflow bring
+the trigger in line: a start in the future makes it `scheduled`, a start already past makes it
+`missed` with `offerRunNow` (the user placed the card in the past, so it is not run on its own),
+and a card without a workflow cancels it. A card that has started a thread keeps its fired
+trigger. Every change is one `trigger.set` event with the whole row; the row's `runId` holds the
+thread the trigger started last.
 
 `Scheduler` (`apps/server/src/scheduler/service.ts`) is started last by `startServer` and stopped
 first. Every `scheduler.tickSeconds` it dispatches `trigger.fire {triggerId, runAt, runId}` for each
@@ -1477,18 +1481,38 @@ first. Every `scheduler.tickSeconds` it dispatches `trigger.fire {triggerId, run
 scheduled at that time, so a moved card or a repeated tick fires nothing. At start, and when
 `scheduler.paused` turns off, it dispatches `trigger.applyMissed {policy}` for the due ones instead:
 `run` fires them, `mark` sets the trigger `missed` with `offerRunNow`, `skip` sets it `missed`
-without; the card shows `missed` in both. While paused nothing fires. Firing starts the run with
-the card's project and backlog item through the same code as `workflowRun.start`; a run that cannot
-start (its workflow is gone, say) fires the trigger without a run and fails the card instead of
-retrying every tick. `startServer({clock, schedulerTimers})` lets tests move time and call
-`scheduler.tick()` themselves.
+without; the card shows `missed` in both. While paused nothing fires. `startServer({clock,
+schedulerTimers})` lets tests move time and call `scheduler.tick()` themselves.
 
-The card follows its run: every run transition with a `calendarItemId` sets the card's `state`
-(`running`, `waiting`, `done`, `failed`, `stopped`) and `runId` with `card.stateChanged`; a card run
-again follows the newer run. `card.runNow {cardId, runId}` starts a run for a card with a workflow
-and project and no live run, and fires its trigger. `card.delete` of a card whose run is running or
-waiting is refused with `conflict` unless it says `stopRun`: `true` stops the run in the same
-command, `false` leaves it going; the threads stay either way.
+**Scheduled jobs as main threads** (orchestrator threads spec 27, 28). Firing starts a main thread
+rather than a workflow run. `trigger.fire`, `trigger.applyMissed` and `card.runNow` are decided in
+steps (`decideTriggerInSteps`, like the helper commands): first the trigger, occurrence and card
+events, then `thread.create` and `thread.sendMessage` as the user would send them, each on what the
+step before left. `core/card-threads.ts` decides what to start:
+
+- `CalendarItem.threadMode` `new` (the default, and what the migration gives every card) makes a
+  new main thread per occurrence, titled with the card and the occurrence's day
+  (`Morning review · 2026-11-04`; a single card's thread has the card's title). Its id is the
+  command's `runId`. Its instance, model, effort and permission mode come from
+  `chat.defaultInstance` and `chat.defaultModel`, then the project's defaults, then the instance's.
+  It works in the project's folder, or in a folder of its own in wow's home without a project.
+- `same` sends the next occurrence as the next message in the card's one thread
+  (`CalendarItem.threadId`). An occurrence that finds that thread still working is recorded
+  `skipped` with the reason, as an occurrence whose run was still going was before.
+- The message is the card's notes, or its title without notes, with the workflow as the picked
+  skill (`{name, source: 'workflow' | 'project-workflow'}`), so the server sends it inside
+  `workflows.followTemplate` with the project's file of that name first.
+- A thread that cannot start (no workflow file of that name, no provider instance, no model)
+  fires the trigger without a thread and fails the card or the occurrence with the reason,
+  instead of retrying every tick.
+
+The card follows its thread: `CardFollower` (`scheduler/card-follow.ts`) watches commits with a
+turn starting or ending, an approval, a question or a thread item, and asks every card that
+follows a thread to look again with `card.followThread`. `cardStateOfThread` gives `waiting` while
+the thread waits for the user or a gate card in it is open (spec 14), `running` while a turn runs,
+and `done`, `failed` or `stopped` by how the last turn ended. A card whose state is the same
+commits nothing, so the follower never feeds itself. Deleting a card leaves its threads.
+`card.runNow {cardId, runId}` starts the thread at once for a card that is not still working.
 
 **Repeating cards** (recurring cards spec 1 to 21). A card can carry a repeat rule
 (`RepeatRule` in `packages/contracts/src/repeat.ts`): `frequency` (`daily`, `weekly`,
@@ -1588,62 +1612,12 @@ start, end}` is a drag in the calendar (spec 11): the occurrence must stay on it
   `read_triggers` shows the trigger's next time. The default instruction text says to make one
   repeating card for anything recurring and never a card per day.
 
-**Event triggers** (review loop spec 48 to 53) are rows of the same table with `kind: 'event'`:
-a project, an event (`merged`, `checksFailed`, `commentAdded`), a workflow and `enabled`.
-`trigger.create`, `trigger.setEnabled` and `trigger.delete` are the commands; a card's trigger
-keeps `kind: 'card'` and goes with its card. `isCardTrigger` and `isEventTrigger` in contracts
-narrow a row to the fields its kind has, and the scheduler's tick only looks at card triggers.
-There are no webhooks: an event is something a read from the host shows.
-
-- **Seeing an event.** `hosts.sync` (see "Hosts") compares every pull request it has just read
-  with the stored row (`seenEvents` in `core/triggers.ts`): merged now and not before; checks
-  failed now and either not before or on another head commit; a newest review comment the
-  stored row did not have. A pull request read for the first time has no stored row, so what
-  is already true when a plan is followed starts nothing, and a trigger made later only ever
-  sees later changes (spec 50). Only pull requests a followed plan or a run still names count,
-  which are the only ones the poller reads.
-- **One run per event and trigger.** Each event has an id from the host: `<changeRequestId>:merged`,
-  `<changeRequestId>:checksFailed:<head commit>` and `<changeRequestId>:comment:<comment id>`.
-  A trigger that fires stores `trigger.eventSeen` (the `trigger_events` table), and an event
-  it has seen is skipped, so checks that fail again on the same commit, or a force push back
-  to a commit that already failed, start nothing (spec 49). The run's id is derived from the
-  trigger and the event (`eventRunId`). Several new comments in one read are one event, for
-  the newest, so a review with ten comments starts one run.
-- **A run's answer starts nothing.** A review comment that arrives while the trigger's own run
-  for that pull request is still going, or one by an account in
-  `triggers.ignoredCommentAuthors`, is recorded as seen and starts no run. Otherwise a run that
-  answers the review with a comment would start the next run, without end. wow cannot tell
-  which account an agent writes as, so a person's comment made during that run is passed over
-  too.
-- **A fork starts nothing.** A run on a fork's pull request would check out the fork's head
-  commit, and the fork's files (agent instruction files, skills, hook settings, scripts a
-  workflow runs) would steer an agent on this computer. So an event on a change request with
-  `fromFork` is recorded as seen without a run and a `failed` notification "Trigger started
-  nothing" says why and names the setting, unless `triggers.forkPullRequests` (off by default,
-  global or per project) allows it. Turning the setting on later starts nothing for events
-  already seen. `RunEvent.fromFork` keeps what the read said.
-- **Off means never.** While `triggers.eventsEnabled` is off, the scheduler is paused or the
-  trigger itself is off, nothing starts. The stored pull request moves on all the same, so
-  the event is not seen again and nothing starts for it later (spec 52).
-- **The run.** It is an ordinary run with `WorkflowRun.event` (`RunEvent`: trigger, event,
-  pull request id, number, link, branch, head commit and head ref, whether it is from a fork,
-  and for a comment its link
-  and author). The handover template's `event`, `pullRequestNumber`, `pullRequestName`, `pullRequestUrl`,
-  `pullRequestBranch`, `commentUrl` and `commentAuthor` placeholders carry it into every step's
-  prompt (`eventValues` in the workflow engine). The comment's text is never copied: it is someone
-  else's text and must not become an instruction in a prompt wow writes, so the agent reads it
-  at the link (spec 51). The author is cut down to the characters account names use. A
-  project that stored its own handover template gets these lines only after adding the
-  placeholders.
-- **Its folder.** An event's run always works in a working copy. When a run whose last read
-  from the host names the pull request has one on disk (the run is still going, or its copy
-  was kept), the event's run works in that same folder; otherwise it gets a new one on the
-  pull request's head commit (see "Working copies").
-- **Failing.** A run that cannot start (the workflow is gone, say) stores the event as seen
-  without a run and a `failed` notification "Trigger failed" that opens the Triggers tab
-  (spec 53); it is not tried again. A started run stores "Workflow run started". The trigger
-  row's `runId` is the last run it started.
-- A project's event triggers are removed with the project.
+**Event triggers** are gone (orchestrator threads spec 29): nothing starts from what a read from
+the host shows, and the `triggers.*` settings are removed. Migration
+`0048_cards_start_threads` deletes the stored event triggers, what they saw (`trigger_events`) and
+the stored `triggers.*` values. `trigger.create`, `trigger.setEnabled` and `trigger.delete` still
+store, switch and delete a row until the Triggers tab and the assistant's trigger tools are removed
+(orchestrator threads U8); such a row never fires.
 
 Notifications are the server's channel to the user. While `scheduler.notifications` is on, the
 orchestrator stores a `notification.sent` row when a trigger starts a run, when a run waits at a
@@ -1743,7 +1717,6 @@ until that unit removes the mark. `group.*` covers every key of the group.
   are project-scoped, see "Backlog and trackers")
 - hosts: `hosts.polling`, `hosts.pollSeconds`, `hosts.listFallbackCount`,
   `hosts.longestWaitMinutes`, `hosts.pageMaxBytes` (see "Hosts")
-- triggers: `triggers.eventsEnabled`, `triggers.forkPullRequests`, `triggers.ignoredCommentAuthors` (the "Event triggers" page, see "Scheduler and triggers")
 - viewer: `viewer.maxFileBytes`, `viewer.htmlScripts`, `viewer.highlightMaxBytes`,
   `viewer.fileListLimit`, `viewer.fileMatchesShown` (see "Files" and "Panel tabs and files in
   chat"), `viewer.editorCommand`, `viewer.editorShell` (see "Open in editor" there)
@@ -2637,9 +2610,9 @@ decides what a command of the assistant does. The table names every type of `Ser
   trigger on, a workflow whose steps gain or change a permission mode, a gate condition or
   rules, lose a gate, or that turns "for units" or "own working copy" on or off, and a setting
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
-  `hosts.polling`, `triggers.eventsEnabled` or `viewer.htmlScripts` on. A change to
+  `hosts.polling` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex`, `triggers.forkPullRequests`, `viewer.editorCommand`
+  is any change to `assistant.allowCodex`, `viewer.editorCommand`
   or `viewer.editorShell`, either way (the last two name a program the server runs). Four
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
@@ -3030,7 +3003,7 @@ toFillIn, leftOut}`). It takes every global setting that is stored, passes its s
 from its default: this includes the trackers, hosts and `workflows.templates` settings. A secret
 setting is never read, and a stored reference only puts its key under `toFillIn`; the secret store
 is not asked. A setting whose registry entry has `personal` stays out: `account` for the Jira and
-Confluence email, the GitHub owner and `triggers.ignoredCommentAuthors`, `machine` for folders and ids that fit one computer (`skills.directories`,
+Confluence email and the GitHub owner, `machine` for folders and ids that fit one computer (`skills.directories`,
 `workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
 `appearance.paletteRecent`, `providers.offerSetup`), `person` for what only that person can say (`calendar.zone`,
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
@@ -4670,7 +4643,7 @@ spec 48):
 the event triggers of every project, grouped by project, each with its switch, the workflow it
 starts, a link to the last run it started and Delete (at once, with Undo, which makes the
 trigger again); "New trigger" is a dialog that asks for project, event and workflow, and a
-line says so while `triggers.eventsEnabled` is off or the scheduler is paused. `triggers.ts`
+line says that event triggers start nothing any more (orchestrator threads spec 29). `triggers.ts`
 holds the dialog's draft and the server's refusals (`triggersStore`), so the buttons and the
 palette commands (`workflows.triggers`, `trigger.new`, `trigger.toggle.<id>`,
 `trigger.delete.<id>`) act on the same thing; the rows come from the `triggers` topic alone. A

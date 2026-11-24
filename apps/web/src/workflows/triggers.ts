@@ -217,12 +217,8 @@ export const triggerTitle = (row: TriggerRow): string =>
   `${row.event} → ${row.workflow ?? 'a workflow that is gone'}`;
 
 // Why event triggers start nothing right now, if so (review loop spec 52).
-export function triggersHeld(eventsEnabled: boolean, schedulerPaused: boolean): string | undefined {
-  if (!eventsEnabled) {
-    return 'Event triggers are switched off in Settings → Event triggers. Events seen meanwhile start nothing, also not later.';
-  }
-  if (schedulerPaused) {
-    return 'The scheduler is paused. Events seen meanwhile start nothing, also not later.';
-  }
-  return undefined;
+// Event triggers start nothing any more (orchestrator threads spec 29): a card with a workflow in
+// the calendar starts a main thread instead.
+export function triggersHeld(_schedulerPaused: boolean): string {
+  return 'Event triggers start nothing any more. Put a card with a workflow in the calendar to start a thread at a time instead.';
 }

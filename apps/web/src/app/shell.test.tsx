@@ -164,7 +164,6 @@ describe('shell', () => {
       'Plans',
       'Trackers',
       'Hosts',
-      'Event triggers',
       'Viewer',
       'Changes',
       'Working copies',

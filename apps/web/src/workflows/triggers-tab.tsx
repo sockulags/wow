@@ -196,12 +196,10 @@ export function TriggersTab() {
   const workflows = useTopic('workflows') ?? [];
   const reads = useTopic('hostReads') ?? [];
   const git = useProjectsGit(useTopic('projects'));
-  // Event triggers start nothing any more (orchestrator threads spec 29); the tab goes in U8.
-  const eventsEnabled = false;
   const schedulerPaused = useSetting('scheduler.paused');
   const error = useStore(triggersStore, (state) => state.error);
   const groups = triggerGroups(triggers ?? [], projects, workflows, reads, git);
-  const held = triggersHeld(eventsEnabled, schedulerPaused);
+  const held = triggersHeld(schedulerPaused);
   const newTrigger = (
     <Button type="button" size="sm" onClick={openNewTrigger}>
       <PlusIcon />
