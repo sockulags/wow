@@ -36,6 +36,12 @@ const conversation = (page: Page) => page.getByRole('list', { name: 'Conversatio
 const threadList = (page: Page) => page.getByRole('navigation', { name: 'Threads' });
 const messageBox = (page: Page) => page.getByRole('combobox', { name: 'Message' });
 
+// The rows of the thread list with this status (orchestrator threads spec 31).
+const listRows = (page: Page, status: 'waits_for_you' | 'working' | 'unread' | 'done') =>
+  threadList(page)
+    .getByRole('listitem')
+    .filter({ has: page.locator(`[data-status="${status}"]`) });
+
 // The instance list hands the keyboard back to its button a moment after it closes. A list
 // opened before that (the project's) would lose the keyboard to it and close again, so the next
 // step waits until the button has it.
@@ -157,7 +163,7 @@ test.describe('chat', () => {
     );
     await expect(page.getByTestId('context-meter')).toHaveText('50,000 / 200,000 context (25%)');
 
-    const idle = threadList(page).getByRole('region', { name: 'Idle' });
+    const idle = listRows(page, 'done');
     await expect(idle.getByRole('link', { name: /Hello there/ })).toBeVisible();
     await page.getByRole('button', { name: 'Pin thread' }).click();
     await expect(
@@ -281,8 +287,7 @@ test.describe('chat', () => {
     await expect(conversation(page).getByTestId('item-assistant_text')).toContainText(
       'You said: Wrap this up',
     );
-    const done = threadList(page).getByRole('region', { name: 'Done' });
-    const idle = threadList(page).getByRole('region', { name: 'Idle' });
+    const done = listRows(page, 'done');
 
     await page.getByRole('button', { name: 'Mark thread done' }).click();
     await expect(page.getByTestId('thread-state')).toHaveText('Done');
@@ -293,7 +298,7 @@ test.describe('chat', () => {
     await palette.getByRole('combobox').fill('reopen thread');
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
-    await expect(idle.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
+    await expect(done.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
 
     await page.keyboard.press('Control+k');
     await palette.getByRole('combobox').fill('mark thread done');
@@ -305,7 +310,7 @@ test.describe('chat', () => {
     await composer.press('Enter');
     await expect(conversation(page).getByText('You said: One more thing')).toBeVisible();
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
-    await expect(idle.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
+    await expect(done.getByRole('link', { name: /Wrap this up/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Mark thread done' })).toBeEnabled();
   });
 
@@ -418,9 +423,7 @@ test.describe('chat', () => {
     const approval = conversation(page).getByRole('region', { name: 'Approval request' });
     await expect(approval).toContainText('pnpm test');
     await expect(
-      threadList(page)
-        .getByRole('region', { name: 'Needs you' })
-        .getByRole('link', { name: /Please approve/ }),
+      listRows(page, 'waits_for_you').getByRole('link', { name: /Please approve/ }),
     ).toBeVisible();
     await expect(page.getByTestId('thread-state')).toHaveText('Needs you');
 
@@ -735,9 +738,7 @@ test.describe('chat', () => {
     await expect(conversation(page).getByText('Working on it')).toBeVisible();
     await expect(page.getByTestId('thread-state')).toHaveText('Working');
     await expect(
-      threadList(page)
-        .getByRole('region', { name: 'Working' })
-        .getByRole('link', { name: /Wait for me/ }),
+      listRows(page, 'working').getByRole('link', { name: /Wait for me/ }),
     ).toBeVisible();
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
@@ -777,7 +778,7 @@ test.describe('chat', () => {
     await expect(items.getByTestId('item-user')).toHaveCount(1);
     await expect(page.getByTestId('background-work')).toBeHidden();
     await expect(items.getByLabel('Turn usage')).toHaveCount(2);
-    const idle = threadList(page).getByRole('region', { name: 'Idle' });
+    const idle = listRows(page, 'done');
     await expect(idle.getByRole('link', { name: /Count the tea leaves/ })).toBeVisible();
   });
 
@@ -1170,27 +1171,27 @@ test.describe('chat', () => {
     await page.evaluate("window.dispatchEvent(new Event('blur'))");
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
-    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.locator('[data-status="unread"]')).toBeVisible();
     await page.goto('/chat');
-    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.locator('[data-status="unread"]')).toBeVisible();
     await expect(renamed.getByTestId('thread-row-title')).toHaveCSS('font-weight', '600');
     await page.keyboard.press('Alt+Shift+ArrowDown');
     await expect(
       page.locator('#main-view').getByRole('heading', { name: 'Kettle whistle census' }),
     ).toBeVisible();
-    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
+    await expect(renamed.locator('[data-status="unread"]')).toHaveCount(0);
 
     await page.keyboard.press('Control+k');
     await palette.getByRole('combobox').fill('mark unread');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/chat$/);
-    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.locator('[data-status="unread"]')).toBeVisible();
     // Opening it again reads it.
     await renamed.click();
     await expect(
       page.locator('#main-view').getByRole('heading', { name: 'Kettle whistle census' }),
     ).toBeVisible();
-    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
+    await expect(renamed.locator('[data-status="unread"]')).toHaveCount(0);
   });
 
   test('picks model, effort and mode from the composer bar @agent-workbench-1 @agent-workbench-2 @agent-workbench-3 @agent-workbench-4 @agent-workbench-5 @agent-workbench-7', async ({
@@ -1669,7 +1670,7 @@ test.describe('sketch', () => {
     await expect(
       threadList(page)
         .getByRole('link', { name: /Sketch the tea timer screen/ })
-        .getByTestId('thread-unread'),
+        .locator('[data-status="unread"]'),
     ).toBeVisible();
     await expect(threadList(page).getByRole('link', { name: /Descale the kettle/ })).toBeVisible();
     await page.keyboard.press('Control+Shift+F');

@@ -5,6 +5,7 @@ import type {
   ProviderInstance,
   ProviderToolset,
   ServerCommand,
+  Thread,
 } from '@wow/contracts';
 import { RpcResponse } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
@@ -25,6 +26,7 @@ import {
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { WebSocket } from 'ws';
+import { snapshot } from '../core/subscriptions.js';
 import { startServer, type RunningServer } from '../server.js';
 import { exportStoredWorkflows } from '../workflows/files.js';
 
@@ -207,6 +209,9 @@ const startTurnsOf = (threadId: string) =>
       (command): command is Extract<ProviderCommand, { type: 'startTurn' }> =>
         command.type === 'startTurn' && command.threadId === threadId,
     );
+
+// The thread list's rows as the app receives them (spec 30, 31).
+const listRows = () => snapshot(server.database.db, { topic: 'threads' }) as Thread[];
 
 const threadRow = (threadId: string) =>
   server.database.db.select().from(threads).where(eq(threads.id, threadId)).get();
@@ -833,6 +838,38 @@ const gateCards = (threadId = 't1') =>
     .filter((item) => item.kind === 'gate_card');
 
 describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => {
+  it('lists the main thread as waiting no longer once Stop ends the helper turn that asked (spec 31)', async () => {
+    const client = await mainThread();
+    const first = await call(client, 'start_helper', {
+      brief: 'Plan the deploy',
+      instance: 'Codex at work',
+    });
+    const firstId = String(first.value['id']);
+    await helperStarted(firstId);
+    const tools = startTurnsOf(firstId)[0]?.helperTools;
+    if (!tools) throw new Error('the helper has no helper tools');
+    const helperClient = await connect(tools);
+    const deep = await call(helperClient, 'start_helper', {
+      brief: 'Approve the release',
+      instance: 'claude-work',
+    });
+    const deepId = String(deep.value['id']);
+    await until(() => gateCards().length === 1);
+    await server.helperFollower.settled();
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).toBe('waits_for_you');
+    // Stop ends the turn that asked; its approval stays unanswered, and nobody can answer it.
+    dispatch({ type: 'thread.interrupt', threadId: deepId });
+    await server.providerService.idle();
+    await until(() => listRows().find((row) => row.id === 't1')?.listStatus !== 'waits_for_you');
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).not.toBe('waits_for_you');
+    // A new turn in the same helper does not bring the old request back: the tree works.
+    await call(helperClient, 'write_to_helper', { id: deepId, text: 'Wait for the bell' });
+    await until(() => threadRow(deepId)?.state === 'working');
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).toBe('working');
+    await helperClient.close();
+    await client.close();
+  });
+
   it("draws a depth 2 helper's approval in the main thread, and answering it lets the helper go on", async () => {
     const client = await mainThread();
     const first = await call(client, 'start_helper', {
@@ -867,6 +904,11 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
       depth: 2,
       parentTitle: 'Plan the deploy',
     });
+    // The main thread waits for the user while a helper two levels down does; helpers are no
+    // rows of the list.
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).toBe('waits_for_you');
+    expect(listRows().find((row) => row.id === deepId)?.listStatus).toBeUndefined();
+    expect(listRows().find((row) => row.id === firstId)?.listStatus).toBeUndefined();
     // An approval is the user's alone: the helper that started it is not asked.
     expect(startTurnsOf(firstId).some((turn) => turn.prompt.includes('Approve the release'))).toBe(
       false,
@@ -878,6 +920,7 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
       server.database.db.select().from(approvals).where(eq(approvals.threadId, deepId)).get()
         ?.decision,
     ).toBe('allowOnce');
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).not.toBe('waits_for_you');
     expect(
       adapters
         .flatMap((adapter) => adapter.sent)

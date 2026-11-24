@@ -59,8 +59,9 @@ const quickAskRoute = createRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
+  // The app opens on chat (orchestrator threads spec 30).
   beforeLoad: () => {
-    throw redirect({ to: '/calendar' });
+    throw redirect({ to: '/chat' });
   },
 });
 

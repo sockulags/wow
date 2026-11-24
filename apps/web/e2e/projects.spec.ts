@@ -145,7 +145,7 @@ test.describe('choosing and importing folders', () => {
 test.describe('sessions started in a terminal', () => {
   test('opens a session started in a terminal @agent-workbench-72', async ({ page }) => {
     await page.goto('/chat');
-    await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     await page.keyboard.press('Control+k');
     await page.getByRole('combobox').fill('Open session from Claude Code');
     await page.keyboard.press('Enter');
@@ -181,7 +181,7 @@ test.describe('sessions started in a terminal', () => {
     // Picked again, the session opens the thread that already resumes it.
     const opened = page.url();
     await page.goto('/chat');
-    await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     await page.keyboard.press('Control+k');
     await page.getByRole('combobox').fill('Open session from Claude Code');
     await page.keyboard.press('Enter');

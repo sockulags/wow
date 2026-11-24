@@ -5,7 +5,7 @@ import {
   type SubscribeParams,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { asc, desc, eq, getTableColumns, ne, sql } from 'drizzle-orm';
+import { asc, desc, eq, getTableColumns, isNull, ne, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
@@ -13,6 +13,81 @@ import type { Engine } from './engine.js';
 import { readOutlookStatus, skillOf } from './projector.js';
 import { decisionRows, decisionSources } from '../assistant/decisions.js';
 import { activitySources, threadActivityRows } from './thread-activity.js';
+import { threadListStatuses } from './thread-list.js';
+
+// The threads, each main thread with its place in the thread list (orchestrator threads spec 31).
+function threadRows(db: Db) {
+  const threads = db
+    .select()
+    .from(t.threads)
+    .where(ne(t.threads.kind, 'assistant'))
+    .orderBy(asc(t.threads.createdAt))
+    .all();
+  const statuses = threadListStatuses(threads, openGates(db));
+  return threads.map((thread) => {
+    const listStatus = statuses.get(thread.id);
+    return listStatus === undefined ? thread : { ...thread, listStatus };
+  });
+}
+
+// The threads that hold a gate card whose approval or question still waits (spec 14): nobody
+// answered it, and the turn that asked still runs. A turn that ends leaves its request unanswered,
+// as the gate card says, but nobody can answer it any more.
+function openGates(db: Db): Set<string> {
+  // Each thread's running turn: a request counts only while the turn that asked it runs, as in
+  // the decision queue, so a new turn in the same thread does not bring an old request back.
+  const running = new Map(
+    db
+      .select({ threadId: t.turns.threadId, id: t.turns.id })
+      .from(t.turns)
+      .where(eq(t.turns.state, 'running'))
+      .all()
+      .map((row) => [row.threadId, row.id]),
+  );
+  if (running.size === 0) return new Set();
+  const turnOf = (itemId: string) =>
+    db
+      .select({ turnId: t.threadItems.turnId })
+      .from(t.threadItems)
+      .where(eq(t.threadItems.id, itemId))
+      .get()?.turnId;
+  const waiting = (rows: readonly { id: string; threadId: string; itemId: string }[]) =>
+    new Set(
+      rows
+        .filter(
+          (row) => running.has(row.threadId) && turnOf(row.itemId) === running.get(row.threadId),
+        )
+        .map((row) => row.id),
+    );
+  const approvals = waiting(
+    db
+      .select({ id: t.approvals.id, threadId: t.approvals.threadId, itemId: t.approvals.itemId })
+      .from(t.approvals)
+      .where(isNull(t.approvals.decision))
+      .all(),
+  );
+  const questions = waiting(
+    db
+      .select({ id: t.questions.id, threadId: t.questions.threadId, itemId: t.questions.itemId })
+      .from(t.questions)
+      .where(isNull(t.questions.answer))
+      .all(),
+  );
+  if (approvals.size === 0 && questions.size === 0) return new Set();
+  const open = new Set<string>();
+  for (const { threadId, payload } of db
+    .select({ threadId: t.threadItems.threadId, payload: t.threadItems.payload })
+    .from(t.threadItems)
+    .where(eq(t.threadItems.kind, 'gate_card'))
+    .all()) {
+    const card = payload as { kind?: unknown; requestId?: unknown } | null;
+    if (typeof card?.requestId !== 'string') continue;
+    const waits =
+      card.kind === 'approval' ? approvals.has(card.requestId) : questions.has(card.requestId);
+    if (waits) open.add(threadId);
+  }
+  return open;
+}
 
 // Reads the current rows of a topic. Thread-scoped topics only read one thread.
 export function snapshot(db: Db, params: SubscribeParams): unknown[] {
@@ -24,12 +99,7 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'providerInstances':
         return db.select().from(t.providerInstances).orderBy(asc(t.providerInstances.name)).all();
       case 'threads':
-        return db
-          .select()
-          .from(t.threads)
-          .where(ne(t.threads.kind, 'assistant'))
-          .orderBy(asc(t.threads.createdAt))
-          .all();
+        return threadRows(db);
       case 'assistantThread':
         return db.select().from(t.threads).where(eq(t.threads.kind, 'assistant')).all();
       case 'turns':
@@ -229,6 +299,8 @@ export class Subscriptions {
     // change with them.
     const topics = new Set(changed);
     if ([...changed].some((topic) => decisionSources.has(topic as never))) topics.add('decisions');
+    // A gate card is answered in the approvals or questions of the thread that asked.
+    if (changed.has('approvals') || changed.has('questions')) topics.add('threads');
     if ([...changed].some((topic) => activitySources.has(topic as never))) {
       topics.add('threadActivity');
     }

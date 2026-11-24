@@ -126,6 +126,12 @@ export const ChangeCount = z.object({
 });
 export type ChangeCount = z.infer<typeof ChangeCount>;
 
+// Where a main thread stands in the thread list, read from its whole tree (orchestrator threads
+// spec 31): a card waits for the user anywhere in it, it or a helper under it works, a turn ended
+// since the user last looked, or none of these.
+export const ThreadListStatus = z.enum(['waits_for_you', 'working', 'unread', 'done']);
+export type ThreadListStatus = z.infer<typeof ThreadListStatus>;
+
 export const Thread = z.object({
   id: Id,
   kind: ThreadKind.optional(),
@@ -182,6 +188,9 @@ export const Thread = z.object({
   // A helper thread's main thread (agent orchestration spec 4); null or absent for every other.
   parentThreadId: Id.nullable().optional(),
   followTurns: z.number().int().nonnegative().optional(),
+  // A main thread's place in the thread list, computed by the server when it sends the row; absent
+  // on helpers.
+  listStatus: ThreadListStatus.optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
 });

@@ -8,7 +8,6 @@ import {
   type SkillRef,
   type Thread,
   type ThreadItem,
-  type ThreadState,
   type Turn,
   type Workflow,
   type WorkflowRun,
@@ -16,33 +15,6 @@ import {
 
 // Pure helpers for the chat view. Everything here derives from rows the server pushed; nothing
 // reads the clock or keeps state of its own.
-
-export type ThreadGroup = 'Needs you' | 'Working' | 'Idle' | 'Done';
-
-export const threadGroups: readonly ThreadGroup[] = ['Needs you', 'Working', 'Idle', 'Done'];
-
-const groupOfState: Readonly<Record<ThreadState, ThreadGroup>> = {
-  needs_you: 'Needs you',
-  working: 'Working',
-  idle: 'Idle',
-  // A failed turn leaves the thread waiting for the user like an idle one; the row marks it.
-  failed: 'Idle',
-  done: 'Done',
-};
-
-const pinnedThenRecent = (a: Thread, b: Thread) =>
-  Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt);
-
-// Spec 21: grouped by state, pinned threads first, then the most recently active.
-export function groupThreads(
-  threads: readonly Thread[],
-): ReadonlyArray<readonly [ThreadGroup, readonly Thread[]]> {
-  const groups = new Map<ThreadGroup, Thread[]>(threadGroups.map((group) => [group, []]));
-  for (const thread of threads) groups.get(groupOfState[thread.state])?.push(thread);
-  return threadGroups.map(
-    (group) => [group, (groups.get(group) ?? []).toSorted(pinnedThenRecent)] as const,
-  );
-}
 
 // The server refuses to put away a thread that works or waits for the user; the controls follow.
 export const canMarkDone = (thread: Pick<Thread, 'state'>): boolean =>

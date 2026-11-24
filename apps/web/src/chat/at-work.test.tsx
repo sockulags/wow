@@ -164,7 +164,6 @@ describe('Threads at work (spec 11 to 13)', () => {
     expect(kettle?.textContent).toContain('Running pnpm test');
     expect(kettle?.textContent).toContain('6 tool calls');
     expect(notes?.textContent).toContain('They are in docs/notes.md.');
-    expect(screen.getByTestId('at-work-link').textContent).toContain('At work · 3');
     act(() => mug?.focus());
     await user.keyboard('{ArrowDown}');
     expect(document.activeElement).toBe(kettle);

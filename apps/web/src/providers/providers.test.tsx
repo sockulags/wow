@@ -230,7 +230,7 @@ describe('first start', () => {
 
     const step = await screen.findByTestId('first-start');
     expect(within(step).getByRole('heading', { name: 'Connect an agent' })).toBeTruthy();
-    expect(screen.queryByRole('navigation', { name: 'Sections' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Threads' })).toBeNull();
     const claude = within(step).getByRole('region', { name: 'Claude Code' });
     const codex = within(step).getByRole('region', { name: 'Codex' });
     expect((await within(claude).findByTestId('path-text')).textContent).toBe('/opt/bin/claude');
@@ -280,20 +280,20 @@ describe('first start', () => {
     server.publish('providerInstances', [
       { ...work, id, name: 'Claude', env: {}, status: 'ready', statusMessage: null },
     ]);
-    expect(await screen.findByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(await screen.findByRole('navigation', { name: 'Threads' })).toBeTruthy();
     expect(router.state.location.pathname).toBe('/assistant');
     expect(runtime.settings.getState().values['providers.offerSetup']).toBe(false);
 
     // Removed later: the app stays usable, and Assistant shows the same step.
     server.publish('providerInstances', []);
     expect(screen.queryByTestId('first-start')).toBeNull();
-    expect(screen.getByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Threads' })).toBeTruthy();
   });
 
   it('never gates an install that already has an instance, even one whose test failed', async () => {
     const server = firstStartServer([work]);
     await renderApp('/calendar', runtimeFor(server.connection, {}));
-    expect(await screen.findByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(await screen.findByRole('navigation', { name: 'Threads' })).toBeTruthy();
     expect(screen.queryByTestId('first-start')).toBeNull();
   });
 
@@ -301,7 +301,7 @@ describe('first start', () => {
     const server = firstStartServer([]);
     await renderApp('/calendar', runtimeFor(server.connection, {}));
     expect(await screen.findByTestId('first-start')).toBeTruthy();
-    expect(screen.queryByRole('navigation', { name: 'Sections' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Threads' })).toBeNull();
     // The server keeps it owed until the assistant can run it, so a reload does not lose it.
     expect(
       server.requests.filter(
@@ -315,7 +315,7 @@ describe('first start', () => {
   it('waits for the test of an instance that was never tested', async () => {
     const server = firstStartServer([{ ...work, status: 'unknown', statusMessage: null }]);
     await renderApp('/calendar', runtimeFor(server.connection, {}));
-    expect(await screen.findByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(await screen.findByRole('navigation', { name: 'Threads' })).toBeTruthy();
     expect(screen.queryByTestId('first-start')).toBeNull();
     expect(server.requests).toContainEqual({
       method: 'provider.test',

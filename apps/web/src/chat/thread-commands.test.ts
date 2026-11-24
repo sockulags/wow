@@ -2,6 +2,7 @@ import type { Thread } from '@wow/contracts';
 import type { Connection } from '@wow/client-runtime';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppCommand, CommandContext } from '@/app/commands';
+import { createLayoutStore } from '@/app/runtime';
 import { worksInTextFields } from '@/app/keybindings';
 import { paletteScore, startList } from '@/app/palette-model';
 import { onScreen, openThreadOf } from '@/app/notifications';
@@ -62,6 +63,7 @@ function context() {
     context: {
       navigate,
       connection: { request } as unknown as Connection,
+      layout: createLayoutStore(),
     } as unknown as CommandContext,
   };
 }
@@ -292,13 +294,15 @@ describe('palette commands of the thread list (spec 67 to 69)', () => {
     );
   });
 
-  it('focuses the filter from anywhere, opening the chat first', () => {
+  it('focuses the filter from anywhere, showing a hidden list, without leaving the page', () => {
     const { navigate, context: ctx } = context();
+    ctx.layout.setState({ sidebarOpen: false });
     const before = threadListStore.getState().focusRequest;
     threadListCommands({ threads, projects, openThread: undefined, inChat: false })
       .find((command) => command.id === 'chat.filterThreads')
       ?.run(ctx);
-    expect(navigate).toHaveBeenCalledWith({ to: '/chat' });
+    expect(navigate).not.toHaveBeenCalled();
+    expect(ctx.layout.getState().sidebarOpen).toBe(true);
     expect(threadListStore.getState().focusRequest).toBe(before + 1);
   });
 });

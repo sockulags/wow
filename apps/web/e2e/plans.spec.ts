@@ -30,12 +30,7 @@ async function openTeaTimer(page: Page): Promise<void> {
 
 test.describe('plans', () => {
   test('plans view lists units @review-loop-21', async ({ page }) => {
-    await page.goto('/calendar');
-    await page
-      .getByRole('navigation', { name: 'Sections' })
-      .getByRole('link', { name: 'Plans' })
-      .click();
-    await expect(page).toHaveURL(/\/plans$/);
+    await page.goto('/plans');
 
     // Every intent of the project with status, revision and which files it has (spec 21).
     const demo = plans(page).getByRole('region', { name: 'Demo' });
@@ -159,7 +154,7 @@ test.describe('plans', () => {
 
   test('opens plans, units and a refresh from the palette and the keyboard', async ({ page }) => {
     await page.goto('/calendar');
-    await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     await page.keyboard.press('Control+4');
     await expect(page).toHaveURL(/\/plans$/);
 
