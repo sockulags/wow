@@ -86,7 +86,8 @@ export function* decideTriggerInSteps(
   // The thread is the user's own, as if they had made it and sent the workflow.
   const asUser: DecideContext = { ...context, origin: 'user' };
   for (const start of starts) {
-    // Decided before either is applied, so a refusal of the send leaves no thread behind.
+    // A refusal records the failure in place of what it would have done; a new thread whose first
+    // message is refused stays, empty, with the failure on its card.
     let made: DomainEvent[];
     try {
       made = start.create ? decide(start.create, read, asUser) : [];
@@ -313,6 +314,7 @@ function startThread(
     refused: (reason) => [
       ...(occurrence ? [occurrenceRecorded(card, occurrence, 'failed', context, { reason })] : []),
       ...cardState(card, 'failed', card.runId, context, before),
+      ...backlogFollowsCard(card, 'failed', read),
       ...notification(read, context, {
         id: `${triggerIdFor(card.id)}:${occurrence?.start ?? card.start}:${newThreadId}:refused`,
         at: context.now,
