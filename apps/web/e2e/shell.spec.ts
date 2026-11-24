@@ -29,6 +29,22 @@ test.describe('shell', () => {
     }
   });
 
+  test('Filter threads from the palette opens the whole list with its field focused at 1024 px (spec 30)', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto('/calendar');
+    const nav = page.getByRole('navigation', { name: 'Threads' });
+    await expect(nav).toHaveAttribute('data-rail', 'true');
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog').getByRole('combobox').fill('Filter threads');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(nav.getByRole('searchbox', { name: 'Filter threads' })).toBeFocused();
+    await expect(nav).not.toHaveAttribute('data-rail');
+    await expect(page).toHaveURL(/\/calendar$/);
+  });
+
   test('toggles the theme from the palette and the settings page', async ({ page }) => {
     await page.goto('/calendar');
     const html = page.locator('html');

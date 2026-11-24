@@ -376,7 +376,7 @@ export function ThreadList({
                 event.preventDefault();
                 event.stopPropagation();
                 threadListStore.setState({ filter: '' });
-              } else if (event.key === 'Escape' && filterOpen) {
+              } else if (event.key === 'Escape' && filterOpen && narrow) {
                 // An empty filter put away: a narrow window gets its rail back.
                 event.preventDefault();
                 event.stopPropagation();
