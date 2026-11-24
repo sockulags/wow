@@ -5,10 +5,12 @@ import { formatTime } from './time';
 
 // What a card is, which decides what it shows (audit B-01): a trigger runs a workflow in a
 // project, a card with a workflow but no project will not run, and a plain card is only time.
-export type CardKind = 'trigger' | 'unrunnable' | 'plain';
+export type CardKind = 'trigger' | 'plain';
 
+// A card with a workflow starts a main thread at its time, with or without a project
+// (orchestrator threads spec 27).
 export const cardKind = (card: CalendarItem): CardKind =>
-  card.workflowId === null ? 'plain' : card.projectId === null ? 'unrunnable' : 'trigger';
+  (card.workflowName ?? card.workflowId ?? null) === null ? 'plain' : 'trigger';
 
 export const cardState = (item: CalendarItem): CardState => {
   const parsed = CardState.safeParse(item.state);

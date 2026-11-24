@@ -1,11 +1,9 @@
 import type {
-  AppNotification,
   ChangeRequest,
   HostRead,
   PlanIntent,
   ProviderInstance,
   ServerCommand,
-  WorkflowRun,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { execFileSync } from 'node:child_process';
@@ -548,40 +546,6 @@ describe('GitLab refusing or not answering (spec 31, 32)', () => {
     await server.hosts.poll();
     expect(read()?.error).toBeNull();
   });
-});
-
-// For the event trigger cases below.
-const commit = (message: string) =>
-  git(
-    '-c',
-    'user.name=Invented',
-    '-c',
-    'user.email=invented@example.invalid',
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '-q',
-    '--allow-empty',
-    '-m',
-    message,
-  );
-const sha = (ref: string) => git('rev-parse', ref).toString().trim();
-const eventRuns = () =>
-  (snapshot(server.database.db, { topic: 'workflowRuns' }) as WorkflowRun[]).filter(
-    (run) => run.event,
-  );
-const notices = () => snapshot(server.database.db, { topic: 'notifications' }) as AppNotification[];
-const pollAgain = async () => {
-  now = new Date(now.getTime() + 60 * 60 * 1000);
-  await server.hosts.poll();
-  await server.hosts.idle();
-  await server.workspaces.settled();
-};
-
-const failingAt = (head: string): MockMergeRequest => ({
-  ...open,
-  sha: head,
-  pipeline: { id: 602, status: 'failed', jobs: [{ name: 'test', status: 'failed' }] },
 });
 
 describe('Test connection to GitLab', () => {

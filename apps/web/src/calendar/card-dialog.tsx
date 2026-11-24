@@ -1,6 +1,12 @@
-import { isLiveRunState, type CalendarItem, type Command } from '@wow/contracts';
+import {
+  isLiveRunState,
+  isWorkflowSkill,
+  type CalendarItem,
+  type Command,
+  type Skill,
+} from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
-import { AlertTriangleIcon, InfoIcon, WorkflowIcon } from 'lucide-react';
+import { InfoIcon, WorkflowIcon } from 'lucide-react';
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   useLayout,
@@ -27,9 +33,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { offerUndo } from '@/lib/feedback';
-import { cn } from '@/lib/utils';
 import { isBinding } from '@/panel/editor';
-import { cardKind as cardKindOf } from './items';
+import { skillsForProject } from '@/chat/view-model';
+import { cardKind as cardKindOf, cardState } from './items';
 import {
   durationLabel,
   formRange,
@@ -60,6 +66,7 @@ function initialForm(
   card: CalendarItem | undefined,
   zone: string,
   projectId: string,
+  storedName: string | undefined,
 ): CardFormValues {
   const start = new Date(dialog.type === 'create' ? dialog.start : (card?.start ?? Date.now()));
   const end = new Date(dialog.type === 'create' ? dialog.end : (card?.end ?? Date.now()));
@@ -69,12 +76,28 @@ function initialForm(
     start: clockTime(minuteOfDay(start, zone)),
     end: clockTime(minuteOfDay(end, zone)),
     projectId: card ? (card.projectId ?? '') : projectId,
-    workflowId: card?.workflowId ?? '',
+    workflowName: card?.workflowName ?? storedName ?? '',
+    threadMode: card?.threadMode ?? 'new',
     backlogItemId: card?.backlogItemId ?? '',
     body: card?.body ?? '',
     repeat: repeatDraft(card?.repeat),
     focus: card?.focus ?? false,
   };
+}
+
+const threadModeChoices = [
+  { value: 'new', label: 'New thread each time' },
+  { value: 'same', label: 'Same thread' },
+];
+
+// The workflow files by name, and the card's own when no file of that name is listed now.
+function workflowChoices(files: readonly Skill[], current: string) {
+  const names = [...new Set(files.map((file) => file.name))].toSorted((a, b) => a.localeCompare(b));
+  if (current !== '' && !names.includes(current)) names.push(current);
+  return names.map((name) => ({
+    value: name,
+    label: files.some((file) => file.name === name) ? name : `${name} (no file)`,
+  }));
 }
 
 // What Delete asks before it deletes (recurring cards spec 12): which part of a repeating card,
@@ -93,6 +116,8 @@ const recreate = (card: CalendarItem): Command => ({
   ...(card.body ? { body: card.body } : {}),
   ...(card.projectId ? { projectId: card.projectId } : {}),
   ...(card.workflowId ? { workflowId: card.workflowId } : {}),
+  ...(card.workflowName ? { workflowName: card.workflowName } : {}),
+  ...(card.threadMode ? { threadMode: card.threadMode } : {}),
   ...(card.backlogItemId ? { backlogItemId: card.backlogItemId } : {}),
   ...(card.focus ? { focus: true } : {}),
   ...(card.repeat ? { repeat: card.repeat, skippedDates: card.skippedDates ?? [] } : {}),
@@ -121,6 +146,7 @@ function CardForm({
   const dispatch = useDispatch();
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
+  const skills = useTopic('skills') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
   const { firstDayOfWeek } = useCalendarPrefs();
   const snapMinutes = useSetting('calendar.snapMinutes');
@@ -137,7 +163,13 @@ function CardForm({
     dialog.type === 'edit' && dialog.deleting ? 'which' : undefined,
   );
   const [form, setForm] = useState(() =>
-    initialForm(dialog, card, zone, lastUsedProjectId(cards, projects)),
+    initialForm(
+      dialog,
+      card,
+      zone,
+      lastUsedProjectId(cards, projects),
+      workflows.find((entry) => entry.id === card?.workflowId)?.name,
+    ),
   );
   const [error, setError] = useState<string>();
   const [titleMissing, setTitleMissing] = useState(false);
@@ -149,19 +181,20 @@ function CardForm({
   const setRepeat = (changes: Partial<RepeatDraft>) =>
     setForm((current) => ({ ...current, repeat: { ...current.repeat, ...changes } }));
   const title = form.title.trim();
-  const workflow = workflows.find((entry) => entry.id === form.workflowId);
   const project = projects.find((entry) => entry.id === form.projectId);
+  // The workflow files the card can start: yours, and the chosen project's (spec 19, 27).
+  const workflowFiles = skillsForProject(skills.filter(isWorkflowSkill), project?.cwd);
   const summary = triggerSummary({
-    workflow,
+    workflowName: form.focus ? '' : form.workflowName,
+    threadMode: form.threadMode,
     project,
     start: range.ok ? range.start : undefined,
     zone,
-    run,
+    thread: card?.threadId ? { id: card.threadId, state: cardState(card) } : undefined,
   });
   const canRunNow =
     card !== undefined &&
-    card.workflowId !== null &&
-    card.projectId !== null &&
+    (card.workflowName ?? card.workflowId ?? null) !== null &&
     (run === undefined || !isLiveRunState(run.state)) &&
     (card.state === 'missed' || card.state === 'failed');
   const blocked = !range.ok
@@ -260,7 +293,9 @@ function CardForm({
         zone,
         ...(form.body.trim() ? { body: form.body.trim() } : {}),
         ...(form.projectId ? { projectId: form.projectId } : {}),
-        ...(form.workflowId && !form.focus ? { workflowId: form.workflowId } : {}),
+        ...(form.workflowName && !form.focus
+          ? { workflowName: form.workflowName, threadMode: form.threadMode }
+          : {}),
         ...(form.backlogItemId ? { backlogItemId: form.backlogItemId } : {}),
         ...(form.focus ? { focus: true } : {}),
         ...(repeat.rule ? { repeat: repeat.rule } : {}),
@@ -273,7 +308,10 @@ function CardForm({
         ...times,
         body: orNull(form.body.trim()),
         projectId: orNull(form.projectId),
-        workflowId: form.focus ? null : orNull(form.workflowId),
+        // A card made before workflows were files moves to the file of its workflow's name.
+        ...(card?.workflowId ? { workflowId: null } : {}),
+        workflowName: form.focus ? null : orNull(form.workflowName),
+        threadMode: form.threadMode,
         backlogItemId: orNull(form.backlogItemId),
         focus: form.focus,
         // Only a changed rule is sent: making a card single again is an edit of its own.
@@ -397,12 +435,12 @@ function CardForm({
               <FormField id="card-workflow" label="Workflow">
                 <ChoiceSelect
                   id="card-workflow"
-                  value={form.workflowId}
+                  value={form.workflowName}
                   choices={[
                     { value: '', label: 'No workflow' },
-                    ...workflows.map((entry) => ({ value: entry.id, label: entry.name })),
+                    ...workflowChoices(workflowFiles, form.workflowName),
                   ]}
-                  onValueChange={(workflowId) => set({ workflowId })}
+                  onValueChange={(workflowName) => set({ workflowName })}
                 />
               </FormField>
               <FormField id="card-project" label="Project">
@@ -416,26 +454,29 @@ function CardForm({
                   onValueChange={(projectId) => set({ projectId })}
                 />
               </FormField>
+              <FormField id="card-thread-mode" label="Each time it runs">
+                <ChoiceSelect
+                  id="card-thread-mode"
+                  value={form.threadMode}
+                  choices={threadModeChoices}
+                  onValueChange={(threadMode) =>
+                    set({ threadMode: threadMode === 'same' ? 'same' : 'new' })
+                  }
+                />
+              </FormField>
             </div>
             {summary.tone !== 'none' && (
               <div
                 data-testid="trigger-summary"
-                role={summary.tone === 'warning' ? 'alert' : 'status'}
-                className={cn(
-                  'flex min-w-0 items-center gap-2 text-xs',
-                  summary.tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
-                )}
+                role="status"
+                className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"
               >
-                {summary.tone === 'warning' ? (
-                  <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden />
-                ) : (
-                  <InfoIcon className="size-3.5 shrink-0" aria-hidden />
-                )}
+                <InfoIcon className="size-3.5 shrink-0" aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{summary.text}</span>
-                {summary.tone === 'run' && (
+                {summary.tone === 'thread' && (
                   <Button asChild size="xs" variant="outline">
-                    <Link to="/workflows/runs/$runId" params={{ runId: summary.runId }}>
-                      Open run
+                    <Link to="/chat/$threadId" params={{ threadId: summary.threadId }}>
+                      Open thread
                     </Link>
                   </Button>
                 )}

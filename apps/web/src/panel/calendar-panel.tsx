@@ -124,11 +124,7 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
               },
               {
                 label: 'Project',
-                value: project?.name ?? (
-                  <span className="text-muted-foreground">
-                    {kind === 'unrunnable' ? 'None, so the workflow will not run' : 'None'}
-                  </span>
-                ),
+                value: project?.name ?? <span className="text-muted-foreground">None</span>,
               },
               {
                 label: 'Workflow',

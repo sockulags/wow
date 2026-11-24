@@ -103,9 +103,13 @@ describe('migration 0048_cards_start_threads', () => {
     ]);
     expect(db.select().from(triggers).all()).toEqual([]);
     expect(db.select().from(triggerEvents).all()).toEqual([]);
-    expect(db.select().from(settings).all().map((row) => row.key)).toEqual(['hosts.polling']);
-    expect(Object.keys(settingsRegistry).filter((key) => key.startsWith('triggers.'))).toEqual(
-      [],
-    );
+    expect(
+      db
+        .select()
+        .from(settings)
+        .all()
+        .map((row) => row.key),
+    ).toEqual(['hosts.polling']);
+    expect(Object.keys(settingsRegistry).filter((key) => key.startsWith('triggers.'))).toEqual([]);
   });
 });

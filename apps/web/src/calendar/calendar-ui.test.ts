@@ -1,4 +1,4 @@
-import type { CalendarItem, Project, Workflow, WorkflowRun } from '@wow/contracts';
+import type { CalendarItem, Project } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import { durationLabel, formRange, lastUsedProjectId, triggerSummary } from './card-form';
 import { applyCardKey, cardKeyChange, gridMove, nextStop, type GridStop } from './grid-keys';
@@ -101,38 +101,39 @@ describe('card dialog rules (audit B-03, B-04, B-18)', () => {
     expect(lastUsedProjectId([], projects)).toBe('');
   });
 
-  it('says what a trigger will do', () => {
-    const workflow = {
-      id: 'wf',
-      name: 'Feature',
-      steps: [
-        { gateBefore: false, gateAfter: true },
-        { gateBefore: false, gateAfter: true },
-        { gateBefore: false, gateAfter: false },
-      ],
-    } as Workflow;
+  it('says what a card will start, and how its thread is doing (orchestrator threads spec 27, 28)', () => {
     const project = { id: 'demo', name: 'Demo' } as Project;
-    const base = { workflow, project, start: '2026-11-02T15:30:00.000Z', zone, run: undefined };
-    expect(triggerSummary({ ...base, workflow: undefined })).toEqual({ tone: 'none' });
-    expect(triggerSummary({ ...base, project: undefined })).toEqual({
-      tone: 'warning',
-      text: 'Will not run: pick a project.',
-    });
+    const base = {
+      workflowName: 'Feature',
+      threadMode: 'new' as const,
+      project,
+      start: '2026-11-02T15:30:00.000Z',
+      zone,
+      thread: undefined,
+    };
+    expect(triggerSummary({ ...base, workflowName: '' })).toEqual({ tone: 'none' });
     expect(triggerSummary(base)).toEqual({
       tone: 'info',
-      text: 'Starts at 16:30 in Demo · 3 steps, 2 gates',
+      text: 'Starts at 16:30 in Demo · Feature · a new thread each time',
     });
-    expect(triggerSummary({ ...base, run: { id: 'r1', state: 'waiting' } as WorkflowRun })).toEqual(
-      { tone: 'run', text: 'The workflow run is waiting for you.', runId: 'r1' },
-    );
+    expect(triggerSummary({ ...base, project: undefined, threadMode: 'same' })).toEqual({
+      tone: 'info',
+      text: 'Starts at 16:30 · Feature · the same thread each time',
+    });
+    expect(triggerSummary({ ...base, thread: { id: 't1', state: 'waiting' } })).toEqual({
+      tone: 'thread',
+      text: 'Its thread is waiting for you.',
+      threadId: 't1',
+    });
   });
 });
 
 describe('cards and meetings (audit B-01, B-06)', () => {
-  it('tells triggers from plain cards and cards that will not run', () => {
+  it('tells cards that start a thread from plain cards, with or without a project', () => {
     const at = ['2026-11-02T08:00:00.000Z', '2026-11-02T09:00:00.000Z'] as const;
     expect(cardKind(item('plain', ...at))).toBe('plain');
-    expect(cardKind(item('lost', ...at, { workflowId: 'wf' }))).toBe('unrunnable');
+    expect(cardKind(item('stored', ...at, { workflowId: 'wf' }))).toBe('trigger');
+    expect(cardKind(item('file', ...at, { workflowName: 'Feature' }))).toBe('trigger');
     expect(cardKind(item('trigger', ...at, { workflowId: 'wf', projectId: 'p' }))).toBe('trigger');
   });
 

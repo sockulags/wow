@@ -1,12 +1,5 @@
 import type { CalendarItem, WorkHours } from '@wow/contracts';
-import {
-  AlertTriangleIcon,
-  LockIcon,
-  PlayIcon,
-  Repeat2Icon,
-  VideoIcon,
-  WorkflowIcon,
-} from 'lucide-react';
+import { LockIcon, PlayIcon, Repeat2Icon, VideoIcon, WorkflowIcon } from 'lucide-react';
 import {
   useEffect,
   useLayoutEffect,
@@ -188,14 +181,8 @@ const itemLabel = (item: CalendarItem, zone: string, occurrence?: ShownOccurrenc
     const cancelled = item.state === 'cancelled' ? ', cancelled' : '';
     return `${item.title}, ${timeRange(item, zone)}${cancelled}, read-only`;
   }
-  const kind = cardKind(item);
   const state = blockState(item, occurrence);
-  const suffix =
-    kind === 'unrunnable'
-      ? ', no project, will not run'
-      : state
-        ? `, ${occurrenceStateLabels[state].toLowerCase()}`
-        : '';
+  const suffix = state ? `, ${occurrenceStateLabels[state].toLowerCase()}` : '';
   const repeats = occurrence ? ', repeats' : '';
   return `${cardTitle(item)}, ${timeRange(item, zone)}${repeats}${suffix}`;
 };
@@ -400,7 +387,7 @@ function CardBlock({
   // its run.
   const fixed = occurrence?.fixed === true;
   const layout = blockLines(heightPx, {
-    extra: kind === 'unrunnable' ? 1 : 0,
+    extra: 0,
     button: onRunNow !== undefined,
   });
   return (
@@ -409,11 +396,7 @@ function CardBlock({
         cardTitle(item),
         blockTime(item, zone, day),
         occurrence ? 'Repeats' : undefined,
-        state
-          ? occurrenceStateLabels[state]
-          : kind === 'unrunnable'
-            ? 'No project, will not run'
-            : undefined,
+        state ? occurrenceStateLabels[state] : undefined,
         occurrence?.record?.reason,
       ]}
       disabled={dragging}
@@ -437,7 +420,6 @@ function CardBlock({
           'touch-none border-event-card-border bg-event-card shadow-xs select-none',
           fixed ? 'cursor-pointer' : 'cursor-grab',
           kind === 'trigger' && cn('border-l-[3px]', stateBorder[state ?? 'scheduled']),
-          kind === 'unrunnable' && 'border-dashed',
           // A focus block reads as time kept free, not as work (chief of staff spec 28).
           item.focus && 'border-dashed bg-muted/60 text-muted-foreground',
           dragging && 'cursor-grabbing opacity-80 shadow-md',
@@ -450,9 +432,6 @@ function CardBlock({
               aria-hidden
               className="mt-0.5 size-3 shrink-0 text-muted-foreground @max-[4rem]:hidden"
             />
-          )}
-          {kind === 'unrunnable' && (
-            <AlertTriangleIcon aria-hidden className="mt-0.5 size-3 shrink-0 text-warning" />
           )}
           <Title lines={layout.titleLines}>{cardTitle(item)}</Title>
           {occurrence && (
