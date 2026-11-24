@@ -870,6 +870,20 @@ or the stop button interrupts a running turn and keeps what it produced; the tur
 "Stopped by you · <time>", which carries **Resume** on the last turn. After a restart, a thread
 continues its provider session; **Resume** sends `chat.resumePrompt` to pick up where it stopped.
 
+### Main threads
+
+A thread does not need a project or a folder. Start one with neither and wow gives it an empty
+folder of its own in its home (`~/.wow/threads/<id>`). Settings → Chat → **Provider of a new
+thread** and **Model of a new thread** (`chat.defaultInstance`, `chat.defaultModel`) pick what a
+new thread starts on; you can still change both before the first message.
+
+Every main thread's agent can also do what the assistant does in the app: read and change
+settings, projects, cards, workflows and the backlog, read your calendar and mail, ask you
+questions on a card and show you a field for a secret. What it changes shows right after the
+call with **Undo**; a change that lets wow do more on its own (an always-allow rule, a gate that
+passes by itself) waits as a proposal with **Yes** and **No** in the same thread. Helpers do not
+get these tools.
+
 ### Helper threads
 
 The agent of every chat thread, with or without a project, has wow's helper tools beside its own

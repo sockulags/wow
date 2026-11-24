@@ -169,7 +169,9 @@ export const Command = z.discriminatedUnion('type', [
     threadId: Id,
     providerInstanceId: Id,
     projectId: Id.optional(),
-    cwd: z.string().min(1),
+    // Absent with no project: the thread gets a folder of its own in wow's home (orchestrator
+    // threads spec 1).
+    cwd: z.string().min(1).optional(),
     branch: z.string().min(1).optional(),
     title: z.string().optional(),
     model: z.string().min(1),

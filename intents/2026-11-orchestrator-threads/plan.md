@@ -1,7 +1,7 @@
 ---
 intent: 2026-11-orchestrator-threads
-rev: 2
-built_on: spec@2
+rev: 3
+built_on: spec@3
 status: accepted
 source: files
 ---
@@ -145,26 +145,28 @@ Open risks: none.
 ### U4 The assistant in every main thread
 
 Outcome: main threads may have no project, every main thread's agent has the assistant's app
-tools, new threads start on a default instance and model, and the assistant's conversation is a
-main thread named "Assistant".
-Boundaries: the Assistant page, its briefings and the decision queue stay until U8; helpers get
-none of the app tools; scheduled cards are U6.
-Change surface: `apps/server/src/assistant/tools.ts` and `assistant/mcp.ts` (serve the app tools
-through `helpers/endpoint.ts` for main threads), `assistant/thread.ts`, `core/threads.ts` (no
-project, folder under `<wow home>/threads`), the provider service's `#chatTurn`
-(`chat.instructions`), web new-thread defaults; settings `chat.defaultInstance`,
-`chat.defaultModel`, `chat.instructions`; a migration for the assistant thread.
+tools with their rows and cards drawn in that thread, and new threads start on a default
+instance and model.
+Boundaries: the Assistant page, its thread, its briefings and the decision queue stay until U8,
+which also moves the assistant thread and `chat.instructions` (spec 25); helpers get none of the
+app tools; scheduled cards are U6.
+Change surface: `apps/server/src/assistant/tools.ts` (a per-thread view of the tools without
+delegation, brief and memory tools; the ask tools read the calling thread) served through
+`helpers/endpoint.ts` beside the helper tools for main threads; `core/threads.ts` (no project
+and no folder: `<wow home>/threads/<id>`), the provider service's turn start (an empty folder
+there); web new-thread defaults and the Assistant view's rows and cards as a shared component
+drawn in every main thread; settings `chat.defaultInstance`, `chat.defaultModel`.
 Acceptance:
 
-- Given a new thread without a project, then its folder is `<wow home>/threads/<id>`, made empty
-  before the first turn, and a non-empty folder fails the turn with what was found (spec 1).
+- Given a new thread without a project or folder, then its folder is `<wow home>/threads/<id>`,
+  made before the first turn, and a non-empty folder fails the turn with what was found (spec 1).
 - Given `chat.defaultInstance` and `chat.defaultModel`, then a new thread starts on them and the
   pickers can change them before the first message (spec 2).
 - Given a main thread, then it can list projects and create a card; a change that lets the app do
-  more on its own waits for the user's yes; a helper's session lists none of these tools (spec 24).
-- Given the stored assistant thread, then after the migration it is a chat thread "Assistant"
-  without a project, with its items and provider session, and `assistant.instructions` is now
-  `chat.instructions` (spec 25).
+  more on its own waits for the user's yes; a helper's session lists none of these tools, and a
+  main thread none of the delegation tools (spec 24, 26).
+- Given a main thread whose agent made a change or a proposal, then the thread shows the change
+  row or the proposal with Yes and No after the call, and Yes applies it (spec 24).
 - Given a main thread without a project, then `start_helper` with `folder` set to a project starts
   a helper there (spec 26).
 
@@ -281,7 +283,9 @@ Open risks: none.
 
 Outcome: plans, plan runs, the review loop, workflow runs and the engine, the builder, the Runs
 and Triggers tabs, the Assistant page with its briefings and the decision queue, Threads at work,
-the Usage view and Quick ask are gone with their routes, commands, settings and rows.
+the Usage view and Quick ask are gone with their routes, commands, settings and rows; the
+assistant thread is a main thread "Assistant" and `assistant.instructions` is
+`chat.instructions`, sent to every main thread (spec 25, moved here from U4).
 Boundaries: usage records and provider limits stay on the server; intent files in repositories
 are untouched; step threads stay as done threads.
 Change surface: `packages/workflow-engine`; server `core/plan-runs.ts`, `plans/`,
@@ -298,11 +302,15 @@ Acceptance:
   (spec 35).
 - Given each removed route, then it does not resolve, and the palette lists no command for it
   (spec 34).
+- Given the stored assistant thread, then after the migration it is a chat thread "Assistant"
+  without a project, with its items and provider session, and `assistant.instructions` is now
+  `chat.instructions`, which both adapters send to every main thread's session (spec 25).
 
-Ground truth: `pnpm --filter @wow/server test`, `pnpm --filter @wow/web test`, `pnpm e2e`,
+Ground truth: `pnpm --filter @wow/server test`, `pnpm --filter @wow/web test`,
+`pnpm --filter @wow/provider-claude test`, `pnpm --filter @wow/provider-codex test`, `pnpm e2e`,
 repository checks.
-Dependencies: U4 for the assistant thread already moved; U5 and U6 for workflows and schedules no
-longer using runs; U7 for the new navigation.
+Dependencies: U4 for the app tools and their rows in main threads; U5 and U6 for workflows and
+schedules no longer using runs; U7 for the new navigation.
 Evidence and settled decisions:
 
 - wow keeps an event store (`events`). Removing a feature means its events are skipped by the

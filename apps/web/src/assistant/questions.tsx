@@ -1,6 +1,5 @@
 import {
   TextItemPayload,
-  assistantThreadId,
   type AskQuestionsRequest,
   type QuestionReply,
   type ThreadItem,
@@ -52,8 +51,8 @@ export function AssistantQuestions({
   item: ThreadItem;
   request: AskQuestionsRequest;
   state: AskState;
-  check(replies: ReadonlyMap<string, QuestionReply>): Held | null;
-  renderHold(held: Held, controls: HoldControls): ReactNode;
+  check?: (replies: ReadonlyMap<string, QuestionReply>) => Held | null;
+  renderHold?: (held: Held, controls: HoldControls) => ReactNode;
 }) {
   const send = useDispatch();
   const questions: CardQuestion[] = request.questions.map((question, index) => ({
@@ -86,15 +85,14 @@ export function AssistantQuestions({
       onSend={(replies) =>
         send({
           type: 'thread.answerQuestions',
-          threadId: assistantThreadId,
+          threadId: item.threadId,
           itemId: item.id,
           replies: request.questions.map(
             (_, index) => replies.get(String(index)) ?? { picked: [], text: '' },
           ),
         })
       }
-      check={check}
-      renderHold={renderHold}
+      {...(check && renderHold ? { check, renderHold } : {})}
     />
   );
 }

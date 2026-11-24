@@ -31,6 +31,7 @@ import { randomUUID } from 'node:crypto';
 import { instructionsWithNotes } from '../assistant/memory.js';
 import { AssistantRedactor } from '../assistant/redact.js';
 import { prepareAssistantFolder } from '../assistant/thread.js';
+import { prepareThreadFolder, threadFolderOf } from '../core/thread-folder.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
@@ -832,6 +833,17 @@ export class ProviderService {
   ): Promise<StartTurn> {
     const failed = await this.#deps.prepareThread?.(command.threadId);
     if (failed !== undefined) throw new Error(failed);
+    // A thread with a folder of its own in wow's home starts with it empty (orchestrator threads
+    // spec 1): checked until a turn has reached the provider, so sending again after a refusal
+    // does not get past it.
+    if (command.cwd === threadFolderOf(this.#deps.home, command.threadId)) {
+      const session = this.#deps.db
+        .select({ id: threads.providerSessionId })
+        .from(threads)
+        .where(eq(threads.id, command.threadId))
+        .get()?.id;
+      if (!session) await prepareThreadFolder(command.cwd);
+    }
     const snapshots = this.#deps.snapshots;
     if (restore) {
       const refused = snapshots

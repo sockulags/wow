@@ -1699,7 +1699,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helpersPerTree`, `chat.helperBranch`, `chat.mergeBrief`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
@@ -4551,6 +4551,29 @@ answers it (spec 15). A request is drawn once, matched by its id among the main 
 `gate_card` items. Only the asking thread waits: the main thread's composer and its other helpers
 go on.
 
+**Main threads with the app tools** (orchestrator threads U4, spec 1, 2, 24, 26). `thread.create`
+may leave out `cwd`: with a project the thread takes the project's folder, and with neither it
+gets `<wow home>/threads/<threadId>` (`core/thread-folder.ts`, `threadFolderOf`). The provider
+service makes that folder and, until a turn has reached the provider (the thread has a provider
+session), fails the turn, naming what it found, when it is not empty (`prepareThreadFolder`), as
+the assistant's own folder is kept empty; sending again does not get past it. A new thread
+starts on `chat.defaultInstance` and, on that instance, `chat.defaultModel` (both global, empty
+by default), before the project's, the last thread's and the instance's own; the pickers change
+them before the first message. A new thread does not carry over the folder wow gave the last
+thread, nor one its helpers or forks work in (`givenFolder`). The helper endpoint's provider in `server.ts` adds
+`AssistantTools.forThread(threadId)` to the helper tools of a thread with no parent: every
+assistant tool but the delegation, brief and memory tools (`mainThreadLeavesOut`), with the
+readers' `threadId` set so `ask_questions` looks at that thread's running turn. The commands go to
+the engine with the `assistant` origin, so the class table decides them exactly as for the
+assistant: ordinary changes apply and record a change, changes that let the app do more on its
+own become proposals. `thread.answerQuestions` takes a main thread's ask card as well as the
+assistant's: the answer starts the next turn in that main thread, without the assistant's notes.
+Standing permissions the user gave the assistant also cover a main thread's agent, and the
+assistant's note about answered proposals and undone changes reads every record until U8 moves
+the assistant thread. In the web app, `ThreadConversation` of a main thread uses `useAppToolRows`
+(`assistant/app-tool-rows.tsx`, shared with the Assistant view): `placeRows` reads the record
+ids out of the thread's own tool calls, and the change rows with Undo, proposals with Yes and No,
+question cards and secret fields are drawn right after the call that made them.
 **Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
 (`HelperTools`, the endpoint's `provider`) offers `start_helper`, `list_helpers`, `read_helper`,
 `write_to_helper` and `stop_helper` to the thread whose token called. The reads come straight

@@ -218,6 +218,19 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     platform: options.platform ?? process.platform,
     clock: options.clock ?? (() => new Date()),
   });
+  const helperTools = new HelperTools({
+    db: database.db,
+    engine,
+    logger,
+    home,
+    mergeBrief: () => settings.get('chat.mergeBrief'),
+    git: () => ({
+      timeoutMs: settings.get('trackers.gitTimeoutMs'),
+      stopWaitMs: settings.get('advanced.gitStopWaitMs'),
+    }),
+  });
+  // The assistant's tools, made further down; a main thread's call reads them when it comes.
+  let appTools: AssistantTools | undefined;
   // wow's helper tools (orchestrator threads spec 3, 4): every chat thread of the user's that is
   // not a step's, and every helper above the deepest level `chat.helperDepth` allows.
   const helperEndpoint = new HelperEndpoint({
@@ -234,17 +247,23 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       if (!row || row.kind !== 'chat' || row.runId !== null) return false;
       return helperDepth(threadId, parentOf) < settings.get('chat.helperDepth');
     },
-    provider: new HelperTools({
-      db: database.db,
-      engine,
-      logger,
-      home,
-      mergeBrief: () => settings.get('chat.mergeBrief'),
-      git: () => ({
-        timeoutMs: settings.get('trackers.gitTimeoutMs'),
-        stopWaitMs: settings.get('advanced.gitStopWaitMs'),
-      }),
-    }),
+    provider: {
+      // A main thread also gets the assistant's app tools (orchestrator threads spec 24); a
+      // helper only the helper tools.
+      tools: (threadId) => {
+        const helpers = helperTools.tools(threadId);
+        const row = database.db.select().from(threads).where(eq(threads.id, threadId)).get();
+        const app =
+          row && row.parentThreadId === null && appTools ? appTools.forThread(threadId) : undefined;
+        if (!app) return helpers;
+        const appNames = new Set(app.list().map((tool) => tool.name));
+        return {
+          list: () => [...helpers.list(), ...app.list()],
+          call: (name, args) =>
+            appNames.has(name) ? app.call(name, args) : helpers.call(name, args),
+        };
+      },
+    },
   });
   const providerService = new ProviderService({
     db: database.db,
@@ -466,6 +485,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     registry: settingsRegistry,
     listModels: (providerInstanceId) => providerService.listModels(providerInstanceId),
   });
+  appTools = assistantTools;
   const mcp = createMcpHandler({ tools: assistantTools, token: assistantToken, version, logger });
   // One port for both: the WebSocket upgrade for the app, and plain HTTP for the assistant's
   // tools only.

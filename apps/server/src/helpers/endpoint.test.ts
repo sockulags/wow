@@ -9,7 +9,7 @@ import type {
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -69,6 +69,42 @@ const script = (command: ProviderCommand) => {
   if (command.type === 'interrupt')
     return [{ type: 'turnInterrupted' as const, threadId: command.threadId }];
   if (command.type !== 'startTurn') return [];
+  // A main thread's agent asks the user with wow's ask_questions tool (orchestrator threads
+  // spec 24), as Claude Code reports the call.
+  if (/^ask me/i.test(command.prompt)) {
+    const itemId = `${command.threadId}-ask`;
+    return [
+      {
+        type: 'toolCallStarted' as const,
+        threadId: command.threadId,
+        itemId,
+        name: 'mcp__wow__ask_questions',
+        input: {
+          questions: [
+            {
+              question: 'Which kettle?',
+              header: 'Kettle',
+              options: [{ label: 'Steel' }, { label: 'Glass' }],
+              multiSelect: false,
+            },
+          ],
+        },
+      },
+      {
+        type: 'toolCallOutput' as const,
+        threadId: command.threadId,
+        itemId,
+        output: JSON.stringify({ outcome: 'asked', questions: 1 }),
+      },
+      {
+        type: 'toolCallCompleted' as const,
+        threadId: command.threadId,
+        itemId,
+        status: 'ok' as const,
+      },
+      { type: 'turnCompleted' as const, threadId: command.threadId },
+    ];
+  }
   if (/^approve/i.test(command.prompt)) {
     return [
       {
@@ -280,7 +316,8 @@ describe('helper tools in a chat session (orchestration spec 1)', () => {
     const tools = (await turnOf('t1')).helperTools;
     if (!tools) throw new Error('no helper tools');
     const client = await connect(tools);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+    // The helper tools first; a main thread's app tools follow (orchestrator threads spec 24).
+    expect((await client.listTools()).tools.map((tool) => tool.name).slice(0, 7)).toEqual([
       'start_helper',
       'list_helpers',
       'read_helper',
@@ -1053,5 +1090,145 @@ describe("bringing helpers' work together (orchestrator threads spec 6, 11, 12)"
         .filter((row) => row.title.startsWith('Merge ')),
     ).toEqual([]);
     await client.close();
+  });
+});
+
+// A thread with neither a project nor a folder.
+const createBare = (threadId: string) =>
+  dispatch({
+    type: 'thread.create',
+    threadId,
+    providerInstanceId: 'claude-work',
+    title: `Thread ${threadId}`,
+    model: 'opus',
+    effort: 'high',
+    permissionMode: 'default',
+  });
+
+describe('main threads without a project, with the app tools (orchestrator threads spec 1, 24, 26)', () => {
+  it('gives a thread with no project or folder an empty folder of its own in wow home', async () => {
+    createBare('bare');
+    const folder = path.join(root, 'wow home', 'threads', 'bare');
+    expect(threadRow('bare')?.cwd).toBe(folder);
+    expect((await turnOf('bare')).cwd).toBe(folder);
+    expect(await readdir(folder)).toEqual([]);
+  });
+
+  it('fails the first turn when that folder already holds something, and names it', async () => {
+    createBare('crowded');
+    const folder = path.join(root, 'wow home', 'threads', 'crowded');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'AGENTS.md'), 'Invented instructions\n');
+    dispatch({ type: 'thread.sendMessage', threadId: 'crowded', text: 'Look at the timer' });
+    await turnEnds('crowded');
+    await server.providerService.idle();
+    const error = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'crowded'))
+      .all()
+      .find((item) => item.kind === 'error');
+    expect(JSON.stringify(error?.payload)).toContain('AGENTS.md');
+    expect(startTurnsOf('crowded')).toEqual([]);
+  });
+
+  it('offers a main thread the app tools beside the helper tools, without delegation or notes, and a helper none', async () => {
+    const client = await mainThread();
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining(['start_helper', 'read_projects', 'create_card']));
+    expect(names).not.toEqual(expect.arrayContaining(['start_thread']));
+    expect(names).not.toContain('remember');
+    expect(names).not.toContain('read_notes');
+    expect(names).not.toContain('write_brief');
+    const started = await call(client, 'start_helper', { brief: 'Plan the timer change' });
+    const helperId = String(started.value['id']);
+    await helperStarted(helperId);
+    const tools = startTurnsOf(helperId)[0]?.helperTools;
+    if (!tools) throw new Error('the helper has no helper tools');
+    const helperClient = await connect(tools);
+    const helperNames = (await helperClient.listTools()).tools.map((tool) => tool.name);
+    expect(helperNames).toContain('start_helper');
+    expect(helperNames).not.toContain('read_projects');
+    expect(helperNames).not.toContain('create_card');
+    expect((await call(helperClient, 'create_card', {})).isError).toBe(true);
+    await helperClient.close();
+    await client.close();
+  });
+
+  it('changes what is ordinary at once and holds what lets the app do more on its own for a yes', async () => {
+    const client = await mainThread();
+    const projects = await call(client, 'read_projects');
+    expect(JSON.stringify(projects.value)).toContain('Tea');
+    const card = await call(client, 'create_card', {
+      title: 'Steep the tea',
+      start: '2026-11-24T08:00:00.000+01:00',
+      end: '2026-11-24T08:30:00.000+01:00',
+      zone: 'Europe/Stockholm',
+    });
+    expect(card.value).toMatchObject({ outcome: 'changed' });
+    const rule = await call(client, 'propose_always_allow_rule', {
+      projectId: 'tea',
+      rule: { kind: 'command', prefix: 'pnpm test' },
+    });
+    expect(rule.value).toMatchObject({ outcome: 'proposed' });
+    await client.close();
+  });
+
+  it('starts a helper in a project from a main thread without one', async () => {
+    createBare('bare');
+    const tools = (await turnOf('bare')).helperTools;
+    if (!tools) throw new Error('no helper tools');
+    const client = await connect(tools);
+    const started = await call(client, 'start_helper', {
+      brief: 'Read the tea project',
+      folder: root,
+    });
+    const helperId = String(started.value['id']);
+    await helperStarted(helperId);
+    expect(threadRow(helperId)).toMatchObject({ cwd: root, parentThreadId: 'bare' });
+    await client.close();
+  });
+});
+
+describe('answers and folders of main threads (orchestrator threads spec 1, 24, review)', () => {
+  it('goes on in the main thread with the answer to its ask_questions card, and makes no assistant thread', async () => {
+    create('t1', 'tea');
+    await turnOf('t1', 'Ask me which kettle');
+    const asked = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 't1'))
+      .all()
+      .find((item) => item.kind === 'tool_call');
+    if (!asked) throw new Error('no ask');
+    dispatch({
+      type: 'thread.answerQuestions',
+      threadId: 't1',
+      itemId: asked.id,
+      replies: [{ picked: ['Glass'], text: '' }],
+    });
+    await turnsSent('t1', 2);
+    expect(startTurnsOf('t1')[1]?.prompt).toContain('Glass');
+    expect(threadRow('assistant')).toBeUndefined();
+  });
+
+  it('refuses a folder that holds something on every try until a turn reached the provider', async () => {
+    createBare('crowded');
+    const folder = path.join(root, 'wow home', 'threads', 'crowded');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'AGENTS.md'), 'Invented instructions\n');
+    for (const attempt of [1, 2]) {
+      dispatch({ type: 'thread.sendMessage', threadId: 'crowded', text: `Try ${attempt}` });
+      await turnEnds('crowded');
+      await server.providerService.idle();
+    }
+    const errors = server.database.db
+      .select()
+      .from(threadItems)
+      .where(eq(threadItems.threadId, 'crowded'))
+      .all()
+      .filter((item) => item.kind === 'error');
+    expect(errors).toHaveLength(2);
+    expect(startTurnsOf('crowded')).toEqual([]);
   });
 });
