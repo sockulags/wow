@@ -145,9 +145,10 @@ export const clampPanelWidth = (width: number): number =>
 const gateRoomRem = 16;
 
 // The widest a panel laid over the view may be. The panel is measured against the whole window,
-// the run view against what is left of the thread list (16rem) and the workflows list (16rem), so
-// over a run view the panel leaves those and the gate's room. It never goes under the panel's minimum: in a window too small for that the gate bar
-// keeps what is left beside it.
+// the run view against what is left of the thread list (16rem, counted even while it is hidden)
+// and the workflows list (16rem), so over a run view the panel leaves those and the gate's room.
+// It never goes under the panel's minimum: in a window too small for that the gate bar keeps
+// what is left beside it.
 export const overlayCap = (
   view: PanelSelection['view'],
   windowWidth: number,

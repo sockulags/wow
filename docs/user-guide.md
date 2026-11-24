@@ -823,9 +823,9 @@ helpers they start are not rows of their own. Each row has the thread's title, i
 - **Done**: a hollow dot. None of the above.
 
 The list is in that order. Within each, pinned threads (pin from the thread header) come first,
-then the newest activity. A done thread that has not been active for 14 days is
-archived by itself (**Archive done threads after**, `chat.doneArchiveDays`; 0 never does);
-pinned threads and workflow steps' threads are never archived this way.
+then the newest activity. A done thread that has not been active for 14 days is archived by
+itself (**Archive done threads after**, `chat.doneArchiveDays`; 0 never does); pinned threads
+and workflow steps' threads are never archived this way.
 
 Right-click a row, or press the context-menu key or Shift+F10 on it, for **Open**, **Open in
 panel**, **Pin**, **Mark done** or **Reopen**, **Archive**, **Rename** and **Mark unread**.

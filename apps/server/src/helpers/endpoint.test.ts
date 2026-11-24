@@ -862,6 +862,10 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
     await server.providerService.idle();
     await until(() => listRows().find((row) => row.id === 't1')?.listStatus !== 'waits_for_you');
     expect(listRows().find((row) => row.id === 't1')?.listStatus).not.toBe('waits_for_you');
+    // A new turn in the same helper does not bring the old request back: the tree works.
+    await call(helperClient, 'write_to_helper', { id: deepId, text: 'Wait for the bell' });
+    await until(() => threadRow(deepId)?.state === 'working');
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).toBe('working');
     await helperClient.close();
     await client.close();
   });

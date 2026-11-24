@@ -34,27 +34,41 @@ function threadRows(db: Db) {
 // answered it, and the turn that asked still runs. A turn that ends leaves its request unanswered,
 // as the gate card says, but nobody can answer it any more.
 function openGates(db: Db): Set<string> {
-  const running = new Set(
+  // Each thread's running turn: a request counts only while the turn that asked it runs, as in
+  // the decision queue, so a new turn in the same thread does not bring an old request back.
+  const running = new Map(
     db
-      .select({ threadId: t.turns.threadId })
+      .select({ threadId: t.turns.threadId, id: t.turns.id })
       .from(t.turns)
       .where(eq(t.turns.state, 'running'))
       .all()
-      .map((row) => row.threadId),
+      .map((row) => [row.threadId, row.id]),
   );
   if (running.size === 0) return new Set();
-  const waiting = (rows: readonly { id: string; threadId: string }[]) =>
-    new Set(rows.filter((row) => running.has(row.threadId)).map((row) => row.id));
+  const turnOf = (itemId: string) =>
+    db
+      .select({ turnId: t.threadItems.turnId })
+      .from(t.threadItems)
+      .where(eq(t.threadItems.id, itemId))
+      .get()?.turnId;
+  const waiting = (rows: readonly { id: string; threadId: string; itemId: string }[]) =>
+    new Set(
+      rows
+        .filter(
+          (row) => running.has(row.threadId) && turnOf(row.itemId) === running.get(row.threadId),
+        )
+        .map((row) => row.id),
+    );
   const approvals = waiting(
     db
-      .select({ id: t.approvals.id, threadId: t.approvals.threadId })
+      .select({ id: t.approvals.id, threadId: t.approvals.threadId, itemId: t.approvals.itemId })
       .from(t.approvals)
       .where(isNull(t.approvals.decision))
       .all(),
   );
   const questions = waiting(
     db
-      .select({ id: t.questions.id, threadId: t.questions.threadId })
+      .select({ id: t.questions.id, threadId: t.questions.threadId, itemId: t.questions.itemId })
       .from(t.questions)
       .where(isNull(t.questions.answer))
       .all(),
