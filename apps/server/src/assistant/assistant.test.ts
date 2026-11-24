@@ -1320,6 +1320,22 @@ describe('proposals', () => {
     // A card without a workflow starts nothing, whenever it is.
     const { workflowId: _none, ...plain } = lid(0);
     expect((await call('create_card', plain)).content.outcome).toBe('changed');
+    // A workflow file alone starts a main thread, also without a project (orchestrator threads
+    // spec 27), so it asks the same way.
+    const { projectId: _project, ...noProject } = plain;
+    expect(
+      (await call('create_card', { ...noProject, workflowName: 'Delivery' })).content.outcome,
+    ).toBe('proposed');
+    const plainLater = await call('create_card', { ...noProject, start: at(1), end: at(31) });
+    expect(plainLater.content.outcome).toBe('changed');
+    expect(
+      (
+        await call('update_card', {
+          cardId: String(plainLater.content['cardId']),
+          workflowName: 'Delivery',
+        })
+      ).content.outcome,
+    ).toBe('proposed');
   });
 
   it('ask again when a step that already bypasses permissions or passes its gate by itself gets another skill, prompt, provider or model', async () => {
@@ -1494,7 +1510,9 @@ describe('proposals', () => {
       '"Start Delivery in Tea" was proposed for how things were then, and the card and the workflow changed since. Say No to it and ask again.',
     );
     expect(
-      rows('threads').filter((row) => (row as { title: string }).title === 'Brew the plan'),
+      rows('threads').filter(
+        (row) => (row as { title: string }).title === 'Brew the plan · 2026-11-11',
+      ),
     ).toEqual([]);
     expect(proposals()[0]).toMatchObject({ title: 'Start Delivery in Tea', state: 'pending' });
 
@@ -1502,7 +1520,9 @@ describe('proposals', () => {
     asUser({ type: 'card.update', cardId: 'card-1', workflowId: 'delivery' });
     asUser({ type: 'assistant.proposal.accept', proposalId });
     // The card's thread, in its project (orchestrator threads spec 27).
-    expect(rows('threads')).toMatchObject([{ title: 'Brew the plan', projectId: 'tea' }]);
+    expect(rows('threads')).toMatchObject([
+      { title: 'Brew the plan · 2026-11-11', projectId: 'tea' },
+    ]);
 
     // The same for a start by name, a trigger and a setting.
     const start = await call('start_run', { workflowId: 'delivery', projectId: 'tea' });

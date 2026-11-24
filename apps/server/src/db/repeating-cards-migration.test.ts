@@ -148,7 +148,7 @@ describe('migration 0022_repeating_cards', () => {
     // The stored workflow was written out as Review.md at start (orchestrator threads spec 22),
     // so the card starts a main thread that runs it (spec 27).
     const runs = () => running.database.db.select().from(threads).all();
-    expect(runs()).toMatchObject([{ title: 'Morning review', projectId: 'p1' }]);
+    expect(runs()).toMatchObject([{ title: 'Morning review · 2026-11-04', projectId: 'p1' }]);
     now = new Date('2026-11-05T07:30:00.000Z');
     running.scheduler.tick();
     expect(runs()).toHaveLength(1);

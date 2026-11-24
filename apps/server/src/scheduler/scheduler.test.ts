@@ -17,6 +17,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   calendarItems,
+  cardOccurrences,
   notifications,
   providerInstances,
   threadItems,
@@ -239,7 +240,7 @@ describe('the tick', () => {
     server.scheduler.tick();
     const [started] = allThreads();
     expect(started).toMatchObject({
-      title: 'Fix the login bug',
+      title: 'Fix the login bug · 2026-11-02',
       projectId: 'p1',
       cwd: projectDir,
       providerInstanceId: 'claude-work',
@@ -373,6 +374,32 @@ const sentIn = (threadId: string) =>
 const daily: RepeatRule = { frequency: 'daily', interval: 1, weekdays: [], end: { kind: 'never' } };
 
 describe('scheduled jobs as main threads (orchestrator threads spec 27, 28)', () => {
+  it('fails the occurrence and moves on when its same thread cannot take the message', async () => {
+    createCard({ repeat: daily, threadMode: 'same' });
+    now = at(60);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    // The thread's provider is gone by the next occurrence.
+    db().delete(providerInstances).run();
+    now = at(60 + 86_400);
+    server.scheduler.tick();
+    expect(card().state).toBe('failed');
+    expect(trigger()).toMatchObject({ state: 'scheduled', runAt: iso(60 + 2 * 86_400) });
+    expect(
+      db()
+        .select()
+        .from(cardOccurrences)
+        .all()
+        .map((row) => [row.date, row.outcome]),
+    ).toEqual([
+      ['2026-11-02', 'fired'],
+      ['2026-11-03', 'failed'],
+    ]);
+    // A later tick at the same time tries nothing again.
+    server.scheduler.tick();
+    expect(allThreads()).toHaveLength(1);
+  });
+
   it('new: each occurrence of a daily card makes a main thread titled with the card and the day', async () => {
     createCard({ repeat: daily, body: 'The login page loops.' });
     now = at(60);
@@ -420,7 +447,7 @@ describe('missed triggers at startup (behavior 12)', () => {
     createCard();
     await restart(600);
     const [started] = allThreads();
-    expect(started?.title).toBe('Fix the login bug');
+    expect(started?.title).toBe('Fix the login bug · 2026-11-02');
     expect(trigger()).toMatchObject({ state: 'fired', runId: started?.id });
     expect(card()).toMatchObject({ threadId: started?.id });
   });
@@ -435,7 +462,7 @@ describe('missed triggers at startup (behavior 12)', () => {
 
     dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'now' });
     expect(card()).toMatchObject({ state: 'running', threadId: 'now' });
-    expect(thread('now')).toMatchObject({ title: 'Fix the login bug' });
+    expect(thread('now')).toMatchObject({ title: 'Fix the login bug · 2026-11-02' });
     expect(trigger()).toMatchObject({ state: 'fired', runId: 'now', offerRunNow: false });
     await cardBecomes((current) => current.state === 'done');
   });

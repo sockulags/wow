@@ -32,7 +32,13 @@ export const startsWork = (card: CalendarItem): boolean =>
 export interface CardThreadStart {
   readonly create?: Extract<ServerCommand, { type: 'thread.create' }>;
   readonly send: Extract<ServerCommand, { type: 'thread.sendMessage' }>;
+  // What the occurrence records when making the thread or sending the message is refused all
+  // the same: the card fails with the reason instead of the trigger being tried again.
+  readonly refused: (reason: string) => DomainEvent[];
 }
+
+// What `cardThreadStart` answers; the trigger code adds what a refusal records.
+export type CardThreadPlan = Omit<CardThreadStart, 'refused'>;
 
 const sameThreadOf = (card: CalendarItem, read: ReadModel) =>
   card.threadMode === 'same' && card.threadId ? read.thread(card.threadId) : undefined;
@@ -92,14 +98,30 @@ export function cardThreadStart(
   threadId: string,
   read: ReadModel,
   context: DecideContext,
-): CardThreadStart {
+): CardThreadPlan {
   const name = cardWorkflowName(card, read);
   if (name === null) throw new CommandRejected('rejected', `"${card.title}" has no workflow`);
   const project = card.projectId === null ? undefined : read.project(card.projectId);
   if (card.projectId !== null && !project) {
     throw new CommandRejected('rejected', `The project of "${card.title}" is gone`);
   }
-  const folder = project ? path.join(project.cwd, '.wow', 'workflows') : undefined;
+  const same = sameThreadOf(card, read);
+  if (same && !read.providerInstanceExists(same.providerInstanceId)) {
+    throw new CommandRejected(
+      'rejected',
+      `The provider of the thread "${same.title || card.title}" is gone; make it New thread each time or start the thread again`,
+    );
+  }
+  if (!same && !project && context.home === undefined) {
+    throw new CommandRejected('rejected', 'A thread needs a project or a folder.');
+  }
+  // The workflow is looked up where the thread works: the same thread's project, else the card's.
+  const threadProject = same
+    ? same.projectId === null
+      ? undefined
+      : read.project(same.projectId)
+    : project;
+  const folder = threadProject ? path.join(threadProject.cwd, '.wow', 'workflows') : undefined;
   const workflow = read
     .skills()
     .find(
@@ -124,7 +146,6 @@ export function cardThreadStart(
       source: workflow.source === 'project-workflow' ? 'project-workflow' : 'workflow',
     } as const,
   ];
-  const same = sameThreadOf(card, read);
   if (same) {
     return { send: { type: 'thread.sendMessage', threadId: same.id, text, skills } };
   }

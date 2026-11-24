@@ -171,13 +171,19 @@ export function* decideInSteps(
     const used =
       covers && 'covered' in covers ? proposalOf(commandId, sent.data, read, context) : undefined;
     const before = target ? snapshot(target, read) : null;
+    // A card's Run now is decided in steps; what it did is reported like any change below.
     if (isSteppedTriggerCommand(sent.data) && isTriggerCommand(sent.data)) {
-      yield* decideTriggerInSteps(sent.data, read, asUser);
-      return;
+      let any = false;
+      for (const step of decideTriggerInSteps(sent.data, read, asUser)) {
+        any ||= step.length > 0;
+        yield step;
+      }
+      if (!any) return;
+    } else {
+      const events = decide(sent.data, read, asUser);
+      if (events.length === 0) return;
+      yield events;
     }
-    const events = decide(sent.data, read, asUser);
-    if (events.length === 0) return;
-    yield events;
     const change = target
       ? changeOf(commandId, sent.data, target, before, snapshot(target, read), read, context)
       : undefined;

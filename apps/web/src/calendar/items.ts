@@ -3,8 +3,8 @@ import { formatTime } from './time';
 
 // How calendar items read in the grid and its popovers.
 
-// What a card is, which decides what it shows (audit B-01): a trigger runs a workflow in a
-// project, a card with a workflow but no project will not run, and a plain card is only time.
+// What a card is, which decides what it shows (audit B-01): a trigger starts a main thread that
+// runs its workflow (orchestrator threads spec 27), and a plain card is only time.
 export type CardKind = 'trigger' | 'plain';
 
 // A card with a workflow starts a main thread at its time, with or without a project

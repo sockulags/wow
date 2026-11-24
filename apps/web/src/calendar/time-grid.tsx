@@ -387,7 +387,6 @@ function CardBlock({
   // its run.
   const fixed = occurrence?.fixed === true;
   const layout = blockLines(heightPx, {
-    extra: 0,
     button: onRunNow !== undefined,
   });
   return (
@@ -450,11 +449,6 @@ function CardBlock({
         {layout.showTime && (
           <span className="shrink-0 truncate text-2xs text-muted-foreground tabular-nums">
             {blockTime(item, zone, day)}
-          </span>
-        )}
-        {layout.showExtra && (
-          <span className="shrink-0 truncate text-2xs text-warning @max-[5rem]:hidden">
-            No project, will not run
           </span>
         )}
         {onRunNow && (

@@ -151,17 +151,17 @@ const afterUpdate = <T>(next: T | null | undefined, current: T | null | undefine
 
 const START_SOON_KEY = 'assistant.startSoonMinutes';
 
-// A card with a workflow and a project starts a run at its time. Put at once or a moment from
-// now it is "start a run now" by another name, which waits for a yes (spec 10); a card further
-// ahead is scheduling, which the user can see on the calendar and take back.
+// A card with a workflow starts a main thread at its time, with or without a project
+// (orchestrator threads spec 27). Put at once or a moment from now it is "start a run now" by
+// another name, which waits for a yes (spec 10); a card further ahead is scheduling, which the
+// user can see on the calendar and take back.
 function startsSoon(
-  workflowId: string | undefined,
-  projectId: string | undefined,
+  workflow: string | undefined,
   start: string | undefined,
   read: ReadModel,
   context: DecideContext,
 ): Classified {
-  if (workflowId === undefined || projectId === undefined || start === undefined) return ordinary;
+  if (workflow === undefined || start === undefined) return ordinary;
   const definition = context.registry[START_SOON_KEY];
   const minutes = definition
     ? resolveStored(START_SOON_KEY, definition, {}, (scope) => read.setting(START_SOON_KEY, scope))
@@ -361,8 +361,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'question.answer': refused("Only the user answers an agent's question."),
   'card.create': (command, read, context) =>
     startsSoon(
-      command.workflowId,
-      command.projectId,
+      command.workflowName ?? command.workflowId,
       firstStart({ id: command.cardId, ...command, repeat: command.repeat ?? null }, read, context),
       read,
       context,
@@ -385,8 +384,8 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
         ? pastSeriesAfter(card, { ...card, start, end, zone, repeat }, seriesChanged, context)
         : [];
     return startsSoon(
-      afterUpdate(command.workflowId, card?.workflowId),
-      afterUpdate(command.projectId, card?.projectId),
+      afterUpdate(command.workflowName, card?.workflowName) ??
+        afterUpdate(command.workflowId, card?.workflowId),
       start === undefined || end === undefined || zone === undefined
         ? start
         : firstStart(
@@ -453,7 +452,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
     'A deleted backlog item comes back through Undo, which the user presses.',
   ),
   'backlog.plan': (command, read, context) =>
-    startsSoon(command.workflowId, command.projectId, command.start, read, context),
+    startsSoon(command.workflowId, command.start, read, context),
   'plan.follow': 'ordinary',
   'planRun.start': 'proposal',
   'planRun.stop': refused('Only the user stops a plan run, on the plan in the Plans view.'),

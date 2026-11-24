@@ -13,7 +13,7 @@ import {
   type Trigger,
 } from '@wow/contracts';
 import { missedTriggerOutcome } from '@wow/workflow-engine';
-import { startingBetween, type Occurrence } from '../scheduler/occurrences.js';
+import { localDay, startingBetween, type Occurrence } from '../scheduler/occurrences.js';
 import { isDeepStrictEqual } from 'node:util';
 import { backlogFollowsCard } from './backlog.js';
 import {
@@ -86,8 +86,22 @@ export function* decideTriggerInSteps(
   // The thread is the user's own, as if they had made it and sent the workflow.
   const asUser: DecideContext = { ...context, origin: 'user' };
   for (const start of starts) {
-    if (start.create) yield decide(start.create, read, asUser);
-    yield decide(start.send, read, asUser);
+    // Decided before either is applied, so a refusal of the send leaves no thread behind.
+    let made: DomainEvent[];
+    try {
+      made = start.create ? decide(start.create, read, asUser) : [];
+    } catch (error) {
+      if (!(error instanceof CommandRejected)) throw error;
+      yield start.refused(error.message);
+      continue;
+    }
+    if (made.length > 0) yield made;
+    try {
+      yield decide(start.send, read, asUser);
+    } catch (error) {
+      if (!(error instanceof CommandRejected)) throw error;
+      yield start.refused(error.message);
+    }
   }
 }
 
@@ -147,7 +161,12 @@ export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: 
     const ran =
       existing.runId === null
         ? undefined
-        : read.cardOccurrences(card.id).find((occurrence) => occurrence.runId === existing.runId);
+        : read
+            .cardOccurrences(card.id)
+            .find(
+              (occurrence) =>
+                occurrence.runId === existing.runId || occurrence.threadId === existing.runId,
+            );
     return [
       triggerSet(
         existing.runId === null
@@ -279,15 +298,34 @@ function requireTrigger(read: ReadModel, id: string, runAt: string): CardTrigger
 // send goes into `starts`, and the card follows the thread from now on. Answers the thread.
 function startThread(
   card: CalendarItem,
-  date: string | undefined,
+  occurrence: Occurrence | undefined,
   newThreadId: string,
   read: ReadModel,
   context: DecideContext,
   starts: CardThreadStart[],
 ): string {
-  const start = cardThreadStart(card, date, newThreadId, read, context);
-  starts.push(start);
-  return start.send.threadId;
+  // A single card's thread is titled with its day too (orchestrator threads spec 27).
+  const date = occurrence?.date ?? localDay(card.start, card.zone);
+  const plan = cardThreadStart(card, date, newThreadId, read, context);
+  const before = card.threadId ?? null;
+  starts.push({
+    ...plan,
+    refused: (reason) => [
+      ...(occurrence ? [occurrenceRecorded(card, occurrence, 'failed', context, { reason })] : []),
+      ...cardState(card, 'failed', card.runId, context, before),
+      ...notification(read, context, {
+        id: `${triggerIdFor(card.id)}:${occurrence?.start ?? card.start}:${newThreadId}:refused`,
+        at: context.now,
+        kind: 'failed',
+        title: 'Trigger failed',
+        body: [card.title, occurrence?.date].filter(Boolean).join(' · ') + `: ${reason}`,
+        path: '/calendar',
+        runId: null,
+        calendarItemId: card.id,
+      }),
+    ],
+  });
+  return plan.send.threadId;
 }
 
 const threadStarted = (
@@ -460,7 +498,7 @@ function startSeriesThread(
 ): { events: DomainEvent[]; threadId?: string } {
   let threadId: string;
   try {
-    threadId = startThread(card, occurrence.date, newThreadId, read, context, starts);
+    threadId = startThread(card, occurrence, newThreadId, read, context, starts);
   } catch (error) {
     if (!(error instanceof CommandRejected)) throw error;
     return {
@@ -489,6 +527,9 @@ function startSeriesThread(
   };
 }
 
+// Decided through `decide()` alone, a fire records the trigger and the card but starts no
+// thread: only `decideTriggerInSteps` makes and sends what `starts` collects. Apply its events
+// only through that path; the assistant's proposal check decides once and throws them away.
 export function decideTrigger(
   command: TriggerCommand,
   read: ReadModel,
@@ -538,7 +579,7 @@ export function decideTrigger(
       const offered = isRepeating(card)
         ? read.cardOccurrences(card.id).findLast((occurrence) => occurrence.offerRunNow)
         : undefined;
-      const threadId = startThread(card, offered?.date, command.runId, read, context, starts);
+      const threadId = startThread(card, offered, command.runId, read, context, starts);
       const events = threadStarted(card, threadId, offered?.date, read, context);
       if (isRepeating(card)) {
         if (offered) {

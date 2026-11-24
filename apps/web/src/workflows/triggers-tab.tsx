@@ -3,7 +3,6 @@ import { Link } from '@tanstack/react-router';
 import { PlusIcon, Trash2Icon, ZapIcon } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { useStore } from 'zustand';
-import { useSetting } from '@/app/runtime';
 import { useDispatch, useTopic } from '@/chat/data';
 import { ChoiceSelect } from '@/components/choice-select';
 import { FormField } from '@/components/form-field';
@@ -196,10 +195,9 @@ export function TriggersTab() {
   const workflows = useTopic('workflows') ?? [];
   const reads = useTopic('hostReads') ?? [];
   const git = useProjectsGit(useTopic('projects'));
-  const schedulerPaused = useSetting('scheduler.paused');
   const error = useStore(triggersStore, (state) => state.error);
   const groups = triggerGroups(triggers ?? [], projects, workflows, reads, git);
-  const held = triggersHeld(schedulerPaused);
+  const held = triggersHeld();
   const newTrigger = (
     <Button type="button" size="sm" onClick={openNewTrigger}>
       <PlusIcon />

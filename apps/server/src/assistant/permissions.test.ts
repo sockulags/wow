@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readModel } from '../core/projector.js';
 import { snapshot } from '../core/subscriptions.js';
 import { startServer, type RunningServer } from '../server.js';
+import { threads } from '../db/schema.js';
 import { commandClasses } from './classes.js';
 import { coverage } from './permissions.js';
 
@@ -150,6 +151,47 @@ describe('Start runs (chief of staff spec 4, 5, 7)', () => {
     expect(proposals()).toEqual([]);
     const read = await call('read_permissions');
     expect(read.content['permissions']).toMatchObject([{ id: 'p1', usedToday: 1 }]);
+  });
+
+  it("starts a covered card's thread at once and reports it like a run (orchestrator threads spec 27)", async () => {
+    allow(permission({}));
+    // The stored workflow's file, as the export writes it (spec 22).
+    asUser({
+      type: 'skills.sync',
+      skills: [
+        {
+          id: path.join(root, 'workflows', 'delivery.md'),
+          name: 'delivery',
+          description: '',
+          dir: path.join(root, 'workflows'),
+          source: 'workflow',
+          manualOnly: true,
+          invocations: { claude: '/delivery', codex: '$delivery' },
+          text: '## Deliver',
+        },
+      ],
+    });
+    asUser({
+      type: 'card.create',
+      cardId: 'card-1',
+      title: 'Brew the plan',
+      start: '2026-11-11T12:00:00.000Z',
+      end: '2026-11-11T13:00:00.000Z',
+      zone: 'Europe/Stockholm',
+      projectId: 'tea',
+      workflowId: 'delivery',
+    });
+    const started = await call('start_card_run', { cardId: 'card-1' });
+    expect(started.content).toMatchObject({ outcome: 'done', underPermission: 'Start runs' });
+    expect(uses()).toMatchObject([{ permissionId: 'p1', kind: 'startRuns' }]);
+    expect(runs()).toEqual([]);
+    expect(
+      server.database.db
+        .select()
+        .from(threads)
+        .all()
+        .map((thread) => thread.title),
+    ).toEqual(['Brew the plan · 2026-11-11']);
   });
 
   it('leaves a workflow or project it does not name as a proposal', async () => {

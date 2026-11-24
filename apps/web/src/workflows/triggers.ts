@@ -219,6 +219,6 @@ export const triggerTitle = (row: TriggerRow): string =>
 // Why event triggers start nothing right now, if so (review loop spec 52).
 // Event triggers start nothing any more (orchestrator threads spec 29): a card with a workflow in
 // the calendar starts a main thread instead.
-export function triggersHeld(_schedulerPaused: boolean): string {
+export function triggersHeld(): string {
   return 'Event triggers start nothing any more. Put a card with a workflow in the calendar to start a thread at a time instead.';
 }

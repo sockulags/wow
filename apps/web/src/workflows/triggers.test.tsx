@@ -218,8 +218,7 @@ describe('trigger rows', () => {
   });
 
   it('says why nothing starts while event triggers are off or the scheduler is paused (spec 52)', () => {
-    expect(triggersHeld(false)).toMatch(/^Event triggers start nothing any more/);
-    expect(triggersHeld(true)).toMatch(/^Event triggers start nothing any more/);
+    expect(triggersHeld()).toMatch(/^Event triggers start nothing any more/);
   });
 });
 
