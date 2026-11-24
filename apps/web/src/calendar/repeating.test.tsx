@@ -45,6 +45,7 @@ const card: CalendarItem = {
   backlogItemId: null,
   workflowId: 'notes',
   runId: 'run-16',
+  threadId: 'thread-16',
   state: 'done',
   updatedAt: '2026-11-10T09:00:00.000Z',
   repeat: {
@@ -93,7 +94,8 @@ const fired = occurrence(16, {
     start: at(16, 7),
     end: at(16, 7, 45),
     outcome: 'fired',
-    runId: 'run-16',
+    runId: null,
+    threadId: 'thread-16',
     reason: null,
     offerRunNow: false,
     at: at(16, 7),
@@ -278,7 +280,7 @@ describe('occurrences in the week', () => {
     ]);
   });
 
-  it('opens the run of a past occurrence and the card of a future one', async () => {
+  it('opens the thread of a past occurrence and the card of a future one', async () => {
     const { grid, router } = await showWeek();
     const future = within(grid).getAllByRole('button', { name: /, repeats, scheduled$/ })[1];
     if (!future) throw new Error('no future occurrence');
@@ -288,7 +290,7 @@ describe('occurrences in the week', () => {
 
     fireEvent.keyDown(block(grid, /, repeats, done$/), { key: 'Enter' });
     await act(() => router.load());
-    expect(router.state.location.pathname).toBe('/workflows/runs/run-16');
+    expect(router.state.location.pathname).toBe('/chat/thread-16');
   });
 
   it('moves an occurrence as the series from that day, and keeps a reached one where it was', async () => {
@@ -525,7 +527,7 @@ describe('the new actions', () => {
     );
     expect(blocks.shown.get(occurrenceId(card.id, '2026-11-16'))).toMatchObject({
       state: 'done',
-      runId: 'run-16',
+      threadId: 'thread-16',
     });
     // A single card is drawn from its own row, not from the range.
     expect(occurrenceBlocks([{ ...card, repeat: null }], range(), [run]).items).toEqual([]);

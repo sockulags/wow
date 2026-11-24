@@ -35,7 +35,7 @@ async function pick(page: Page, query: string, expected: string) {
 }
 
 test.describe('palette', () => {
-  test('finds cards, backlog items, workflows and settings pages', async ({ page }) => {
+  test('finds cards, backlog items and settings pages', async ({ page }) => {
     // A backlog item planned on the calendar a month ahead gives one item and one card.
     await page.goto('/backlog');
     await page.getByRole('navigation', { name: 'Backlog' }).getByText('New item').click();
@@ -93,10 +93,6 @@ test.describe('palette', () => {
 
     await pick(page, 'backlog quarterly', 'Quarterly cleanupBacklog item');
     await expect(page).toHaveURL(itemUrl);
-
-    // Its id keeps the runs of this workflow, which other tests start, out of the way.
-    await pick(page, 'workflow backlog-e2e', 'Backlog e2eWorkflow');
-    await expect(page).toHaveURL(/\/workflows\/backlog-e2e$/);
 
     await pick(page, 'settings calendar', 'Calendar');
     await expect(page).toHaveURL(/\/settings\/calendar$/);

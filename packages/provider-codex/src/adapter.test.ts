@@ -907,6 +907,16 @@ describe('CodexAdapter', () => {
     expect(params['developerInstructions']).toBeUndefined();
   });
 
+  it("tells a main thread its instructions as developer instructions after codex's own (orchestrator threads spec 25)", async () => {
+    const { adapter, current } = setup(() => new ScriptedCodex(baseAnswers));
+    await adapter.send({ ...startTurn, appendInstructions: 'Mind the kettle.' });
+    const params = written(current(), 'thread/start')?.['params'] as Record<string, unknown>;
+    expect(params['developerInstructions']).toBe('Mind the kettle.');
+    // The thread's own settings stay: no tools are taken away.
+    expect(params['config']).toBeUndefined();
+    expect(params['sandbox']).not.toBe('read-only');
+  });
+
   it('starts an assistant thread with the wow MCP server, a read-only sandbox without network and the given folder', async () => {
     const { adapter, current, tools } = setup(() => new ScriptedCodex(baseAnswers));
     await adapter.send(assistantTurn);

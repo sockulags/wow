@@ -349,7 +349,6 @@ describe('panel tabs in chat', () => {
     const titles = viewerCommands({
       panelTabs: runtime.layout.getState().panelTabs,
       pathname: '/chat/tea',
-      openRun: undefined,
       projects: [],
     }).map((command) => command.title);
     expect(titles).toEqual(
@@ -360,9 +359,7 @@ describe('panel tabs in chat', () => {
         'Back to the panel tab shown before',
       ]),
     );
-    expect(
-      viewerCommands({ panelTabs: {}, pathname: '/chat/tea', openRun: undefined, projects: [] }),
-    ).toEqual([]);
+    expect(viewerCommands({ panelTabs: {}, pathname: '/chat/tea', projects: [] })).toEqual([]);
   });
 
   it('keeps a thread’s tabs when another thread was open in between, reading them again @agent-workbench-13', async () => {
@@ -525,22 +522,5 @@ describe("an edit's file and the thread's Changes in tabs", () => {
     // Back closes the Changes tab; the tab shown before it comes back, as for a file.
     await user.click(within(panel()).getByRole('button', { name: 'Back to details' }));
     expect(tabs()).toEqual(['Details', 'timer.ts *']);
-  });
-});
-
-describe('panel tabs in the calendar', () => {
-  it('keeps each card’s tabs apart, though both are the calendar @agent-workbench-13', async () => {
-    const server = fake();
-    const { router } = await renderApp('/calendar?item=card-1', server.runtime);
-    const user = userEvent.setup();
-    expect(await within(panel()).findByTestId('panel-step-thread')).toBeTruthy();
-    await user.click(await fileLink('src/timer.ts'));
-    await fileShows('export const ring = 2;');
-    expect(tabs()).toEqual(['Calendar', 'timer.ts *']);
-    await act(() => router.navigate({ to: '/calendar', search: { item: 'card-2' } }));
-    expect(tabs()).toEqual([]);
-    expect(within(panel()).getByTestId('panel-step-thread')).toBeTruthy();
-    await act(() => router.navigate({ to: '/calendar', search: { item: 'card-1' } }));
-    expect(tabs()).toEqual(['Calendar', 'timer.ts *']);
   });
 });

@@ -18,7 +18,6 @@ import { createStore } from 'zustand';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
 import { panelTabsOf } from '@/panel/viewer';
-import { atWorkRows } from './at-work';
 import { createDraftStore } from './draft';
 import { nestHelpers } from './helpers';
 import { ThreadConversation } from './thread-view';
@@ -217,18 +216,5 @@ describe('helpers under their main thread (spec 11, 12)', () => {
     expect(
       nestHelpers([helper], (entry) => entry, [thread, helper]).map(({ helperOf }) => helperOf),
     ).toEqual([thread.title]);
-  });
-
-  it('does the same in Threads at work, within a group', () => {
-    const main = { ...thread, state: 'working' as const };
-    const rows = atWorkRows(
-      [helper, main],
-      [working, { ...working, threadId: thread.id, runningTool: null }],
-      [],
-    );
-    expect(rows.map((row) => [row.thread.id, row.depth])).toEqual([
-      [thread.id, 0],
-      ['helper-1', 1],
-    ]);
   });
 });

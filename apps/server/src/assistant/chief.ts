@@ -1,3 +1,4 @@
+import { assistantAsked } from './briefs.js';
 import {
   assistantThreadId,
   briefingMomentLabels,
@@ -45,7 +46,10 @@ export function decideBriefing(
 ): DomainEvent[] {
   if (read.briefing(command.briefingId)) return [];
   const limit = settingValue('assistant.briefingsPerDay', read, context);
+  // The Assistant thread is a main thread without wow's assistant tools (orchestrator threads
+  // spec 25), so it is not asked for what only those tools could write; this goes with them.
   const ask =
+    assistantAsked &&
     read.thread(assistantThreadId) !== undefined &&
     typeof limit === 'number' &&
     read.briefingSummariesSince(today(read, context).since) < limit;
@@ -131,7 +135,7 @@ export function decideBriefingNotified(
         .slice(0, 2)
         .map((line) => line.text)
         .join(' '),
-      '/assistant',
+      '/chat/assistant',
       context.now,
     ),
   ];
@@ -403,7 +407,7 @@ export class Chief {
               .slice(0, 3)
               .map((row) => row.title)
               .join('; ')}.`,
-      path: '/assistant',
+      path: '/chat/assistant',
     });
     const happened =
       started.length + done.length + failed.length + uses.length > 0 || decisions.length > 0;

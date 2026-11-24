@@ -40,9 +40,6 @@ export const fileChannels = { saveText: 'wow:save-text-file' } as const;
 // renderer → main (invoke): "Restart now" for settings that need a restart.
 export const appChannels = {
   restart: 'wow:app-restart',
-  // renderer → main (invoke): the quick ask opens a route in the main window, or hides itself.
-  openInMain: 'wow:app-open-in-main',
-  hideQuickAsk: 'wow:app-hide-quick-ask',
 } as const;
 
 export const updateChannels = {

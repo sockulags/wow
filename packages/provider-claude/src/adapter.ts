@@ -62,8 +62,12 @@ type PermissionOptions = Parameters<CanUseTool>[2];
 const toolsOnlyMode = 'dontAsk';
 // How Claude Code names the tools of an MCP server.
 const toolPrefix = (toolset: Toolset) => `mcp__${toolset.name}__`;
+// What an ordinary session was opened with that only a new session can change: wow's helper
+// tools and the instructions after Claude Code's own.
 const helperKey = (command: StartTurn) =>
-  command.helperTools ? `${command.helperTools.url} ${command.helperTools.token}` : undefined;
+  command.helperTools || command.appendInstructions
+    ? `${command.helperTools?.url ?? ''} ${command.helperTools?.token ?? ''} ${command.appendInstructions ?? ''}`
+    : undefined;
 
 // "default" leaves the effort to Claude Code (the model's default or the user's /effort).
 const defaultEffort = 'default';
@@ -647,7 +651,16 @@ export class ClaudeAdapter implements ProviderAdapter {
         options.resume = command.resumeId;
       }
       if (command.toolset) this.#toolsOnly(options, command.toolset, command.instructions);
-      else if (command.helperTools) this.#withHelperTools(options, command.helperTools);
+      else {
+        if (command.helperTools) this.#withHelperTools(options, command.helperTools);
+        if (command.appendInstructions) {
+          options.systemPrompt = {
+            type: 'preset',
+            preset: 'claude_code',
+            append: command.appendInstructions,
+          };
+        }
+      }
       session.query = this.#query({ prompt: session.input, options });
     } catch (error) {
       this.#sessions.delete(command.threadId);

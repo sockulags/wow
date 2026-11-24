@@ -1673,7 +1673,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.workingCopyBranch`, `chat.workingCopyStart` (project-scoped, see "A chat thread's own
   working copy"), `chat.snapshots` (project-scoped), `chat.snapshotMaxFiles`,
   `chat.snapshotMaxFileBytes`, `chat.snapshotTimeoutMs`, `chat.snapshotReadsAtOnce`, `chat.snapshotKeepDays`,
-  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
+  `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `chat.instructions` (see "Assistant"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helpersPerTree`, `chat.helperBranch`, `chat.mergeBrief`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
   "Threads at work and a thread in the panel"), `chat.doneArchiveDays` (see "Thread list, unread and chat
@@ -1722,8 +1722,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - diff: `diff.maxFileBytes`, `diff.maxFiles`, `diff.maxHashBytes` (the "Changes" page, see "Run base and changes")
 - workspaces: `workspaces.root`, `workspaces.fetchBeforeCreate` (project-scoped),
   `workspaces.gitTimeoutMs` (the "Working copies" page, see "Working copies")
-- assistant: `assistant.providerInstanceId`, `assistant.allowCodex`, `assistant.model`,
-  `assistant.effort`, `assistant.instructions`, `assistant.greeting`,
+- assistant: `assistant.greeting`,
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
   `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance`,
   `assistant.notes`, `assistant.excludedProjects`, `assistant.readMaxBytes`,
@@ -1737,8 +1736,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`,
   `appearance.changesListWidth` (see "Changes tab")
 - keybindings: `keybindings.*`, one per command that has a shortcut
-- desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`,
-  `desktop.quickAskShortcut`
+- desktop: `desktop.autostart`, `desktop.closeToTray`, `desktop.startMinimized`
 - updates: `updates.enabled`, `updates.checkIntervalMinutes`
 - advanced: `advanced.port`, `advanced.logLevel`, `advanced.secretsTimeoutMs`,
   `advanced.gitStopWaitMs` (see "Git" under "Projects"),
@@ -2093,21 +2091,6 @@ answered). A plan with a live plan run counts as followed here until that plan r
 `waiting` from its pull requests, see "Hosts". `followed` is the plan's Follow switch; it is kept
 when the files are read again and goes with the row when the intent folder does.
 
-**View** (`apps/web/src/plans`, section "Plans" after Workflows, `keybindings.goPlans`). `/plans`
-lists every project with its intents: title, status and revision, spec and plan presence, "stale"
-and the number of problems. `/plans/$projectId/$intentId` shows the three files with a stale
-badge that names both revisions, the problems as `plan.md line 11: …`, and the units with key,
-title, dependencies, blocked note and status; the reason units share shows once above the list.
-`?unit=<key>` opens that unit's contract, rendered with the shared markdown renderer. The header
-has the Follow switch (`plan.follow`); a followed plan shows "Last fetched <time> from <host>",
-the host's error when the last read failed (with a link to the setting it names) and its own
-"Refresh now" (`hosts.refresh {planId}`). A unit with a pull request links to it on the host and
-shows its state (Open, Draft, Merged, Closed) and checks; a waiting unit shows what it waits for,
-which names the stale file when that is the reason. "Refresh now" in the list reads the files and
-then asks the hosts about everything followed. Palette: "Plans: Refresh now", every intent (when
-searching), and for the open plan "Plan: follow" / "Plan: stop following", "Plan: refresh pull
-requests now", each unit and each unit's pull request.
-
 **Plan files and a unit's thread** (agent workbench spec 84). A file the plan has is a button:
 Enter or a click opens it rendered in a file tab of the panel, read with the `{projectId}` file
 scope from `<intents folder>/<intent>/<file>` (`planFilePath`; the folder is the project's own
@@ -2381,55 +2364,39 @@ before anything of the request is read; without it every method gets 401. The as
 token does not open the WebSocket either. `RunningServer.assistant` (`{url, token, tools}`) is
 what a provider adapter is handed for the assistant's turn.
 
-**The assistant thread** (`assistant/thread.ts`). It is a row of `threads` with `kind`
-`assistant` (migration `0018_thread_kind`; every other thread is `chat`) and the fixed id
-`assistant`, so there is one per install and it is found again after a restart. Its turns,
-items and provider session are stored like any thread's. The `threads` topic leaves it out, so
-no list of the chat view has it; the `assistantThread` topic has that one row, or none before
-it was first opened.
+**The Assistant thread** (`assistant/thread.ts`, orchestrator threads spec 25). An ordinary main
+thread (`kind` `chat`, no project) with the fixed id `assistantThreadId` and the title
+"Assistant", listed in the thread list. `assistantThreadEvents` makes it when it is missing, on
+the instance, model, effort and permission mode a new thread gets (`newThreadSettings` in
+`core/card-threads.ts`: `chat.defaultInstance` and `chat.defaultModel`, then the instance's
+own), in `<wow home>/threads/assistant` (the thread migrated from before keeps
+`<wow home>/assistant`). Its instance does not hold it (`instanceUsage` leaves it out): when the
+instance is removed, its next message moves it to where a new thread would start, with a new
+provider session. `thread.greetAssistant`
+makes it and greets it (see "The greeting"); `thread.create` refuses its id. Its turns are chat
+turns like any main thread's, with the helper tools and the app tools on `/threads/mcp`. Only
+the notes differ: a message or an answer to it starts with what the user answered to proposals
+and undid since its last turn, and a setup file applied since (`assistantNotes` in
+`core/threads.ts`). Migration `0050_assistant_is_a_main_thread` turned the stored assistant
+thread into this one, keeping its items and provider session (and setting Claude Code's
+`dontAsk` of the tools-only turns to `default`), and the projector reads an old
+`thread.created` of kind `assistant` as `chat`, so a replay cannot bring the old kind back.
 
-- `assistant.open` (RPC) asks for it and answers `{thread, problem}`. It sends the command
-  `thread.openAssistant`, which makes the thread or brings it in line with the settings. When
-  nothing names a model or an effort, the handler first asks the provider for its models and
-  passes the first one as a fallback, because a decision cannot ask a provider.
-- Who runs it is decided by `chooseAssistantProvider` in `packages/contracts`: the instance
-  `assistant.providerInstanceId` names; left empty, the instance the thread already runs on
-  while it is connected, otherwise the first connected one in the order they were made.
-  A Codex instance counts only while `assistant.allowCodex` is on (default off): wow switches
-  off the Codex tools that have a switch, but nobody has yet seen the tool list a real,
-  signed-in Codex then offers, and the tools without a switch stay (see below). While it is
-  off, a Codex instance named in `assistant.providerInstanceId` is refused, the first connected Claude Code instance is taken
-  even if a Codex one was connected earlier, and when only Codex could run it the answer is the
-  sentence `assistantCodexOff`, which says why and names both ways out.
-  "Connected" means the instance's last test passed (`status: ready`). The model is
-  `assistant.model`, then the instance's default model, then what the thread already uses on
-  that instance; the effort likewise with `assistant.effort`. The permission mode is
-  `providerChatOptions[kind].assistantPermissionMode` (`dontAsk` on Claude, `read-only` on
-  Codex) and cannot be changed: `thread.configure` is refused for this thread.
-- When no instance can run it (none connected, the chosen one removed, its test failed),
-  `assistant.open` answers the sentence in `problem` with the thread as it was, and
-  `thread.sendMessage` is rejected with the same sentence, so no turn starts (spec 27). The
-  check runs again with every message: a message sent after the settings changed already goes
-  to the instance named now. Moving to another instance is the event `thread.providerChanged`;
-  the provider's session id is kept only when the new instance is of the same kind on the same
-  config folder. The event names the instance it left (`previousProviderInstanceId`), and the
-  provider service sends that instance's adapter `closeThread`, so the adapter drops its live
-  session for the thread; coming back later starts a new session from what the thread row
-  says, instead of going on with the old one and its old options. The assistant thread does not keep an instance from being deleted.
-- The turn. `turn.started` carries `start.kind: 'assistant'` and nothing else about the
-  tools. After commit the provider service (`#assistantTurn`) builds the `startTurn` command
-  with `toolset {name: 'wow', url, token}` (the endpoint above), `instructions` from the
-  setting `assistant.instructions`, and `cwd` set to `<wow home>/assistant` whatever the row
-  says. A changed instruction text reaches Claude Code with the next message: the adapter
-  closes the live session and opens a new one that resumes the same conversation with the new
-  text. On Codex it applies from the next start of the assistant's codex thread (after wow or
-  the instance restarts, or the thread moves), because the app-server takes the text only when
-  a thread starts or resumes. The token is read from memory at that moment; it is in no event, row or log line. The
-  folder's name is not a setting, so it cannot be pointed at a project. It is made before the
-  turn and must be empty: if it holds anything the turn fails with a sentence that names what
-  was found, since a provider would read an instruction file left there.
-- What "these tools and no others" means is each adapter's business (see below). An ordinary
-  thread and a workflow step carry no toolset and their options are unchanged.
+**Instructions for every main thread** (`chat.instructions`, `defaultChatInstructions` in
+`packages/contracts/src/assistant.ts`). `ProviderService` puts the text in a main thread's
+`startTurn` as `appendInstructions`; a helper gets none. Claude Code gets it as
+`systemPrompt: { type: 'preset', preset: 'claude_code', append }`, after its own instructions,
+and a changed text opens a new session on the same conversation (it is part of the session key
+with the helper tools); Codex gets it as `developerInstructions` on `thread/start` and
+`thread/resume`, read when the thread loads.
+
+**What wow no longer asks of it.** Briefs of decisions, briefing summaries and follow-up turns on
+threads the assistant started needed the assistant's own tools (`write_brief`,
+`write_briefing_summary`, `read_thread`), which a main thread does not have. `assistantAsked` in
+`assistant/briefs.ts` is false, so `decideBriefRequest`, `decideBriefing` and `decideFollow` send
+it nothing; a briefing keeps wow's own lines. They go with the rest of the assistant's own
+machinery in U8's second part. Migration 0050 moved the stored value
+of the assistant's old instructions setting here.
 
 **Tools-only turns in the adapters.** A `startTurn` with a `toolset` is handled inside each
 adapter, and a session started with one never becomes an ordinary session or the other way
@@ -2469,9 +2436,7 @@ round (the adapter refuses the turn).
   instruction files) still loads. So the sandbox stays as the second line: a command, if one
   is still offered, cannot write or reach a host and sees no environment variable of wow or
   the instance (so no API key), and every approval request of such a thread is declined
-  without asking the user. Because nobody has seen the resulting tool list, the assistant runs
-  on Codex only when the user turns `assistant.allowCodex` on. An ordinary thread gets none of
-  this. The compat check reads `config` as one map of JSON values, so the keys inside it are
+  without asking the user. An ordinary thread gets none of this. The compat check reads `config` as one map of JSON values, so the keys inside it are
   not part of the fingerprint. `config` and
   `developerInstructions` are in the generated protocol types of the tested codex. For any
   other version the adapter asks that codex for its schema once (`installedCodexLacks`) and
@@ -2516,10 +2481,8 @@ three kinds and nothing else.
   (`AssistantNote[]`: id, text, addedAt, until, by). `remember {text, until?}` and `forget
 {noteId}` are built tools that write the whole list with `setting.set`, so a note is an
   ordinary change with its row ("Memory: … → …") and Undo, and `read_notes` lists them.
-  `#assistantTurn` in `providers/service.ts` appends the notes that still apply in the calendar's
-  zone today to `assistant.instructions` (`instructionsWithNotes`); on Claude Code a changed text
-  resumes the session with it, on Codex it applies from the next session, as the instruction
-  text does. Settings → Assistant shows them as a list (`settings/memory-section.tsx`).
+  The notes were appended to the assistant's tools-only turns, which no thread runs since the
+  Assistant thread became a main thread; they go with the assistant's own tools. Settings → Assistant shows them as a list (`settings/memory-section.tsx`).
 - Change tools (`changeTools`) each name one command type of `Command`. The tool's input is
   that command's own schema without `type`, without the id of the thing it makes (the tool
   makes one up, as a view does) and without fields the assistant never fills in (`stopRun`).
@@ -2611,7 +2574,7 @@ decides what a command of the assistant does. The table names every type of `Ser
   that then lets the app do more: `scheduler.paused` off, `scheduler.missedPolicy` to `run`,
   `hosts.polling` or `viewer.htmlScripts` on. A change to
   `assistant.secretPatterns` is a proposal too, since that is the assistant's own net, and so
-  is any change to `assistant.allowCodex`, `viewer.editorCommand`
+  is any change to `viewer.editorCommand`
   or `viewer.editorShell`, either way (the last two name a program the server runs). Four
   more are proposals though spec 9 does not list them, because they do the same kind of thing:
   another skill, extra prompt, provider or model on a step that has a permission mode or a
@@ -2696,11 +2659,8 @@ internal `assistant.requestBrief` for each new gate, limit, approval, question o
 within `assistant.briefsPerDay` since midnight in the calendar's zone it marks the brief asked
 and sends the assistant a "From wow: …" message naming the decision. The assistant writes it with
 `write_brief` (`assistant.writeBrief`), which is refused for a decision wow did not ask about and
-for one already written. The web app shows the queue beside the assistant's conversation
-(`assistant/queue.tsx`) with the answers of the views it comes from and the keys
-`keybindings.gateApprove`, `keybindings.approvalAllowOnce` and `keybindings.approvalDeny` on the
-focused row; "Next that needs you" follows the queue's order; the tray lists its first three
-rows and opens the Assistant.
+for one already written. No page shows the queue any more (orchestrator threads spec 34); the
+tray lists its first three rows and opens the Assistant thread.
 
 **The assistant's rhythm** (`assistant/chief.ts`, chief of staff spec 20 to 27). `Chief.tick`
 runs on every scheduler tick (`Scheduler.onTick`, also while the scheduler is paused) once the
@@ -2724,16 +2684,6 @@ Outlook meeting now overlaps get `assistant.moveCard` with the next free slot of
 after the meeting: under Move cards it is applied as the user's `card.update` with a permission
 use, else it is a proposal. The Retry kind is stored but nothing acts on it yet: a step's failed
 turn carries no sign of whether the provider or the agent failed.
-
-**Quick ask** (chief of staff spec 31). `desktop.quickAskShortcut` (an Electron accelerator,
-empty for off) is registered by the desktop controller through `DesktopShell.setQuickAsk` with
-Electron's `globalShortcut`; when another program holds the key the registration fails and the
-controller sends one notification that opens Settings → Desktop. A press opens a frameless,
-always-on-top window (`openQuickAsk`) on the route `/quick-ask`, which the web app's root shows
-without the shell (`quick-ask/quick-ask-view.tsx`): Enter sends `thread.sendMessage` to the
-assistant's thread and the answer streams from its `threadItems`; Escape and losing the focus
-hide the window; "Open in wow" asks the main window for `/assistant` through the preload bridge
-(`appChannels.openInMain`, `appChannels.hideQuickAsk`). All keys are unregistered on quit.
 
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
 `assistant` the class comes first. A refused command is rejected with its sentence. An
@@ -2772,9 +2722,8 @@ an "always allow" list as its rules' words. A shape it has no words for is said 
 model is named by its label: `DecideContext.modelLabel` reads `ProviderService.modelLabel`, the
 labels of the last `listModels` answer of each instance (the bar, the builder and the
 assistant's step checks ask for them); a model no list has named yet shows its id, nothing is
-asked for it while deciding. `assistant.model`, a step's model and a project's `defaultModel`
-are named so, `assistant.providerInstanceId` and `defaultProviderInstanceId` by the instance's
-name. A default that reads "From Outlook" carries no "(default)", since it says where it comes
+asked for it while deciding. `chat.defaultModel`, a step's model and a project's `defaultModel`
+are named so, `chat.defaultInstance` and `defaultProviderInstanceId` by the instance's name. A default that reads "From Outlook" carries no "(default)", since it says where it comes
 from.
 
 **The rule proposal** (agent workbench spec 41; `builtTools` in `assistant/tools.ts`). The tool
@@ -2853,85 +2802,10 @@ the server's clock moved between turns. `assistant/skills.test.ts` covers wow sk
 proposal with its text and written only at Yes, the refusals for built-in and folder skills,
 a stale accept, and "Also follow" under the workflow rules.
 
-**The view** (`apps/web/src/assistant`, section "Assistant" above Settings, `/assistant`,
-`keybindings.goAssistant`, Mod+6). It calls `assistant.open` when it opens and again when an
-instance's status or `assistant.providerInstanceId` or `assistant.allowCodex` changes, and
-shows the `problem` sentence in a banner with links to Settings → Providers and Settings →
-Assistant (the composer is blocked with the same sentence); with no thread yet it shows only
-the sentence. The conversation is the chat view's `ThreadConversation` with
-`ConversationExtras` (`chat/thread-view.tsx`): rows after an item, rows at the end, the
-composer's ref, placeholder, blocked reason, a check before send, a notice line and its own
-composer bar (`modelBar`; `null` for none, left out for the thread's own bar). Nothing of
-the chat view is copied. The skill list and chips are off there (no `providerKind`). With `chat.groupToolCalls` on (the
-default), `groupToolCalls` (`chat/view-model.ts`) draws consecutive tool calls of one turn as one
-row (`ToolCallGroup`, `chat/tools/group.tsx`): while open to more calls, the latest call, the
-count and how many failed; closed, a summary of what was done (see "Tool rows, the task pin and
-copy"); any other item, a new turn, or a call that has rows after it (change rows, proposals,
-cards) ends the run. Its open state is the window's own.
-
-- Rows (`assistant/model.ts`, `placeRows`). A change row or proposal card goes right after the
-  tool call whose answer names its id (`change.id`, `proposal.id` in the call's output); one
-  whose call cannot be found goes at the end, in the order made. `assistantToolOf` in
-  `packages/contracts` reads wow's tool name from the name a provider reports
-  (`mcp__wow__<tool>` from Claude Code, `wow/<tool>` from Codex), so the view never looks at a
-  provider's naming itself.
-- Change row (`ChangeRow`): "what: from → to · place" with Undo (`assistant.undo`); greyed with
-  "Undone" when the topic says so; a refused Undo shows the server's reason under it.
-- Proposal card (`ProposalCard`): the title, one line per change (a value past
-  `assistant.valueLength` (160) characters is cut there, and the line carries the whole of it in `fromFull`/`toFull`, shown under "Was:
-  show all of it" / "Becomes: show all of it"; the secret net runs on the whole value before it
-  is cut), the place, Yes
-  (`assistant.proposal.accept`) and No, which opens an optional reason field and sends
-  `assistant.proposal.decline`. A reason that looks like a secret is not sent and the card
-  says why. A refused Yes (stale, or the app refuses it now) shows the reason and still offers
-  No.
-- Secret field card (`SecretFieldCard`), drawn after a `show_secret_field` call the server
-  answered (`status` ok and `outcome` `shown`; a refused or running call draws nothing, and the
-  project work card likewise needs `offered`): the setting's
-  label, where the value goes, the settings page's own `SecretField` (password field and Save,
-  through `storeSecretSetting`: `secrets.set` and then `setting.set` with the reference) and,
-  for a tracker token, `TestConnection`. Above the field it shows the token guide's steps
-  (`TokenGuideSteps`) from the tool's stored answer (`askOf` reads `guide`), with links out to
-  the host and, while the address is missing, a link to where it is filled in. It says "Set" from the `settings` topic once a
-  reference is stored at that scope.
-- Secret variable card (`SecretVariableCard`), after a `show_secret_variable` call the server
-  answered: "<VARIABLE> (<instance>)", where the value goes, a password field and Save
-  (`storeSecretVariable`: `secrets.set` as `provider:<id>:env:<name>` (`providerSecretName`),
-  then `providerInstance.update` with the instance's env and the reference, then
-  `provider.test`, as the instance editor does), "Set" once the instance holds a reference for
-  it, and the instance's last test. A held message whose field is unknown goes to the field or
-  variable the assistant asked for last.
-- Project work card (`ProjectWorkCard`), after `offer_project_work`: "Open in Chat" puts the
-  text in the draft store (`DraftState.text`) and opens `/chat/new`, whose composer takes it.
-- Held message. Before a message is sent or queued, `holdMessage` runs `findSecret` from
-  `packages/contracts` with `assistant.secretPatterns`, the same patterns the server hides.
-  A match keeps the text in the composer and shows a line above it: what it looks like ("a
-  GitHub token"), "Put it in <field>" and "Send anyway". The field is the one the token's kind
-  names (a GitHub, GitLab or Atlassian prefix), taking the project of a field the assistant
-  asked for, or else the field the assistant asked for last; without one only "Send anyway"
-  is offered. "Put it in" stores the matched text through `storeSecretSetting` and leaves the
-  rest of the message, as the box holds it now, in the composer; when the field already holds a
-  reference at that scope the line says it will be replaced, and the note after says it was. A
-  held message is sent nowhere until "Send anyway", which calls the composer's
-  `sendUnchecked()`: the box's current text goes through the composer's own send path (queued by
-  the server while a turn runs, as the answer to a waiting question), skipping only the check.
-- Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
-  you"), "Show proposal: <title>" (searched for), Undo for every applied change (the newest
-  before typing). A refusal from the palette is a toast with the reason.
-- Tool rows (agent workbench spec 82). `ConversationExtras.toolWords(item)` says how a tool
-  call reads: undefined for the tool's own row, a text for a row in those words
-  (`chat/tools/words.tsx`, carried as `ItemContext.toolWords`), null for no row at all. The
-  Assistant view answers null for one of wow's calls that has a change row or proposal after
-  it, a card (`askOf`) or a question card (`askedQuestionsOf`), since that card already shows
-  the call; such a call stands alone in `groupToolCalls` (its `alone` argument) and only what
-  follows it is drawn. Every other call of wow's reads in the words of
-  `assistantToolWords` (`packages/contracts`, "Read your workflows"); a server test checks that
-  every tool `AssistantTools.list()` offers has words there.
-- Waiting line (spec 96, `WaitingLine` in `rows.tsx`). While a proposal waits, the composer's
-  notice line says "1 proposal waits: <title>" (or "N proposals wait", naming the oldest) with
-  Yes, No (no reason; the card's No takes one) and Show. Show, like the palette's "Show
-  proposal", sets `proposalFocus` (`assistant/model.ts`); the card with that id scrolls into
-  view, takes the focus and clears it. A held message's line sits below it.
+**Rows in the conversation** (`apps/web/src/assistant`). The Assistant page is gone
+(orchestrator threads spec 34); what wow's tools show is drawn in the thread where the tool ran by
+`useAppToolRows` and `PlacedRows` (`assistant/app-tool-rows.tsx`): change rows with Undo, proposal cards with Yes and
+No, secret field cards and question cards, placed after their call by `placeRows`
 
 **First start** (app assistant spec 24 to 27; `apps/web/src/app/first-start.tsx`,
 `apps/web/src/providers/connect-step.tsx`). The spec decided to reuse the provider onboarding and
@@ -2940,7 +2814,7 @@ server already has: the `providerInstances` topic and the global setting `provid
 (`personal: machine`, so a setup file never carries it). `useFirstStart` puts the gate up while
 the setting is on and there is no provider instance at all. An install with any instance,
 whatever its status, is never gated, so an existing install whose instance fails its test after
-an upgrade is not locked out; the Assistant view's own connect step covers it. Once up the gate
+an upgrade is not locked out; Settings › Providers covers it. Once up the gate
 stays up until an instance has `status: ready`, through the instances its Test buttons create
 and that fail. The Shell then draws only `ConnectAgentStep` (no
 sidebar, no route), and the palette offers only `connect.claude`, `connect.codex`, `setup.start`,
@@ -2950,14 +2824,15 @@ binary and folder when that kind has no instance, then `provider.test`) and the 
 and "Start from a setup file", which reads, previews and applies a file through the same
 `readSetupFile`, `SetupPreviewDialog` and `setup.apply` as Settings → Advanced. When an instance
 passes, the client writes `providers.offerSetup` false, so a provider removed later never brings
-the gate back (spec 27), and goes to `/assistant`.
+the gate back (spec 27), sends `thread.greetAssistant` again so an owed greeting goes out, and
+opens the Assistant thread at `/chat/assistant`.
 
 **The greeting** (spec 24, 26). The server owns it, so a reload or a restart between the
 passing test and the greeting does not lose it. When the gate goes up the client sends
-`thread.greetAssistant`. The server greets at once when the assistant thread exists, no turn
-runs and a connected instance can run it; otherwise it stores `assistant.greetingOwed` (table
-`assistant_greeting`, `ReadModel.greetingOwed`), and the next `thread.openAssistant` that can run
-the thread starts the greeting turn in the same commit. Each greeting stores
+`thread.greetAssistant`, and again when the step passes. The server makes the Assistant thread when
+it is missing and greets at once when no turn runs there and an instance can run it; otherwise it
+stores `assistant.greetingOwed` (table `assistant_greeting`, `ReadModel.greetingOwed`) and the
+next `thread.greetAssistant` greets. Each greeting stores
 `assistant.greetingSent`, which ends the debt, so it is sent once. The command is refused from
 the assistant (classes.ts). Its turn shows `assistant.greeting`
 as the user's line; the prompt gets wow's note before it (`firstStartNote` in
@@ -2967,17 +2842,12 @@ is set, from stored global values only, so a default is not counted), what a fir
 needs (a project, a workflow), and, when a setup file is applied and not undone
 (`ReadModel.lastSetupApplication`), "To fill in": each secret of its `toFillIn` still not set,
 work hours while `calendar.workHours` is not stored, and project folders, which a file never
-holds. The note goes through `hideSecrets`. What to do with it is in `assistant.instructions`: one
-thing per answer, a secret through `show_secret_field`. Nothing on the server walks the list;
+holds. The note goes through `hideSecrets`. The agent walks it one thing per answer, a secret
+through `show_secret_field`. Nothing on the server walks the list;
 the agent does, and the facts are re-read on every greeting. A setup file applied later (from
 Settings) is told at the assistant's next `thread.sendMessage` instead (`setupAppliedNote`):
 when the newest applied file is newer than the start of the assistant's last turn, the note
 names it with the same "To fill in" lines, after the answers note and before the user's text.
-
-**When it cannot start.** With no thread or a `problem` from `assistant.open`, the Assistant view
-shows the problem and the same `ConnectAgentStep` in place of the conversation (spec 27); the
-rest of the app is not gated. Its `onConnected` is not used: `assistant.open` is asked again when
-an instance's status changes, and the conversation comes back.
 
 ## Setup file
 
@@ -3002,7 +2872,7 @@ from its default: this includes the trackers, hosts and `workflows.templates` se
 setting is never read, and a stored reference only puts its key under `toFillIn`; the secret store
 is not asked. A setting whose registry entry has `personal` stays out: `account` for the Jira and
 Confluence email and the GitHub owner, `machine` for folders and ids that fit one computer (`skills.directories`,
-`workspaces.root`, `assistant.providerInstanceId`, `advanced.port`, `desktop.autostart`,
+`workspaces.root`, `advanced.port`, `desktop.autostart`,
 `appearance.paletteRecent`, `providers.offerSetup`), `person` for what only that person can say (`calendar.zone`,
 `calendar.firstDayOfWeek`, `calendar.workHours`). Projects, cards, backlog items, threads and runs
 are not read at all, so no project folder is in it. Own skills are written by name with their
@@ -3306,11 +3176,7 @@ lists. Each part is a Popover with a cmdk list. `modelChoices` and `effortChoice
 provider flags while the instance names no default; an image icon where `imageInput` is true;
 "(model's default)" on the model's `defaultEffort`. Nothing absent is filled in. A pick calls the
 caller's `onChange`: a thread sends `thread.configure` (unchanged), the draft keeps it until
-`thread.create`, the Assistant view writes `assistant.providerInstanceId`, `assistant.model` and
-`assistant.effort` through the settings store (`assistantBar` in `assistant/assistant-view.tsx`;
-a new instance empties the other two first and is written last, and a refused write shows in the
-view's notice line) and asks `assistant.open` again so the thread follows;
-its mode shows `modeLocked` ("Read only") and has no list. `threadDefaults` starts a new thread
+`thread.create`. `threadDefaults` starts a new thread
 on the provider's default model and that model's default effort when neither the last thread nor
 the instance names one. Keys while the composer has the focus (`useModelBarKeys`, `barKeyOf`):
 `keybindings.composerModel` (Mod+Shift+M) and `keybindings.composerEffort` (Mod+Shift+E) open the
@@ -3527,18 +3393,6 @@ topic `providerLimits`) and emits a `notification.sent` of kind `limit` when a w
 off. The web shows `LimitChip` (`chat/limits.tsx`) in the composer bar from the warning on, and
 `LimitList` in Settings → Providers; a window whose reset time has passed reads "reset at …, not
 reported since". No account detail is kept with the limits.
-
-### Usage (chat overview U12)
-
-`usage.summary {from, to, timeZone}` (`usage/summary.ts`) reads every turn that ended in the
-range with its thread and its `usage` row, and sums per day (the turn's end in `timeZone`),
-project, provider instance, model (the row's, else the thread's) and whether it is the
-Assistant's: turns, input, output and cached tokens, cost, turns whose provider reported no
-cost (`unknownCost`) and turns without usage (`noUsage`). `/chat/usage` (`chat/usage-view.tsx`,
-palette "Show usage", the Usage link at the foot of the thread list) asks it for Today, 7 days,
-30 days or This month, shows the plan limits of every instance on top, a bar per day and totals
-per project, instance and model; a click on a total narrows the days to it. An unknown cost
-shows as "—" or "+ N unknown" and is never summed as zero. The view reads only.
 
 ### Subagents and background work
 
@@ -4406,8 +4260,8 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
   browser's own `title`, for a place that is itself a button). The builder's step summary, the
   run view's step rows and the Assistant header use it; the conversation's settings dividers use
   `modelLabel`.
-- **Keys** (spec 92). The section keys follow the order of `sections`: Ctrl+4 is Plans
-  (`keybindings.goPlans`) and Ctrl+5 Backlog (`keybindings.goBacklog`).
+- **Keys** (spec 92). The section keys follow the order of `sections`; Ctrl+5 is Backlog
+  (`keybindings.goBacklog`).
 - **Palette** (spec 93). The palette (and the sessions dialog) sit at 12 % of the window's
   height instead of its middle, so the input stays put as the results change.
 - **Wording** (spec 98). A run or card waiting at a gate reads "Waiting for you" (the Path tab's
@@ -4419,7 +4273,7 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
 - **Diagrams** (spec 99). `drawDiagram` sets the theme variable `edgeLabelBackground` to
   `transparent`, so an edge label has no box in either theme.
 
-### Threads at work and a thread in the panel
+### A thread in the panel
 
 Parallel threads spec 11 to 17. The topic `threadActivity` (`core/thread-activity.ts`,
 `threadActivityRows`) is built from the stored rows each time it is read, like `decisions`: one
@@ -4430,14 +4284,8 @@ state and times), how many tool calls that turn made, the payload of its newest 
 `chat.activityTextMaxLength` (read from the settings table's global row). `Subscriptions` pushes
 it whenever `threads`, `turns`, `threadItems` or `settings` change (`activitySources`).
 
-The web app's `/chat/work` (`chat/at-work.tsx`, `ThreadsAtWork`) joins it with `threads` and
-`decisions`: a thread with a decision or in `needs_you` is under "Needs you" with the decision's
-title, a `working` one under "Working" with the working line (`WorkingIndicator`, the call named
-by `runningToolLabel` as the conversation's line names it), the rest under "Finished, not read"
-with the last line and when the turn ended; each group oldest first by `stateSince`. Rows move
-with the arrow keys, Enter opens the thread, and `keybindings.threadToPanel` (P, scoped to Chat)
-opens it in the panel. The list's "At work · N" row and `keybindings.threadsAtWork` (Mod+Shift+O,
-palette `chat.threadsAtWork`) lead there.
+The Threads at work page that read it is gone (orchestrator threads spec 34); the thread list's
+status marks say the same per main thread.
 
 A panel tab of kind `thread` (`ViewerThread {threadId, title, from}`, `openThreadTab`,
 `threadTabId`) shows `panel/thread-tab.tsx`: the thread's `ThreadConversation` with `compact`,
@@ -4638,291 +4486,12 @@ group), and names the main thread ("Helper of …") of a helper listed alone.
   replaces is read from codex's `-c` behaviour, not seen against the app-server
   (`docs/windows-smoke.md`, section 11).
 
-## Workflow builder and run view
+## Workflow pages
 
-`apps/web/src/workflows`. The list's header is a tablist "Workflows view" with Workflows, Runs
-and Triggers (`listTabOf` in `workflows-view.tsx` reads the tab from the path). `/workflows/runs`
-and every `/workflows/runs/$runId` are the Runs tab (agent workbench spec 79): the runs only, in
-`runsTabOrder` (waiting for the user first, then running, then the rest, newest first in each),
-so a waiting run is found however many workflows there are; the tab counts the waiting runs and
-`/workflows/runs` alone shows "Pick a run" (`RunsHome`). Palette: "Go to runs"
-(`workflows.runs`). `/workflows/triggers` is the Triggers tab (`triggers-tab.tsx`, review loop
-spec 48):
-the event triggers of every project, grouped by project, each with its switch, the workflow it
-starts, a link to the last run it started and Delete (at once, with Undo, which makes the
-trigger again); "New trigger" is a dialog that asks for project, event and workflow, and a
-line says that event triggers start nothing any more (orchestrator threads spec 29). `triggers.ts`
-holds the dialog's draft and the server's refusals (`triggersStore`), so the buttons and the
-palette commands (`workflows.triggers`, `trigger.new`, `trigger.toggle.<id>`,
-`trigger.delete.<id>`) act on the same thing; the rows come from the `triggers` topic alone. A
-run that an event started says so under its title (`run-event`).
-
-`/workflows` lists the workflows next
-to `/workflows/new` (`?template=<kind>` starts from that entry of `workflows.templates`),
-`/workflows/$workflowId` (the builder for a saved workflow, Run now in a chosen project next to
-Save, and its runs) or `/workflows/runs/$runId`. The builder edits a local draft: name, template
-kind, and ordered steps reordered by dragging a step's handle or with its move buttons. Steps are
-one line each and open to edit. Gates are drawn at the positions between steps (`waitsAt`,
-`setGate`: on stores a gate after the step before, or a gate before the first step; off clears
-both), so the engine's `gateBefore` and `gateAfter` stay as they are. A step picks a skill
-from the `skills` topic (stored as its name, or `plugin:name` for a Claude plugin's skill), a
-provider instance, and model, effort and permission mode with the chat's pickers; empty ones are
-filled with the instance defaults, else the first listed model (not for a provider that needs a
-model; see "Models for steps"). Expected artifact globs are typed
-one per line. Validation needs a name, a step, and per step a skill, an instance, a model, an
-effort and a permission mode; a skill missing from the scan is only a warning, because the server
-invokes unknown skills by name. The skill pickers (`step-skills.ts`, `skillChoices`) list every
-skill once in list order with its group as the muted detail; a wow skill's value carries its
-source (`yours/<name>`, `wow/<name>`) so an own skill and a folder skill of the same name are
-two choices, and picking one sets `skillName` and `skillSource` (wow skills spec 9). "Also
-follow" (spec 11) under the skill holds the step's `alsoFollow` as chips in their order, each
-with its group and a button to stop following it, and a picker that adds any other skill from
-every group. "Attached automatically" (spec 12, `attachedSkills`) lists the built-in skills
-`automaticSkills` gives the step, as long as `workflows.attachBuiltInSkills` is on (its global
-value: the builder has no project), the built-in skill is in the list (not switched off) and the
-step does not already name it. Each says why ("Because a rule of this step reads the
-verdict."); `wow-pull-request` shows for a workflow marked "for units", since a unit is only
-known when a run starts. "Leave out" adds the name to `leaveOut` and the row then says it is
-left out, with "Attach again". The rules store's `builder` also carries `changeStep`,
-`forUnits` and `attachBuiltIn`, so the palette acts on the step being edited: "Also follow
-<skill> in step N" (search only), "Stop following <skill> in step N", and "Leave <name> out of
-step N" or "Attach <name> to step N again". `applyStepChanges` takes a field set to undefined
-away, so a step that follows nothing more is saved without `alsoFollow`. "Start from" (Blank or a template) is offered for a new workflow;
-an existing one shows "Based on <template>" and replaces its steps only through "Replace steps
-with template…", which still needs Save. "Save as template…" writes the draft's skills, gates and artifact globs into
-`workflows.templates` (`saveAsTemplate`: replaced by name, else a new kind from the name), with
-the rules whose step can be named by its skill (see "Templates" under "Rules"); the
-settings page's editor stays for everything else. Refresh skills calls `skills.refresh`. Run now is offered
-only for the saved steps. With a project to run in, each step's expected globs are checked with
-`workflows.matchArtifacts {projectId, globs}` (read only, the same `fast-glob` match the run uses)
-for a "Matches N files" line. Delete dispatches `workflow.delete` at once and offers Undo, which
-sends `workflow.restore {workflow}` with the row the client held (refused if the id exists again). The run view asks
-`workflowRuns.detectArtifacts` when it opens and renders the run row: each step's state, its
-thread link, how long it took, the expected globs and the found files, each a button that opens
-the file in the context panel's viewer (`artifact-link.tsx`, see "Context panel") with a
-copy-path button; nothing links to `file://`. A step that ended and waits at its gate reads Done with a
-"Waiting for you" marker after it. The header links to the run's card and backlog item. The gate
-bar (`gate-bar.tsx`, also in the step's thread) reads the gate the way `pendingGate` does (the
-current step has ended: after it; not started: before it), shows the reviewed step's
-`finalMessage` and found artifacts, and offers Approve (`keybindings.gateApprove`, which sends
-`workflowRun.continue`), Send back (`keybindings.gateSendBack`) and Stop; Stop alone while a step
-runs. Stop asks first, since a stopped run cannot go on. Palette commands: New workflow, New workflow from each template, Refresh skills, every
-workflow and run, and Run: approve, Run: send back and Stop run for the open run.
-
-**Own working copy** (`working-copy.ts`, `working-copy-line.tsx`; review loop spec 36 to 39).
-The builder has an "Own working copy" switch beside the name; it is part of the draft and is
-stored with Save as `Workflow.ownWorkingCopy`. The palette switches it on the stored workflow
-("<workflow>: run in an own working copy" / "…: run in the project folder") and an open builder
-follows. A run that has a working copy shows a "Working copy" group in the run view's header,
-rendered from `WorkflowRun.workingCopy` alone: "Making the working copy…", "Works in its own
-working copy" with the folder (copy button) and the note when it did not start at the fetched
-tip, "No working copy was made" (the reason is on the failed step), "Working copy removed", or
-"Working copy kept: 2 files not committed, 1 commit not pushed (on agent/u2-bell)" with the
-newest unpushed commit's subject and the reason when it could not be removed. Kept copies are
-listed in three places: that line, "· working copy kept" on the run's row in the runs list, and
-a palette command "Remove working copy: <workflow>" for every kept copy (the runs list is the
-Runs tab). The command and the
-line's button open the same question (`workingCopyStore`, a `ConfirmDialog` in the run view,
-which the command navigates to); Remove calls `workflowRuns.removeWorkingCopy` and a refusal
-stays on the line. A live run's copy has no button. Artifact links, the Changes tab's "Open
-file" and the viewer's paths use `runFolder`, so they name files in the working copy.
-
-**For units.** The builder has a "For units" switch beside "Own working copy", stored with
-Save as `Workflow.forUnits`; the palette switches it on the stored workflow ("<workflow>: use
-for plan units" / "…: no longer for plan units"). Only such a workflow is offered for a plan
-run (see "Plan runs").
-
-**Gate conditions** (review loop spec 54 to 58). Under a gate that is stored as a step's
-`gateAfter` the builder shows "Pass by itself when" with three checkboxes (`GateConditionEditor`
-in `builder.tsx`; `toggleGatePart`, `conditionOffered`, `gatePartChoices` in `model.ts`). They
-are part of the draft and stored with Save as the step's `gateAfterCondition`; turning the gate
-off takes the condition with it, and `stepsOf` saves a condition only where one is offered. For
-a skill that always stops (`workflows.alwaysStopSkills`, read as set for all projects) there
-are no checkboxes, only the sentence that this gate always waits for you. The palette switches
-each part on the stored workflow (`workflow.gateCondition.<workflowId>.<stepId>.<part>`, found
-by search). At a gate that did not pass, the gate bar says "Did not pass by itself: <parts>" or
-"Waiting for checks" and lists every part with what it found (`gateStanding`); while a run
-waits for checks its run view says "Waiting for checks" instead of "Waiting for you"; while a
-running run's current step thread is `needs_you` (a question or an approval) the run view, the
-Workflows list of runs, the builder's "Runs of this workflow" and the run and workflow panels say
-"Waiting for an answer" (`runStateLabel(run, threads)`; the run stays `running`,
-questions-and-models spec 7). Other lists keep the run state's own words. A step
-whose gate passed by itself shows "Passed by itself: <parts>" with each part's sentence in its
-row (`passedByItself`).
-
-**Rules on a step** (`rules.ts`, `step-rules.tsx`; workflow branches spec 14, 16, 17). An open
-step ends with "After this step": its rules in the order they are tried, each a row of three
-selects, "When <fact> <value>, go to <step or End>", with move up, move down and remove
-buttons, then the fixed line "Otherwise: the next step" (on the last step it adds that the run
-ends) and "Add rule". The facts are the verdict, the checks, the expected artifacts and "the
-step failed" (which has no value select); artifacts are offered only for a step that names
-expected artifacts. A new rule starts on the first condition the step has no rule for yet and
-goes back to the step before. Rules are part of the draft and stored with Save as the step's
-`rules`; `stepsOf` leaves `rules` out for a step that has none, so a workflow without rules is
-saved exactly as before. A closed step says "2 rules" on its line. The builder marks a rule
-with what `ruleProblems` says about the draft, which is the reason the server refuses with: a
-deleted step stays as the rule's target, shown as "A step that no longer exists", until the
-user picks another. These marks do not stop Save; the server refuses the workflow and its
-sentence shows above the steps. The buttons, the keys and the palette all go through
-`rulesStore` (the open builder's steps and how to change them, the step being edited and the
-rule that has, or last had, the keyboard), so they act on the same draft: "Rule: add to step
-N" (`keybindings.ruleAdd`; for the step being edited, and for every other step by search),
-"Rule: move up" and "Rule: move down" (`keybindings.ruleMoveUp`, `keybindings.ruleMoveDown`)
-and "Rule: remove". A rule row takes its two move keys itself before its selects see them,
-because a select would open its list on an arrow key; a moved or added rule keeps the keyboard.
-
-**Paths diagram** (`paths-diagram.ts`; workflow branches spec 15). Beside the steps (below them
-in a narrow window) the builder draws the paths a run can take with `MermaidDiagram`, from the
-draft, so it follows every edit. It is read only. `pathsDiagram(steps)` is pure: Start, one box
-per step in list order ("2. check-work"), End; a solid arrow from each step to the next (marked
-"otherwise" where the step has rules); a dotted arrow per rule with its condition
-(`ruleConditionText`); and "gate" on every arrow that passes a gate, which is the gate after
-the step it leaves (a failed step passes none) or the gate before the step it reaches. A rule
-whose step is gone has no arrow. The source holds generated ids (`s1`, `s2`, …) and labels
-only. The diagram language cannot carry a double quote in a label and reads other punctuation
-as markup, entities or line breaks, so `diagramLabel` keeps letters, digits, spaces and the
-`-`, `_` and `.` inside words, and writes every other ASCII character as a stand-in from the
-private use range (U+E000 plus its code). `MermaidDiagram` takes `shown`, a function applied
-to each piece of drawn text after `scrubSvg` cleaned the drawing; the builder passes
-`diagramText`, which turns the stand-ins back. The result is set as text, so a step called
-`say "hi" <b>` shows exactly that and can never become syntax, markup, a style or a link.
-While a changed source is drawn, `MermaidDiagram` keeps the drawing before it (`aria-busy`)
-instead of going back to code.
-
-**Review at a gate** (`gate.ts`, `gate-bar.tsx`, `review-tabs.tsx`; review loop spec 14 to 18).
-The run view's tabs are Steps, Changes, Artifacts, Pull request, Ticket and Pages (`runTabs`;
-`?tab=artifacts|pullRequest|ticket|pages` beside `changes`). Artifacts lists the found files of
-every step, each opening in the panel's viewer; Artifacts says "Nothing to show yet" for a run
-without found files. Pages (`pages-tab.tsx`, review loop spec 35) shows the run's `pageReads`
-row under the same "Last fetched" line, error and "Refresh now": each linked page with its
-title (a button that opens it in the panel's page viewer), space, where it was linked from, its
-own "Last fetched" time and error, and "Open on host". Without pages it says why: not asked yet,
-nothing links to a page (and nothing was read), or Confluence could not be read. Ticket (`ticket-tab.tsx`, review loop
-spec 33) shows the run's `ticketReads` row: key and summary linked to Jira, type, status,
-assignee, where the key was found, and the description through the shared `Markdown` renderer,
-under the same "Last fetched" line, error, "Refresh now" and "Open on host" as Pull request
-(`HostReadLine` takes either read). Without a ticket it says why: not asked yet, no ticket found,
-or Jira could not be read. Palette: "Run: refresh pull request and ticket now"
-(`hosts.refresh {runId}` reads both) and "Run: open ticket <key> on the host" when the link is a
-web address. Pull request
-(`pull-request-tab.tsx`, review loop spec 28) shows the run's `hostReads` row and the pull
-request it names: number and title linked to the host, state, checks, head branch and commit,
-the failing checks by name and the review comments (author, file, the text as plain text), each
-with its own link, above them "Last fetched <time> from <host>", the host's error when the last
-read failed, "Refresh now" (`hosts.refresh {runId}`) and "Open on host". Without a pull request
-it says why: not asked yet, the folder is on no branch, or no pull request has that branch as its
-head. See "Hosts". While the run on
-screen waits at a gate, a wide window shows the context panel with the step's conversation
-without changing `appearance.contextPanel` (the layout store's `contextPanelPeek`, see "Context
-panel"); it stays for that run until the user closes it or leaves the view. The run view keeps
-its own gate bar at its top whatever the panel shows (`run-gate`, agent workbench spec 77), so the
-answers never move; the panel's conversation shows a copy (`GateBar` without `inRunView`) only
-while its conversation tab is selected. While the run view is on screen the note field opens in
-the run view's bar alone (the copy's Send back opens it there), so there is one note. Below
-`breakpoints.narrow`, where the panel lies over the view (spec 78), the run view's bar ends where
-the panel begins (a right margin of the panel's shown width, `useShownPanelWidth` in
-`panel/panel-state.ts`: the drag preview in the layout store's `contextPanelPreview` while its
-edge moves, else `appearance.contextPanelWidth`, capped) and puts its buttons under its text
-(`stacked`, wrapping). The bar keeps 16rem (its widest button and padding): over a run view the
-panel is capped so it leaves the sidebar rail, the workflows list and that room (`overlayCap`,
-`panel/model.ts`, from the window width), so the panel never covers Approve, Send back and Stop,
-whatever width is stored. The cap never goes under the panel's minimum width (280 px); in a
-window too small for both, the bar takes what is left beside the panel. 800 px is the narrowest
-window supported, the desktop window's own `minWidth` (`apps/desktop/src/main/index.ts`): there
-the bar still has its room beside a 280 px panel (`gate.spec.ts` checks Approve, Send back and Stop
-at 800 px), while under it the rail, the workflows list and the panel leave the bar less and less
-(nothing at about 584 px), so a narrower window is not laid out for; only a browser can make one. The resize edge starts a
-drag from the shown width and moves within the cap (keys too, End goes to the cap), so the width
-stored is the width shown, and its `aria-valuenow` and `aria-valuemax` are the shown width and
-the cap. Send back opens a
-note field in the gate bar. The
-note being written is view state in `gateStore` (`{runId, gate, note, busy, error}`), so the
-button, the palette and the key act on the same field; nothing about the run is kept there.
-`gate` names the wait it was written at (where the run waits, its path length, and the attempt
-and end of the reviewed step), so a note left unsent is not offered at the run's next gate. Confirming
-(the field's "Send it back", or the Send back key again) dispatches `workflowRun.sendBack`; an
-empty note is refused in place with the server's sentence and sends nothing, a server refusal
-shows its reason and keeps the note, Escape or Cancel puts the field away. While a note is open
-the Approve command is not offered, so its key cannot approve by accident. Send back is not
-offered before the first step. A step that was sent back shows "Attempt N" in its row, in the
-Artifacts tab and in the panel's step header. Palette commands: Run: show artifacts / pull
-request / ticket / pages / steps, Run: send back (Run: send back with this note and Run: cancel
-send back while the field is open), Run: refresh pull request now and Run: open pull request #<n> on the host.
-
-**Changes tab** (`changes.ts`, `changes-tab.tsx`; review loop spec 11 to 13). The run view has two
-tabs under its header, Steps and Changes; the address carries the choice
-(`/workflows/runs/<id>?tab=changes&file=<path>&stepOnly=true`, read by `validateRunSearch`), so
-links and palette commands open the same state. The tab asks `workflowRuns.diff {runId}` when it
-opens, again whenever the run row moves on (a step ended, a gate was passed) and on Refresh, and
-asks `{runId, path}` for the chosen file's diff; nothing is cached beyond what is on screen. The
-list is on the left (status letter, path, `+added −removed`, or "Binary file" / "Too large to
-show" with the size), the chosen file's unified diff on the right with line numbers of both
-sides (`parsePatch`), not highlighted and not side by side. The step under review
-(`stepUnderReview`) is the one the gate asks about, else the last step that stored its hashes;
-its files carry a small mark whose tooltip says "This step changed it" (`ThisStepMark`, agent
-workbench spec 94) and "This step only" narrows the list to them. The edge between the list and
-the diff is a `separator` (`SplitHandle`): dragging previews the width and writes
-`appearance.changesListWidth` once on release (bounds `changesListWidthBounds` in
-`@wow/contracts`); the arrow keys (Shift for four steps), Home and End write it at once. The
-switch is
-off for a run whose steps stored no hashes. "Open file" shows the file in the context panel's
-viewer through `openFile`; a deleted file has none. A status other than `ok` shows its reason in
-place of the list ("Not a Git repository", "Git was not found", "No base recorded", ...) and the
-Steps tab and gate bar work as before. `changesStore` holds the files the tab last read so the
-palette can offer them. Palette commands: Run: show changes / Run: show steps
-(`keybindings.runChanges`), Changes: this step only / every step (`keybindings.changesStepOnly`),
-Refresh changes, Changed file: <path> for each listed file, and Open changed file: <path> and
-Open in editor: <path> for the chosen one.
-
-**Line comments** (agent workbench spec 80). `DiffLines` takes `actions` (`DiffLineActions`:
-`comment(line, text)`, `openAt(line)`); with them each line of a diff is a focusable row
-(ArrowUp/ArrowDown move between lines). `keybindings.diffComment` (C) on a line, a click on its
-gutter mark or on its line numbers opens a comment field under the line; Enter adds the comment,
-Escape puts the field away, and the focus goes back to the line. The line is the folder's line
-number, the base's for a removed line. In a run's Changes, while the run waits at a gate where
-it can send back, a comment goes into the send-back note as `src/bell.ts:12 – text`
-(`src/bell.ts:12 (removed) – text` on a removed line, so the base's number is not read as the
-folder's), one per line (`addSendBackComment`, `lineComment` in `gate.ts`), opening the note when it is closed;
-the Send back key (Ctrl+Shift+Enter) sends it. In a chat thread's Changes the same line goes
-into the thread's composer after what is typed (`commentInComposer`, the composer's `addText`
-in `composer-store.ts`), without taking the focus. The focused line's actions are row actions
-(`lib/row-actions.ts`), so the palette offers "Comment on line N" and "Open line N in editor".
-The Keybindings page lists the key "On a diff line" (`keyScope` 'Diff').
-
-After a loop (workflow branches spec 19) a step keeps the hashes of its latest attempt only, so
-the server compares steps in the order they last ended (`run.path`), not in list order, and
-each attempt also keeps `fileHashesBefore`: the hashes the step that ended before it left (the
-base's for the first), stored by the engine as the attempt ends. A step is compared with those,
-so every step, not only the one that ended last, is marked with what its latest attempt changed;
-a step stored without them is compared with the step that ended before it. `stepUnderReview`
-follows the same order when no gate asks (the step whose visit ended last, not the last step of
-the list), and "This step only" names the attempt ("deliver-work, attempt 2, 1"). A run without
-a path goes by the list as before.
-
-**Path tab and loops in the run view** (`path.ts`, `path-tab.tsx`; workflow branches spec 9, 18,
-19). Path is the tab after Steps (`?tab=path`): one row per entry of `run.path` in the order it
-happened, with the step, "attempt N", how the visit ended (Running, Done, Failed, Stopped), the
-engine's `reason` for the next move, the start time, the duration and a link to the step's one
-thread. `pathRows(run, workflow)` is pure and decides nothing. It adds three things to the
-reason: what was found when the list decided for a step with rules ("verdict approved: no rule
-held → next step", from the step's `facts`, which exist for its latest attempt only); "waiting
-for you" or "waiting for checks" for a last visit that ended while the run waits at its gate;
-and "limit reached, waiting for you" (later "waited for you") with the limit sentence when the
-visit has `limit`. A run from before paths says "No path kept".
-
-The web's `gateOf(run)` reads the gate as the engine's `pendingGate` does: with a path, the run
-waits after its current step only when that step's visit is the last one and nothing was
-decided after it; otherwise it waits before the step, even though the step has an end time from
-an earlier pass. `reviewedStepIndex(run)` for a gate before a step is the step the run came from
-(the last visit's `next`), else the step before in the list; the panel's `activeStep` uses it
-too. A step the run waits before reads Waiting, with the "Waiting for you" marker above it.
-When the step's gate is `waitingAtLimit`, `Gate.limit` holds the sentence: the gate bar says
-"deliver-work has run 3 times: the limit. Run once more starts it again; Stop ends the run.",
-its Approve button reads "Run once more" (still `workflowRun.continue` and
-`keybindings.gateApprove`; the palette says "Run: run once more"), Send back is not offered,
-and the step row repeats the sentence. After a step with rules the gate bar does not name the
-next step ("Approve lets its rules choose the next step"). Palette commands: Run: show path /
-Run: show steps (`keybindings.runPath`, Mod+Shift+Y, the same key both ways).
+The workflow builder, the run view with its review tabs, and the Runs and Triggers tabs are gone
+(orchestrator threads spec 34): a workflow is a file (see "Workflows as text" and Settings ›
+Workflows), started in a main thread or by a card. `/workflows` opens
+Settings › Workflows. The server's workflow engine, runs and plans go in the second part of U8.
 
 ## Calendar view
 

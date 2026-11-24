@@ -1,9 +1,7 @@
 import {
   assistantThreadId,
-  chooseAssistantProvider,
   hideSecrets,
   secretPatterns,
-  providerChatOptions,
   providerSetup,
   settingGroupTitles,
   type DomainEvent,
@@ -13,36 +11,17 @@ import {
   type Thread,
 } from '@wow/contracts';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir } from 'node:fs/promises';
-import path from 'node:path';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected, type DecideContext, type ReadModel } from '../core/orchestrator.js';
 import { readModel } from '../core/projector.js';
 import type { Db } from '../db/database.js';
 import { resolveStored } from '../settings/service.js';
+import { newThreadChoice, newThreadSettings } from '../core/card-threads.js';
+import { threadFolderOf } from '../core/thread-folder.js';
 
-// The assistant thread (app assistant spec 1, 2, 27): one per install, run by the provider
-// instance the settings name, in a folder of the app that stays empty.
-
-// Not a setting on purpose: a folder someone could point at a project would put that project's
-// files beside an agent that must never see any.
-const folderName = 'assistant';
-
-export const assistantFolder = (home: string): string => path.join(home, folderName);
-
-// Makes the folder and refuses one that holds anything: an agent started there must find nothing
-// to read, and no instruction file a provider would pick up.
-export async function prepareAssistantFolder(home: string): Promise<string> {
-  const folder = assistantFolder(home);
-  await mkdir(folder, { recursive: true });
-  const found = await readdir(folder);
-  if (found.length > 0) {
-    throw new Error(
-      `The assistant's folder ${folder} must be empty and holds ${found.length === 1 ? 'a file' : `${found.length} files`} (${found.slice(0, 3).join(', ')}). Move them away; the assistant does not start until then.`,
-    );
-  }
-  return folder;
-}
+// The Assistant thread (orchestrator threads spec 25): an ordinary main thread without a project,
+// titled "Assistant", that wow greets at first start and writes its briefs to. Made when it is
+// first needed, on the instance and model a new thread would get.
 
 export interface AssistantFallback {
   readonly model?: string | undefined;
@@ -54,7 +33,7 @@ type Resolved =
   | {
       readonly problem: null;
       readonly instance: ProviderInstance;
-      // Undefined when neither the settings, the instance nor the thread name one.
+      // Undefined when neither the settings nor the instance name one.
       readonly model: string | undefined;
       readonly effort: string | undefined;
     };
@@ -70,92 +49,57 @@ const stored = (key: string, read: ReadModel, context: DecideContext): string =>
   return typeof value === 'string' ? value.trim() : '';
 };
 
-// Who runs the assistant and with which model and effort, from the settings, then the instance's
-// own defaults, then what the thread already uses on that instance.
+// Who would run the Assistant thread: the thread's own instance while it exists, else what a new
+// thread gets (spec 2).
 export function resolveAssistant(read: ReadModel, context: DecideContext): Resolved {
   const current = read.thread(assistantThreadId);
-  const choice = chooseAssistantProvider(read.providerInstances(), {
-    configuredId: stored('assistant.providerInstanceId', read, context),
-    currentId: current?.providerInstanceId,
-    // Anything but a stored true keeps the assistant off Codex.
-    allowCodex: storedValue('assistant.allowCodex', read, context) === true,
-  });
-  if (choice.problem !== null) return { problem: choice.problem };
-  const { instance } = choice;
-  const kept = current?.providerInstanceId === instance.id ? current : undefined;
-  return {
-    problem: null,
-    instance,
-    model:
-      stored('assistant.model', read, context) || instance.defaultModel || kept?.model || undefined,
-    effort:
-      stored('assistant.effort', read, context) ||
-      instance.defaultEffort ||
-      kept?.effort ||
-      (providerChatOptions[instance.kind].defaultEffort ?? undefined),
-  };
+  const instance = current && read.providerInstance(current.providerInstanceId);
+  if (current && instance) {
+    return { problem: null, instance, model: current.model, effort: current.effort };
+  }
+  try {
+    const choice = newThreadChoice({ projectId: null, workflowId: null }, read, context);
+    return {
+      problem: null,
+      instance: choice.instance,
+      model: choice.model,
+      effort: choice.effort,
+    };
+  } catch (error) {
+    if (error instanceof CommandRejected) return { problem: error.message };
+    throw error;
+  }
 }
 
-const missing = (what: 'model' | 'effort', instance: ProviderInstance): string =>
-  `The assistant has no ${what} to use on ${instance.name}. Choose one in Settings → Assistant, or give ${instance.name} a default ${what} in Settings → Providers.`;
-
-// The events that make the assistant thread or bring it in line with the settings, and the
-// thread as it is after them. Rejects with the reason when no connected instance can run it.
+// The events that make the Assistant thread when it is missing, or move it when its instance was
+// removed, and the thread as it is after them. Rejects with the reason when no instance can run
+// it.
 export function assistantThreadEvents(
   read: ReadModel,
   context: DecideContext,
   fallback: AssistantFallback = {},
 ): { events: DomainEvent[]; thread: Thread } {
-  const resolved = resolveAssistant(read, context);
-  if (resolved.problem !== null) throw new CommandRejected('rejected', resolved.problem);
-  const { instance } = resolved;
-  const model = resolved.model ?? fallback.model;
-  if (!model) throw new CommandRejected('rejected', missing('model', instance));
-  const effort = resolved.effort ?? fallback.effort;
-  if (!effort) throw new CommandRejected('rejected', missing('effort', instance));
-  if (context.home === undefined) {
-    throw new CommandRejected('rejected', 'This server has no folder of its own for the assistant');
-  }
-  const permissionMode = providerChatOptions[instance.kind].assistantPermissionMode;
-  const now = context.now;
   const current = read.thread(assistantThreadId);
-  if (!current) {
-    const thread: Thread = {
-      id: assistantThreadId,
-      kind: 'assistant',
-      projectId: null,
-      cwd: assistantFolder(context.home),
-      branch: null,
-      providerInstanceId: instance.id,
-      providerSessionId: null,
-      title: 'Assistant',
-      model,
-      effort,
-      permissionMode,
-      state: 'idle',
-      pinned: false,
-      runId: null,
-      stepId: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-    return { events: [{ kind: 'thread.created', aggregate: thread.id, payload: thread }], thread };
+  if (current && read.providerInstance(current.providerInstanceId)) {
+    return { events: [], thread: current };
   }
-  if (current.providerInstanceId !== instance.id) {
-    // The provider keeps its conversation in its config folder, so only an instance of the same
-    // kind on the same folder can go on with it. wow's own record of the conversation stays.
-    const before = read.providerInstance(current.providerInstanceId);
-    const providerSessionId =
-      before?.kind === instance.kind && before.configDir === instance.configDir
-        ? current.providerSessionId
-        : null;
+  if (current) {
+    // Its instance was removed: it goes on where a new thread would start. The conversation the
+    // provider kept stays with the removed instance, so the session starts anew; wow's record of
+    // it stays.
+    const settings = newThreadSettings(
+      { projectId: null, workflowId: null },
+      read,
+      context,
+      fallback.model,
+    );
     const moved = {
-      providerInstanceId: instance.id,
-      providerSessionId,
-      model,
-      effort,
-      permissionMode,
-      updatedAt: now,
+      providerInstanceId: settings.instance.id,
+      providerSessionId: null,
+      model: settings.model,
+      effort: settings.effort,
+      permissionMode: settings.permissionMode,
+      updatedAt: context.now,
     };
     return {
       events: [
@@ -172,27 +116,37 @@ export function assistantThreadEvents(
       thread: { ...current, ...moved },
     };
   }
-  const changes = {
-    ...(current.model === model ? {} : { model }),
-    ...(current.effort === effort ? {} : { effort }),
-    ...(current.permissionMode === permissionMode ? {} : { permissionMode }),
+  if (context.home === undefined) {
+    throw new CommandRejected('rejected', 'This server has no folder of its own for the thread');
+  }
+  const settings = newThreadSettings(
+    { projectId: null, workflowId: null },
+    read,
+    context,
+    fallback.model,
+  );
+  const model = settings.model;
+  const now = context.now;
+  const thread: Thread = {
+    id: assistantThreadId,
+    kind: 'chat',
+    projectId: null,
+    cwd: threadFolderOf(context.home, assistantThreadId),
+    branch: null,
+    providerInstanceId: settings.instance.id,
+    providerSessionId: null,
+    title: 'Assistant',
+    model,
+    effort: settings.effort,
+    permissionMode: settings.permissionMode,
+    state: 'idle',
+    pinned: false,
+    runId: null,
+    stepId: null,
+    createdAt: now,
+    updatedAt: now,
   };
-  if (Object.keys(changes).length === 0) return { events: [], thread: current };
-  return {
-    events: [
-      {
-        kind: 'thread.configured',
-        aggregate: current.id,
-        payload: {
-          threadId: current.id,
-          providerInstanceId: instance.id,
-          changes,
-          updatedAt: now,
-        },
-      },
-    ],
-    thread: { ...current, ...changes, updatedAt: now },
-  };
+  return { events: [{ kind: 'thread.created', aggregate: thread.id, payload: thread }], thread };
 }
 
 export interface OpenAssistantDeps {
@@ -228,7 +182,7 @@ export async function openAssistantThread(deps: OpenAssistantDeps): Promise<Open
       const reason = error instanceof Error ? error.message : String(error);
       return {
         thread: now(),
-        problem: `${instance.name} could not say which models it has (${reason}). Choose a model in Settings → Assistant.`,
+        problem: `${instance.name} could not say which models it has (${reason}). Choose a model in Settings → Chat.`,
       };
     }
   }
@@ -269,7 +223,7 @@ export function assistantAnswersNote(read: ReadModel, context: DecideContext): s
     ...undone.map((change) => `- Undid "${change.what}" (${change.place.label}).`),
   ];
   return hideSecrets(
-    `[From wow, not typed by the user] Since your last turn the user answered:\n${lines.join('\n')}`,
+    `[From wow, not typed by the user] Since your last turn the user answered:\n${lines.join('\n')}\nTake it into account; the person did not type this.`,
     patterns,
   );
 }
@@ -280,6 +234,9 @@ export const storedGreeting = (read: ReadModel, context: DecideContext): string 
   const fallback = context.registry['assistant.greeting']?.default;
   return value || (typeof fallback === 'string' ? fallback : 'Hello');
 };
+
+const walkTheList =
+  'Go through the "To fill in" list in order, one thing per answer: a secret through show_secret_field, anything else by asking and then making the change. Move on when the person has answered or says to skip it.';
 
 const trackerKinds = ['github', 'gitlab', 'jira', 'confluence'] as const;
 
@@ -326,13 +283,15 @@ export function setupAppliedNote(read: ReadModel, context: DecideContext): strin
     `[From wow, not typed by the user] The user applied the setup file ${application.name} in Settings.`,
     `To fill in after the setup file ${application.name}:`,
     ...fillInLines(application, read, context),
+    walkTheList,
   ];
   return hideSecrets(lines.join('\n'), storedPatterns(read, context));
 }
 
 // What the greeting turn tells the agent besides the user's line (spec 24, 26): what is set up,
 // what a first run still needs, and, after a setup file, what it left to fill in and what only
-// this person can say. Facts only; what to do with them is in `assistant.instructions`.
+// this person can say, with what to do with them: `chat.instructions` goes to every main thread,
+// so what only this thread is told travels with the note.
 export function firstStartNote(
   read: ReadModel,
   context: DecideContext,
@@ -373,6 +332,8 @@ export function firstStartNote(
     'Still needed for a first run:',
     ...(needed.length === 0 ? ['- Nothing.'] : needed),
     ...(application ? [`To fill in after the setup file ${application.name}:`, ...fillIn] : []),
+    'Greet the person: say what is set up and what a first run still needs, from these lists.',
+    ...(application ? [walkTheList] : []),
   ];
   return hideSecrets(lines.join('\n'), storedPatterns(read, context));
 }

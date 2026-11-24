@@ -155,7 +155,7 @@ describe('connection', () => {
     const connection = createConnection({ url: 'ws://x', socket: server.factory });
     server.current.handlers.onOpen();
     const seen: unknown[] = [];
-    connection.subscribe('assistantThread', null, (data) => seen.push(data));
+    connection.subscribe('threads', null, (data) => seen.push(data));
     // The server answers after its own microtasks, so a commit's push can overtake the answer.
     server.push({ subscription: 's1', data: ['assistant'] });
     expect(seen).toEqual([]);

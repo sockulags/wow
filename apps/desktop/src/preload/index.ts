@@ -20,10 +20,6 @@ contextBridge.exposeInMainWorld('wowDesktop', {
     ipcRenderer.invoke(fileChannels.saveText, file),
   // "Restart now" next to a setting marked "Restart required".
   restart: (): Promise<unknown> => ipcRenderer.invoke(appChannels.restart),
-  // The quick ask (chief of staff spec 31): open a route in the main window, or hide the prompt.
-  openInMain: (route: string): Promise<unknown> =>
-    ipcRenderer.invoke(appChannels.openInMain, route),
-  hideQuickAsk: (): Promise<unknown> => ipcRenderer.invoke(appChannels.hideQuickAsk),
   updates: {
     getState: (): Promise<unknown> => ipcRenderer.invoke(updateChannels.getState),
     check: (): Promise<unknown> => ipcRenderer.invoke(updateChannels.check),

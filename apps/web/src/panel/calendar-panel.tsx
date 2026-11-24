@@ -19,10 +19,7 @@ import { Button } from '@/components/ui/button';
 import { notify } from '@/lib/feedback';
 import { formatWhen } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { runStateLabels } from '@/workflows/model';
 import { FactList, PanelSection, PanelTitle, panelLinkClass } from './details';
-import { cardRun } from './model';
-import { RunStepThread } from './step-thread';
 
 const stateDot: Readonly<Record<string, string>> = {
   scheduled: 'bg-muted-foreground/50',
@@ -57,20 +54,17 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
   const projects = useTopic('projects') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const triggers = useTopic('triggers') ?? [];
-  const runs = useTopic('workflowRuns') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
   const kind = cardKind(card);
   const state = cardState(card);
   const project = projects.find((candidate) => candidate.id === card.projectId);
-  const workflow = workflows.find((candidate) => candidate.id === card.workflowId);
+  // A card names its workflow file; one made before workflows were files names a stored one.
+  const workflowName =
+    card.workflowName ?? workflows.find((candidate) => candidate.id === card.workflowId)?.name;
   const trigger = triggers
     .filter(isCardTrigger)
     .find((candidate) => candidate.calendarItemId === card.id);
   const item = backlog.find((candidate) => candidate.id === card.backlogItemId);
-  const run = cardRun(card, triggers, runs);
-  const runWorkflow = run
-    ? workflows.find((candidate) => candidate.id === run.workflowId)
-    : undefined;
   const offersRunNow = runNowCardIds([card], triggers).has(card.id);
   const runNow = () =>
     dispatch({ type: 'card.runNow', cardId: card.id, runId: globalThis.crypto.randomUUID() }).catch(
@@ -101,10 +95,10 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
                   Run now
                 </Button>
               )}
-              {run && (
+              {card.threadId && (
                 <Button asChild size="xs" variant="ghost">
-                  <Link to="/workflows/runs/$runId" params={{ runId: run.id }}>
-                    Open run
+                  <Link to="/chat/$threadId" params={{ threadId: card.threadId }}>
+                    Open thread
                   </Link>
                 </Button>
               )}
@@ -128,14 +122,8 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
               },
               {
                 label: 'Workflow',
-                value: workflow ? (
-                  <Link
-                    to="/workflows/$workflowId"
-                    params={{ workflowId: workflow.id }}
-                    className={panelLinkClass}
-                  >
-                    {workflow.name}
-                  </Link>
+                value: workflowName ? (
+                  workflowName
                 ) : (
                   <span className="text-muted-foreground">None, the card is only time</span>
                 ),
@@ -145,10 +133,6 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
                 value: repeatRuleWords(card.repeat, { start: card.start, zone: card.zone }),
               },
               trigger !== undefined && { label: 'Trigger', value: triggerText(trigger, zone) },
-              run !== undefined && {
-                label: 'Run',
-                value: `${runWorkflow?.name ?? 'Workflow'}, ${runStateLabels[run.state].toLowerCase()}`,
-              },
               item !== undefined && {
                 label: 'Backlog',
                 value: (
@@ -168,7 +152,6 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
           )}
         </PanelSection>
       </div>
-      {run && <RunStepThread run={run} workflow={runWorkflow} />}
     </div>
   );
 }

@@ -6,13 +6,12 @@ import type {
   ThreadItem,
 } from '@wow/contracts';
 import { act, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import type { Connection, ConnectionState } from '@wow/client-runtime';
 import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { createTestRuntime, renderApp } from '@/test/render';
 import type * as ModelModule from './model';
-import { askOf, waitingText } from './model';
+import { askOf } from './model';
 
 // The real reading of a tool call's ask, counted: the view reads the conversation's tool calls
 // again only when what they are read from changed.
@@ -27,10 +26,10 @@ vi.mock('./model', async (importOriginal) => {
 const at = '2026-11-12T08:00:00.000Z';
 
 const thread: Thread = {
-  id: 'assistant',
-  kind: 'assistant',
+  id: 'main-1',
+  kind: 'chat',
   projectId: null,
-  cwd: '/home/me/.wow/assistant',
+  cwd: '/home/me/.wow/threads/main-1',
   branch: null,
   providerInstanceId: 'claude-work',
   providerSessionId: null,
@@ -68,8 +67,8 @@ const instance: ProviderInstance = {
 let index = 0;
 const toolCall = (name: string, input: unknown, output: unknown): ThreadItem => ({
   id: `item-${++index}`,
-  threadId: 'assistant',
-  turnId: 'assistant:turn:0',
+  threadId: 'main-1',
+  turnId: 'main-1:turn:0',
   index,
   kind: 'tool_call',
   payload: { name, input, output: JSON.stringify(output), status: 'ok' },
@@ -146,11 +145,11 @@ function assistantConnection(proposals: AssistantProposal[]) {
         sent.push((params as { command: unknown }).command);
         return Promise.resolve({ commandId: 'c', seqs: [1], duplicate: false });
       }
-      return Promise.resolve(method === 'assistant.open' ? { thread: null, problem: null } : []);
+      return Promise.resolve([]);
     },
     subscribe(topic, _params, onData) {
       const topics: Readonly<Record<string, unknown[]>> = {
-        assistantThread: [thread],
+        threads: [thread],
         providerInstances: [instance],
         threadItems: conversation,
         assistantChanges: [change],
@@ -167,10 +166,10 @@ function assistantConnection(proposals: AssistantProposal[]) {
   return { connection, sent, push };
 }
 
-describe("wow's tool calls in the Assistant view (spec 82)", () => {
+describe("wow's tool calls in a main thread (spec 82; orchestrator threads spec 24)", () => {
   it('draw no row of their own above a change row, a proposal, a secret field or a question card, and other tools read in words', async () => {
     const { connection } = assistantConnection([proposal('assistant-p1', 'Always allow')]);
-    await renderApp('/assistant', { ...createTestRuntime(), connection });
+    await renderApp('/chat/main-1', { ...createTestRuntime(), connection });
     const conversation = await screen.findByRole('list', { name: 'Conversation' });
     expect(
       await within(conversation).findByRole('region', { name: 'Change: Work hours' }),
@@ -188,50 +187,15 @@ describe("wow's tool calls in the Assistant view (spec 82)", () => {
   });
 });
 
-describe('the Assistant view across renders', () => {
+describe('a main thread across renders', () => {
   it('reads its tool calls again only when what they are read from changed', async () => {
     const { connection, push } = assistantConnection([proposal('assistant-p1', 'Always allow')]);
-    await renderApp('/assistant', { ...createTestRuntime(), connection });
+    await renderApp('/chat/main-1', { ...createTestRuntime(), connection });
     const conversation = await screen.findByRole('list', { name: 'Conversation' });
     await within(conversation).findByRole('region', { name: 'Change: Work hours' });
     const reads = vi.mocked(askOf).mock.calls.length;
     // A render for something the tool calls are not read from: the same conversation.
-    await push('assistantThread', [{ ...thread }]);
+    await push('threads', [{ ...thread }]);
     expect(vi.mocked(askOf).mock.calls.length).toBe(reads);
-  });
-});
-
-describe('a waiting proposal above the composer (spec 96)', () => {
-  it('names the oldest with Yes, No and Show', async () => {
-    const user = userEvent.setup();
-    const { connection, sent } = assistantConnection([
-      proposal('assistant-p1', 'Always allow `pnpm test` in Tea'),
-      proposal('assistant-p2', 'Change Paused'),
-    ]);
-    await renderApp('/assistant', { ...createTestRuntime(), connection });
-    const line = await screen.findByRole('status', { name: 'Waiting proposal' });
-    expect(within(line).getByTestId('assistant-waiting-text').textContent).toBe(
-      '2 proposals wait: Always allow `pnpm test` in Tea',
-    );
-
-    await user.click(within(line).getByRole('button', { name: 'Show' }));
-    expect(document.activeElement).toBe(
-      screen.getByRole('region', { name: 'Proposal: Always allow `pnpm test` in Tea' }),
-    );
-
-    await user.click(within(line).getByRole('button', { name: 'Yes' }));
-    await user.click(within(line).getByRole('button', { name: 'No' }));
-    await act(() => Promise.resolve());
-    expect(sent).toEqual([
-      { type: 'assistant.proposal.accept', proposalId: 'assistant-p1' },
-      { type: 'assistant.proposal.decline', proposalId: 'assistant-p1' },
-    ]);
-  });
-
-  it('is not there while nothing waits, and says one proposal in the singular', () => {
-    expect(waitingText([])).toBeUndefined();
-    expect(waitingText([proposal('p', 'Run scripts in HTML files')])).toBe(
-      '1 proposal waits: Run scripts in HTML files',
-    );
   });
 });

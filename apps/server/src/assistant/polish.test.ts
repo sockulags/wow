@@ -244,12 +244,12 @@ describe('change rows in the words of the settings page (spec 95)', () => {
     // The label comes from the provider's own list, once it was asked for it.
     await server.providerService.listModels('claude-work');
     const model = await call('set_setting', {
-      key: 'assistant.model',
+      key: 'chat.defaultModel',
       scope: 'global',
       value: 'mock-model-large',
     });
     expect(model.content.change).toMatchObject({
-      what: 'Model',
+      what: 'Model of a new thread',
       from: 'None (default)',
       to: 'Mock model, large',
     });

@@ -684,6 +684,34 @@ describe('@wow/provider-claude', () => {
     expect(options?.allowedTools).toBeUndefined();
   });
 
+  it("adds the main thread's instructions after Claude Code's own, and reopens when they change (orchestrator threads spec 25)", async () => {
+    const h = harness([[result(0)], [result(0)], [result(0)]]);
+    let done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ helperTools, appendInstructions: 'Mind the kettle.' }));
+    await done;
+    expect(h.queries[0]?.options.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'Mind the kettle.',
+    });
+    // The user's settings stay: the text goes after Claude Code's, it does not replace it.
+    expect(h.queries[0]?.options.settingSources).toEqual(['user', 'project', 'local']);
+    done = h.next('turnCompleted');
+    await h.adapter.send(startTurn({ helperTools, appendInstructions: 'Mind the kettle.' }));
+    await done;
+    expect(h.queries).toHaveLength(1);
+    done = h.next('turnCompleted');
+    await h.adapter.send(
+      startTurn({ helperTools, appendInstructions: 'Mind the bell.', resumeId: 'sess-1' }),
+    );
+    await done;
+    expect(h.queries).toHaveLength(2);
+    expect(h.queries[1]?.options).toMatchObject({
+      resume: 'sess-1',
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: 'Mind the bell.' },
+    });
+  });
+
   it('reopens the session on the same conversation when the helper tools change', async () => {
     const h = harness([[result(0)], [result(0)], [result(0)]]);
     let done = h.next('turnCompleted');

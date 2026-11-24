@@ -1,19 +1,15 @@
-import { runFolder } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useStore } from 'zustand';
-import { assistantCommands } from '@/assistant/commands';
 import { backlogCommands } from '@/backlog/commands';
 import { calendarCommands } from '@/calendar/commands';
 import { validateCalendarSearch } from '@/calendar/search';
 import { approvalCommands, approvalCardStore } from '@/chat/approval-card';
 import { chatCommands } from '@/chat/commands';
 import { changesShown, threadChangesCommands, threadChangesStore } from '@/chat/thread-changes';
-import { atWorkCommands } from '@/chat/at-work';
 import { sessionToolsCommands, toolsShown } from '@/panel/tools-tab';
 import { outlineCommands, outlineShown } from '@/chat/outline';
-import { usageCommands } from '@/chat/usage-view';
 import { draftCopyStore, workingCopyCommands } from '@/chat/working-copy';
 import { questionCommands } from '@/chat/question-commands';
 import { activeQuestionCard, questionStore } from '@/chat/question-store';
@@ -40,7 +36,6 @@ import { needsYouCommands, needsYouTargets } from '@/chat/needs-you';
 import { runningTurn } from '@/chat/model';
 import { projectCommands } from '@/projects/commands';
 import { sessionCommands } from '@/chat/terminal-sessions';
-import { useProjectsGit } from '@/projects/project-git';
 import { connectCommands, providerCommands } from '@/providers/commands';
 import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
@@ -54,17 +49,7 @@ import {
   viewerCommands,
 } from '@/panel/commands';
 import { panelRoute, panelSelection } from '@/panel/model';
-import { planCommands } from '@/plans/commands';
-import { intentsDirectoryOf, openPlan, runRead } from '@/plans/model';
-import { runPullRequest } from '@/workflows/pull-request-tab';
-import { runTicketRead } from '@/workflows/ticket-tab';
 import { useCalendarPrefs } from '@/calendar/prefs';
-import { changesStore } from '@/workflows/changes';
-import { workflowCommands } from '@/workflows/commands';
-import { gateStore, sendBackDraft } from '@/workflows/gate';
-import { rulesStore } from '@/workflows/rules';
-import { gateRunForThread } from '@/workflows/model';
-import { triggersPath } from '@/workflows/triggers';
 import { buildCommands, type AppCommand, type CommandContext } from './commands';
 import { updateCommands } from './updates';
 import { eventToBinding, normalizeBinding, worksInTextFields } from './keybindings';
@@ -89,8 +74,6 @@ export function useCommands(gated = false): {
   const threads = useTopic('threads');
   const instances = useTopic('providerInstances');
   const projects = useTopic('projects');
-  const settingRows = useTopic('settings');
-  const intentsDirectory = useSetting('plans.intentsDirectory');
   const turns = useTopic('turns', openThreadId);
   const approvalOffer = useStore(approvalCardStore, (state) => state.offer);
   const changesOpen = useLayout((state) =>
@@ -107,27 +90,13 @@ export function useCommands(gated = false): {
   const draftCopy = useStore(draftCopyStore);
   // The calendar's zone with "outlook" resolved (F-8), for the cards' "when".
   const { zone: calendarZone } = useCalendarPrefs();
-  const openRunId = /^\/workflows\/runs\/([^/]+)$/.exec(pathname)?.[1];
-  const workflows = useTopic('workflows');
-  const runs = useTopic('workflowRuns');
-  const templates = useSetting('workflows.templates');
-  const alwaysStopSkills = useSetting('workflows.alwaysStopSkills');
   const calendarItems = useTopic('calendarItems');
   const triggers = useTopic('triggers');
   const schedulerPaused = useSetting('scheduler.paused');
   const outlookProfile = useTopic('outlookStatus')?.[0]?.profile;
   const showWeekends = useSetting('calendar.showWeekends');
   const backlogItems = useTopic('backlogItems');
-  const planIntents = useTopic('planIntents');
-  const planRuns = useTopic('planRuns');
-  const changeRequests = useTopic('changeRequests');
-  const hostReads = useTopic('hostReads');
-  const projectsGit = useProjectsGit(projects);
-  const ticketReads = useTopic('ticketReads');
   const pageReads = useTopic('pageReads');
-  const assistantChanges = useTopic('assistantChanges');
-  const assistantProposals = useTopic('assistantProposals');
-  const decisions = useTopic('decisions');
   const setupApplications = useTopic('setupApplications');
   const skills = useTopic('skills');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
@@ -137,15 +106,6 @@ export function useCommands(gated = false): {
   );
   const panelTabs = useLayout((state) => state.panelTabs);
   const tabsRoute = panelRoute(pathname, locationSearch);
-  const changedFiles = useStore(changesStore, (state) =>
-    state.runId === openRunId ? state.files : undefined,
-  );
-  // Which run and gate the open note belongs to; the note's text is not needed here.
-  const sendBackAt = useStore(gateStore, (state) =>
-    state.sendBack ? `${state.sendBack.runId}:${state.sendBack.gate}` : undefined,
-  );
-  const ruleBuilder = useStore(rulesStore, (state) => state.builder);
-  const ruleAt = useStore(rulesStore, (state) => state.at);
   const staticCommands = useMemo(() => buildCommands(), []);
   const listProjectId = useStore(threadListStore, (state) => state.projectId);
   const paletteHits = useStore(paletteThreadHits);
@@ -171,23 +131,10 @@ export function useCommands(gated = false): {
     const cards = (calendarItems ?? []).filter((item) => item.source === 'local');
     const cardStart = new Map(cards.map((card) => [card.id, card.start]));
     const openThread = threads?.find((thread) => thread.id === openThreadId);
-    // The run view's run, or the run waiting at a gate after the open thread's step (spec 9).
-    const openRun =
-      runs?.find((run) => run.id === openRunId) ??
-      (openThread ? gateRunForThread(openThread, runs ?? []) : undefined);
-    const openRunProject = projects?.find((project) => project.id === openRun?.projectId);
-    // Whose files "Open file…" lists: the open chat or step thread's, else the run view's run's.
-    const viewRun = openRunId !== undefined && openRun?.id === openRunId ? openRun : undefined;
-    const fileTarget =
-      openThread && openThread.kind !== 'assistant'
-        ? { scope: { threadId: openThread.id }, folder: openThread.cwd, from: tabsRoute }
-        : viewRun && openRunProject
-          ? {
-              scope: { runId: viewRun.id },
-              folder: runFolder(viewRun, openRunProject.cwd),
-              from: tabsRoute,
-            }
-          : undefined;
+    // Whose files "Open file…" lists: the open thread's.
+    const fileTarget = openThread
+      ? { scope: { threadId: openThread.id }, folder: openThread.cwd, from: tabsRoute }
+      : undefined;
     return [
       // Cards say when they are ("Card · Tomorrow 10:00").
       ...calendarCommands({
@@ -211,18 +158,12 @@ export function useCommands(gated = false): {
         changesTurnOnly,
         openThread?.workingCopy?.startSha != null,
       ),
-      ...atWorkCommands({
-        threads: threads ?? [],
-        openThreadId: openThread?.id,
-        route: tabsRoute,
-      }),
       ...sessionToolsCommands(
         openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,
         tabsRoute,
         toolsOpen,
         toolsLive,
       ),
-      ...usageCommands(),
       ...outlineCommands(
         openThread && openThread.kind !== 'assistant' ? openThread.id : undefined,
         tabsRoute,
@@ -242,51 +183,6 @@ export function useCommands(gated = false): {
         projects: projects ?? [],
         threadList: { projectId: listProjectId, found: paletteHits },
         openComposer,
-      }),
-      ...workflowCommands({
-        workflows: workflows ?? [],
-        runs: runs ?? [],
-        templates,
-        alwaysStopSkills,
-        openRun,
-        runView:
-          openRunId !== undefined && openRun?.id === openRunId
-            ? {
-                runId: openRunId,
-                search: locationSearch,
-                changedFiles: changedFiles ?? [],
-                project: openRunProject,
-                folder: openRunProject && runFolder(openRun, openRunProject.cwd),
-                pullRequest: runPullRequest(
-                  runRead(hostReads ?? [], openRunId),
-                  changeRequests ?? [],
-                ),
-                ticket: runTicketRead(ticketReads ?? [], openRunId)?.ticket ?? undefined,
-              }
-            : undefined,
-        sendBackRunId:
-          sendBackAt !== undefined && openRun && sendBackDraft(gateStore.getState(), openRun)
-            ? openRun.id
-            : undefined,
-        rules: { builder: ruleBuilder, at: ruleAt, focus: undefined },
-        skills: skills ?? [],
-        formatWhen: when,
-        triggers,
-        projects,
-        hostReads,
-        projectsGit,
-        onTriggers: pathname === triggersPath,
-      }),
-      ...planCommands({
-        intents: planIntents ?? [],
-        projects: projects ?? [],
-        openIntent: openPlan(pathname, planIntents ?? []),
-        changeRequests,
-        planRuns,
-        workflows,
-        directoryOf: (projectId) =>
-          intentsDirectoryOf(settingRows ?? [], projectId, intentsDirectory),
-        panelRoute: tabsRoute,
       }),
       ...backlogCommands({
         items: backlogItems ?? [],
@@ -311,19 +207,7 @@ export function useCommands(gated = false): {
         },
         reasoningByDefault,
       ),
-      ...needsYouCommands(
-        needsYouTargets({
-          threads: threads ?? [],
-          runs: runs ?? [],
-          proposals: assistantProposals ?? [],
-          decisions: decisions ?? [],
-        }),
-        pathname,
-      ),
-      ...assistantCommands({
-        changes: assistantChanges ?? [],
-        proposals: assistantProposals ?? [],
-      }),
+      ...needsYouCommands(needsYouTargets(threads ?? []), pathname),
       ...setupCommands(setupApplications ?? []),
       ...skillCommands(skills ?? []),
       ...workflowFileCommands(skills ?? []),
@@ -331,7 +215,6 @@ export function useCommands(gated = false): {
       ...viewerCommands({
         panelTabs,
         pathname: tabsRoute,
-        openRun,
         projects: projects ?? [],
         pageReads: pageReads ?? [],
       }),
@@ -371,37 +254,17 @@ export function useCommands(gated = false): {
     projects,
     turns,
     openThreadId,
-    workflows,
-    runs,
-    templates,
-    alwaysStopSkills,
-    openRunId,
     calendarItems,
     calendarSearch,
     triggers,
     schedulerPaused,
     backlogItems,
     openBacklogItemId,
-    assistantChanges,
-    assistantProposals,
-    decisions,
     setupApplications,
     skills,
     panelTabs,
     pageReads,
-    planIntents,
-    planRuns,
-    changeRequests,
-    settingRows,
-    intentsDirectory,
     tabsRoute,
-    hostReads,
-    projectsGit,
-    ticketReads,
-    changedFiles,
-    sendBackAt,
-    ruleBuilder,
-    ruleAt,
     connectShown,
     questionCard,
     skillComposer,

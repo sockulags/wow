@@ -15,7 +15,7 @@ test.describe('shell', () => {
     const routes = [
       ['Calendar', /\/calendar$/, 'Not connected to the wow server'],
       ['Backlog', /\/backlog$/, 'Not connected to the wow server'],
-      ['Workflows', /\/workflows$/, 'Not connected to the wow server'],
+      ['Workflows', /\/settings\/workflows$/, 'How a main agent follows a workflow'],
       ['Settings', /\/settings\/providers$/, 'Test timeout'],
     ] as const;
     for (const [name, url, text] of routes) {

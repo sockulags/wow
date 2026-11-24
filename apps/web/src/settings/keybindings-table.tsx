@@ -14,13 +14,11 @@ import { ResetButton, formatRawDefault, useSettingField } from './setting-row';
 // Commit) is taken by the open dialog before anything else sees it, so it shares with nothing.
 // The approval keys work wherever an approval is on screen except over the calendar, whose keys
 // come first in the command list.
-export type KeyScope =
-  'General' | 'Calendar' | 'Chat' | 'Panel' | 'Workflows' | 'Diff' | 'Dialog' | 'Approval';
+export type KeyScope = 'General' | 'Calendar' | 'Chat' | 'Panel' | 'Diff' | 'Dialog' | 'Approval';
 
 const dialogKeys = new Set(['calendarSaveCard', 'commitConfirm']);
 
-// Keys of the open thread's conversation (agent workbench spec 74, 88): they share keys with the
-// builder's rule keys, which never fire in chat.
+// Keys of the open thread's conversation (agent workbench spec 74, 88).
 const conversationKeys = new Set([
   'toggleReasoning',
   'previousMessage',
@@ -42,8 +40,6 @@ export function keyScope(settingKey: string): KeyScope {
   const name = settingKey.replace(/^keybindings\./, '');
   if (dialogKeys.has(name)) return 'Dialog';
   if (name.startsWith('approval')) return 'Approval';
-  // The run view's Changes and a chat thread's Changes are tabs of different views.
-  if (name === 'runChanges') return 'Workflows';
   if (name === 'threadChanges') return 'Chat';
   // P works on a row of Threads at work only (parallel threads spec 13).
   if (name === 'threadToPanel') return 'Chat';
@@ -57,7 +53,6 @@ export function keyScope(settingKey: string): KeyScope {
     return 'Chat';
   }
   if (name.startsWith('panel')) return 'Panel';
-  if (name.startsWith('rule')) return 'Workflows';
   if (name.startsWith('diff')) return 'Diff';
   return 'General';
 }
@@ -169,16 +164,7 @@ export function KeybindingsTable({ entries }: { entries: readonly SettingEntry[]
     labels[key] = definition.label;
   }
   const conflicts = keyConflicts(bindings);
-  const scopes: KeyScope[] = [
-    'General',
-    'Calendar',
-    'Chat',
-    'Approval',
-    'Workflows',
-    'Panel',
-    'Diff',
-    'Dialog',
-  ];
+  const scopes: KeyScope[] = ['General', 'Calendar', 'Chat', 'Approval', 'Panel', 'Diff', 'Dialog'];
   return (
     <div className="mt-4 flex flex-col gap-6">
       {scopes.map((scope) => {
@@ -191,15 +177,13 @@ export function KeybindingsTable({ entries }: { entries: readonly SettingEntry[]
                 ? 'Everywhere'
                 : scope === 'Panel'
                   ? 'In the side panel'
-                  : scope === 'Workflows'
-                    ? 'In workflows and their runs'
-                    : scope === 'Diff'
-                      ? 'On a diff line'
-                      : scope === 'Approval'
-                        ? 'On an approval (over the calendar, its keys come first)'
-                        : scope === 'Dialog'
-                          ? 'In its dialog'
-                          : `In ${scope.toLowerCase()}`}
+                  : scope === 'Diff'
+                    ? 'On a diff line'
+                    : scope === 'Approval'
+                      ? 'On an approval (over the calendar, its keys come first)'
+                      : scope === 'Dialog'
+                        ? 'In its dialog'
+                        : `In ${scope.toLowerCase()}`}
             </h3>
             <div role="table" aria-label={`${scope} shortcuts`}>
               <div role="rowgroup">

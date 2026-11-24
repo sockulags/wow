@@ -43,37 +43,26 @@ import {
   tabKeyOf,
   tabOpener,
 } from './viewer';
-import { RunPanel, WorkflowPanel } from './workflow-panel';
 
 // What the empty panel says it would show, per view.
 const emptyText: Readonly<Record<PanelSelection['view'], string>> = {
   calendar:
     'Select a card to see its details and its workflow thread, or a meeting for its details.',
-  chat: 'Open a thread to see its provider, model, usage and the run it belongs to.',
-  run: '',
-  workflow: '',
-  workflows: 'Open a workflow for a summary of its steps and runs, or a run for its live step.',
-  backlog: 'Open an item to see where it is planned, its runs and its published issue.',
-  other: 'The calendar, chat, workflows and backlog show what you select here.',
+  chat: 'Open a thread to see its provider, model and usage.',
+  backlog: 'Open an item to see where it is planned and its published issue.',
+  other: 'The calendar, chat and backlog show what you select here.',
 };
 
 const titles: Readonly<Record<PanelSelection['view'], string>> = {
   calendar: 'Calendar',
   chat: 'Thread details',
-  run: 'Run',
-  workflow: 'Workflow',
-  workflows: 'Workflows',
   backlog: 'Backlog item',
   other: 'Context',
 };
 
 // What the panel's own body is called in its tab strip (agent workbench spec 11, 14).
 export const baseTabLabel = (selection: PanelSelection): string =>
-  selection.view === 'run'
-    ? 'Conversation'
-    : selection.view === 'chat'
-      ? 'Details'
-      : titles[selection.view];
+  selection.view === 'chat' ? 'Details' : titles[selection.view];
 
 const typing = (element: Element | null): boolean =>
   element instanceof HTMLElement &&
@@ -97,10 +86,6 @@ function PanelBody({ selection }: { readonly selection: PanelSelection }) {
       return selection.itemId ? <CalendarPanel itemId={selection.itemId} /> : null;
     case 'chat':
       return selection.threadId ? <ThreadPanel threadId={selection.threadId} /> : null;
-    case 'run':
-      return <RunPanel runId={selection.runId} />;
-    case 'workflow':
-      return <WorkflowPanel workflowId={selection.workflowId} />;
     case 'backlog':
       return selection.itemId ? <BacklogPanel itemId={selection.itemId} /> : null;
     default:
@@ -224,7 +209,7 @@ export function ContextPanel() {
   const outline = tab?.kind === 'outline' ? tab.outline : undefined;
   // Another thread beside the view (parallel threads spec 15).
   const otherThread = tab?.kind === 'thread' ? tab.thread : undefined;
-  const { width, cap } = useShownPanelWidth(selection.view);
+  const { width, cap } = useShownPanelWidth();
   const baseLabel = baseTabLabel(selection);
   const threads = useTopic('threads');
   // A step thread's run view shows the conversation, not a thread's details.

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { safeHref } from '@/components/markdown';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
-import { changeRequestStateLabel, checksLabel, lastFetchedLabel, settingLabel } from './model';
+import { changeRequestStateLabel, checksLabel, lastFetchedLabel, settingLabel } from './labels';
 
 // What the Plans view and the run's Pull request tab share: when the host was last asked, what
 // went wrong since, and "Refresh now" (review loop spec 26, 30, 31 and 32). The time is the

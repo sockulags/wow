@@ -3,19 +3,14 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  Outlet,
-  useRouterState,
   notFound,
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router';
-import { AssistantView } from '@/assistant/assistant-view';
 import { CalendarView } from '@/calendar/calendar-view';
 import { validateCalendarSearch } from '@/calendar/search';
 import { ChatHome, ChatLayout } from '@/chat/chat-view';
 import { NewThreadView } from '@/chat/new-thread';
-import { ThreadsAtWork } from '@/chat/at-work';
-import { UsageView } from '@/chat/usage-view';
 import { ThreadView } from '@/chat/thread-view';
 import { ProjectsSettingsPage, SettingsPage } from '@/settings/settings-page';
 import {
@@ -25,35 +20,13 @@ import {
   NewItemView,
   validateBacklogItemSearch,
 } from '@/backlog/backlog-view';
-import { validatePlanSearch } from '@/plans/model';
-import { PlansHome, PlansLayout, PlanView } from '@/plans/plans-view';
 import { NotFoundView } from '@/views/empty-views';
-import { EditWorkflowView, NewWorkflowView } from '@/workflows/builder';
-import { validateRunSearch } from '@/workflows/changes';
-import { RunView } from '@/workflows/run-view';
-import { TriggersTab } from '@/workflows/triggers-tab';
-import { RunsHome, WorkflowsHome, WorkflowsLayout } from '@/workflows/workflows-view';
 import { isSettingGroup, settingsByGroup } from './sections';
-import { QuickAskView } from '@/quick-ask/quick-ask-view';
 import { Shell } from './shell';
 
-// The quick ask window shows its page alone; every other route sits in the shell.
-function Root() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  return pathname === quickAskPath ? <Outlet /> : <Shell />;
-}
-
-const quickAskPath = '/quick-ask';
-
 const rootRoute = createRootRoute({
-  component: Root,
+  component: Shell,
   notFoundComponent: NotFoundView,
-});
-
-const quickAskRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: quickAskPath,
-  component: QuickAskView,
 });
 
 const indexRoute = createRoute({
@@ -98,18 +71,6 @@ const newThreadRoute = createRoute({
   component: NewThreadView,
 });
 
-const atWorkRoute = createRoute({
-  getParentRoute: () => chatRoute,
-  path: '/work',
-  component: ThreadsAtWork,
-});
-
-const usageRoute = createRoute({
-  getParentRoute: () => chatRoute,
-  path: '/usage',
-  component: UsageView,
-});
-
 const threadRoute = createRoute({
   getParentRoute: () => chatRoute,
   path: '/$threadId',
@@ -120,83 +81,13 @@ const threadRoute = createRoute({
   },
 });
 
+// Workflows are files, listed and written in Settings › Workflows (orchestrator threads spec 22,
+// 33); the menu's Workflows opens that page.
 const workflowsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/workflows',
-  component: WorkflowsLayout,
-});
-
-const workflowsIndexRoute = createRoute({
-  getParentRoute: () => workflowsRoute,
-  path: '/',
-  component: WorkflowsHome,
-});
-
-const newWorkflowRoute = createRoute({
-  getParentRoute: () => workflowsRoute,
-  path: '/new',
-  // `?template=<kind>` starts the builder from that template of the workflows.templates setting.
-  validateSearch: (search: Record<string, unknown>): { template?: string } =>
-    typeof search['template'] === 'string' ? { template: search['template'] } : {},
-  component: function NewWorkflowRoute() {
-    const { template } = newWorkflowRoute.useSearch();
-    return <NewWorkflowView key={template ?? ''} template={template} />;
-  },
-});
-
-const triggersRoute = createRoute({
-  getParentRoute: () => workflowsRoute,
-  path: '/triggers',
-  component: TriggersTab,
-});
-
-const runsRoute = createRoute({
-  getParentRoute: () => workflowsRoute,
-  path: '/runs',
-  component: RunsHome,
-});
-
-const workflowRunRoute = createRoute({
-  getParentRoute: () => workflowsRoute,
-  path: '/runs/$runId',
-  // `?tab=changes` opens the Changes tab, with `file` and `stepOnly`, so palette commands can.
-  validateSearch: validateRunSearch,
-  component: function WorkflowRunRoute() {
-    const { runId } = workflowRunRoute.useParams();
-    return <RunView key={runId} runId={runId} search={workflowRunRoute.useSearch()} />;
-  },
-});
-
-const workflowRoute = createRoute({
-  getParentRoute: () => workflowsRoute,
-  path: '/$workflowId',
-  component: function WorkflowRoute() {
-    const { workflowId } = workflowRoute.useParams();
-    return <EditWorkflowView key={workflowId} workflowId={workflowId} />;
-  },
-});
-
-const plansRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/plans',
-  component: PlansLayout,
-});
-
-const plansIndexRoute = createRoute({
-  getParentRoute: () => plansRoute,
-  path: '/',
-  component: PlansHome,
-});
-
-const planRoute = createRoute({
-  getParentRoute: () => plansRoute,
-  path: '/$projectId/$intentId',
-  // `?unit=<key>` opens that unit's contract, so palette commands can.
-  validateSearch: validatePlanSearch,
-  component: function PlanRoute() {
-    const { projectId, intentId } = planRoute.useParams();
-    const { unit } = planRoute.useSearch();
-    return <PlanView projectId={projectId} intentId={intentId} openUnit={unit} />;
+  beforeLoad: () => {
+    throw redirect({ to: '/settings/$group', params: { group: 'workflows' } });
   },
 });
 
@@ -230,12 +121,6 @@ const backlogItemRoute = createRoute({
   },
 });
 
-const assistantRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/assistant',
-  component: AssistantView,
-});
-
 const settingsIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -262,21 +147,11 @@ export const settingsGroupRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-  quickAskRoute,
   indexRoute,
   calendarRoute,
-  chatRoute.addChildren([chatIndexRoute, newThreadRoute, atWorkRoute, usageRoute, threadRoute]),
-  workflowsRoute.addChildren([
-    workflowsIndexRoute,
-    triggersRoute,
-    newWorkflowRoute,
-    runsRoute,
-    workflowRunRoute,
-    workflowRoute,
-  ]),
-  plansRoute.addChildren([plansIndexRoute, planRoute]),
+  chatRoute.addChildren([chatIndexRoute, newThreadRoute, threadRoute]),
+  workflowsRoute,
   backlogRoute.addChildren([backlogIndexRoute, newBacklogItemRoute, backlogItemRoute]),
-  assistantRoute,
   settingsIndexRoute,
   settingsProjectsRoute,
   settingsGroupRoute,

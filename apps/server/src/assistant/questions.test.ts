@@ -1,6 +1,6 @@
 import {
   assistantThreadId,
-  defaultAssistantInstructions,
+  defaultChatInstructions,
   type ProviderCommand,
   type ProviderEvent,
   type Question,
@@ -603,9 +603,9 @@ describe("the assistant's question tool (spec 9 to 12)", () => {
     expect(changed.content).toMatchObject({ outcome: 'refused' });
   });
 
-  it('is named in the default instruction text with when to use it', () => {
-    expect(defaultAssistantInstructions).toContain('ask with ask_questions');
-    expect(defaultAssistantInstructions).toContain(
+  it('is named in the instructions every main thread is told, with when to use it', () => {
+    expect(defaultChatInstructions).toContain('ask with ask_questions');
+    expect(defaultChatInstructions).toContain(
       'Ask one thing at a time unless the questions belong together',
     );
   });

@@ -7,7 +7,7 @@ import {
 } from '@wow/contracts';
 import { useEffect, useState } from 'react';
 import { useRuntime } from '@/app/runtime';
-import { cardKind } from './items';
+import { cardKind, cardState } from './items';
 import { addDays, startOfDay, type LocalDate } from './time';
 
 // Repeating cards in the grid (recurring cards spec 15 to 17). The server works out every
@@ -30,8 +30,11 @@ export interface ShownOccurrence {
   // What the block says, or null when there is nothing to say (a plain card, or a day that went
   // by with nothing to run).
   readonly state: OccurrenceState | null;
-  // The run a reached occurrence started; it opens there.
+  // The run a reached occurrence started, from before cards started threads.
   readonly runId: string | null;
+  // The main thread a reached occurrence started or wrote to (orchestrator threads spec 27); it
+  // opens there.
+  readonly threadId: string | null;
 }
 
 export const occurrenceId = (cardId: string, date: string): string => `${cardId}@${date}`;
@@ -63,6 +66,8 @@ function stateOf(
   if (record) {
     switch (record.outcome) {
       case 'fired':
+        // The card follows the thread it started last; an earlier occurrence's thread went on.
+        if (record.threadId) return card.threadId === record.threadId ? cardState(card) : 'done';
         return record.runId ? (runs.get(record.runId)?.state ?? null) : null;
       case 'failed':
         return 'failed';
@@ -103,6 +108,7 @@ export function occurrenceBlocks(
     const id = occurrenceId(card.id, occurrence.date);
     const state = stateOf(occurrence, card, runsById);
     const runId = occurrence.record?.runId ?? null;
+    const threadId = occurrence.record?.threadId ?? null;
     shown.set(id, {
       cardId: card.id,
       date: occurrence.date,
@@ -116,6 +122,7 @@ export function occurrenceBlocks(
           Date.parse(occurrence.start) < Date.parse(card.nextAt)),
       state,
       runId,
+      threadId,
     });
     items.push({
       ...card,

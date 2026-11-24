@@ -1,7 +1,9 @@
+import { assistantThreadId } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { createStore, useStore } from 'zustand';
-import { useDispatch, useTopic } from '@/chat/data';
+import { errorMessage, useDispatch, useTopic } from '@/chat/data';
+import { notify } from '@/lib/feedback';
 import { ConnectAgentStep } from '@/providers/connect-step';
 import { useRuntime, useSetting } from './runtime';
 
@@ -53,9 +55,25 @@ export function useFirstStart(): boolean {
     if (offer) void settings.write('providers.offerSetup', false);
     if (up) {
       firstStartStore.setState({ up: false });
-      void navigate({ to: '/assistant' });
+      // The Assistant thread is made, with a model from the provider's list when nothing names
+      // one, and the greeting owed since the step went up goes out there (orchestrator threads
+      // spec 25); the thread opens.
+      connection
+        ?.request('assistant.open', {})
+        .then((opened) => {
+          const problem = (opened as { problem?: unknown } | undefined)?.problem;
+          if (typeof problem === 'string') {
+            notify.error('The Assistant thread could not start', { description: problem });
+          }
+        })
+        .catch((error: unknown) =>
+          notify.error('The Assistant thread could not start', {
+            description: errorMessage(error),
+          }),
+        );
+      void navigate({ to: '/chat/$threadId', params: { threadId: assistantThreadId } });
     }
-  }, [passed, settingsReady, offer, up, settings, navigate]);
+  }, [passed, settingsReady, offer, up, settings, navigate, connection]);
 
   return gated;
 }

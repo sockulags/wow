@@ -49,7 +49,7 @@ describe('shell', () => {
     for (const [name, path] of [
       ['Calendar', '/calendar'],
       ['Backlog', '/backlog'],
-      ['Workflows', '/workflows'],
+      ['Workflows', '/settings/workflows'],
       ['Settings', '/settings/providers'],
     ] as const) {
       await user.click(within(nav).getByRole('button', { name: 'Settings' }));
@@ -129,22 +129,15 @@ describe('shell', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('goes to the sections with Ctrl+1 to Ctrl+6 in sidebar order (spec 92)', async () => {
+  it('goes to the pages with their keys (spec 92)', async () => {
     const user = userEvent.setup();
     const { router } = await renderApp('/calendar');
     const visited: string[] = [];
-    for (const digit of ['1', '2', '3', '4', '5', '6']) {
+    for (const digit of ['1', '2', '3', '5']) {
       await user.keyboard(`{Control>}${digit}{/Control}`);
       visited.push(router.state.location.pathname);
     }
-    expect(visited).toEqual([
-      '/calendar',
-      '/chat',
-      '/workflows',
-      '/plans',
-      '/backlog',
-      '/assistant',
-    ]);
+    expect(visited).toEqual(['/calendar', '/chat', '/settings/workflows', '/backlog']);
   });
 
   it('anchors the palette near the top, not centred, so its input stays put (spec 93)', async () => {

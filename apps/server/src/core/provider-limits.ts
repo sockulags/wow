@@ -77,8 +77,8 @@ export function decideLimits(
           now === 2
             ? `${instance.name}: ${windowWords(limit)} reached`
             : `${instance.name}: ${windowWords(limit)}${used}`,
-        body: 'Usage shows when it resets.',
-        path: '/chat/usage',
+        body: 'Settings → Providers shows when it resets.',
+        path: '/settings/providers',
         runId: null,
         calendarItemId: null,
         threadId: null,

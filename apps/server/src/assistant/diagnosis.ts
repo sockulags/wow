@@ -34,7 +34,6 @@ import {
 } from 'drizzle-orm';
 import { z } from 'zod';
 import { runPath } from '../core/workflows.js';
-import { triggersPath } from '../core/triggers.js';
 import * as t from '../db/schema.js';
 import { skillInstalled, type Reader, type ReaderDeps } from './readers.js';
 
@@ -55,14 +54,16 @@ const trackersPlace: AssistantPlace = {
   label: `Settings → ${settingGroupTitles.trackers}`,
   path: '/settings/trackers',
 };
-const triggersPlace: AssistantPlace = { label: 'Workflows → Triggers', path: triggersPath };
+// A trigger is a card on the calendar now (orchestrator threads spec 27, 34).
+const triggersPlace: AssistantPlace = { label: 'Calendar', path: '/calendar' };
 const projectPlace = (name: string): AssistantPlace => ({
   label: `Settings → Projects → ${name}`,
   path: '/settings/projects',
 });
-const workflowPlace = (id: string, name: string): AssistantPlace => ({
-  label: `Workflows → ${name}`,
-  path: `/workflows/${encodeURIComponent(id)}`,
+// Workflows are files on Settings › Workflows (orchestrator threads spec 22, 34).
+const workflowPlace = (_id: string, name: string): AssistantPlace => ({
+  label: `Settings → Workflows → ${name}`,
+  path: '/settings/workflows',
 });
 
 function settingPlace(key: string): AssistantPlace {

@@ -15,6 +15,7 @@ import {
   type ProviderUpdateRun,
   type Skill,
   type SubscriptionTopic,
+  assistantThreadId,
 } from '@wow/contracts';
 import {
   and,
@@ -76,7 +77,7 @@ import {
 import type { ReadModel } from './orchestrator.js';
 
 // The assistant thread is a row of the same table, shown through a topic of its own.
-const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
+const threadTopics: SubscriptionTopic[] = ['threads'];
 
 // A second approval in a thread that already needs the user does not restart its wait.
 const stateSince = (state: string, at: string) =>
@@ -331,6 +332,9 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.insert(threads)
         .values({
           ...event.payload,
+          // The assistant thread of before is an ordinary main thread (orchestrator threads spec
+          // 25), also when its old events are read again.
+          ...(event.payload.kind === 'assistant' ? { kind: 'chat' as const } : {}),
           stateSince: event.payload.stateSince ?? event.payload.createdAt,
         })
         .run();
@@ -1004,12 +1008,13 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(providerLimits).where(eq(providerLimits.providerInstanceId, id)).get()
         ?.limits ?? [],
     instanceUsage: (id) => ({
-      // The assistant thread does not hold an instance: it moves to another one (spec 27).
+      // The Assistant thread does not hold an instance: it moves to another one (app assistant
+      // spec 27; orchestrator threads spec 25).
       threads:
         tx
           .select({ n: count() })
           .from(threads)
-          .where(and(eq(threads.providerInstanceId, id), ne(threads.kind, 'assistant')))
+          .where(and(eq(threads.providerInstanceId, id), ne(threads.id, assistantThreadId)))
           .get()?.n ?? 0,
       runningTurns:
         tx

@@ -1,4 +1,4 @@
-import type { ProviderInstance, ProviderModel, Thread, WorkflowRun } from '@wow/contracts';
+import type { ProviderInstance, ProviderModel, Thread } from '@wow/contracts';
 import {
   createMemorySettingsSource,
   createSettingsStore,
@@ -6,12 +6,6 @@ import {
   type ConnectionState,
   type SettingValues,
 } from '@wow/client-runtime';
-import {
-  createMemoryHistory,
-  createRootRoute,
-  createRouter,
-  RouterProvider,
-} from '@tanstack/react-router';
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -19,11 +13,9 @@ import { createStore } from 'zustand';
 import { createLayoutStore, RuntimeProvider, type Runtime } from '@/app/runtime';
 import { renderApp } from '@/test/render';
 import { createDraftStore } from './draft';
-import { assistantBar } from '@/assistant/assistant-view';
-import { ModelBar, barKeyOf } from './model-bar';
+import { barKeyOf } from './model-bar';
 import { threadDefaults } from './new-thread';
 import { activeModelBar, modelBarCommands, modelBarStore } from './model-commands';
-import { RunStepThread } from '@/panel/step-thread';
 import { ThreadConversation } from './thread-view';
 
 // Agent workbench U1: the composer bar, its keys, its lists and its palette commands.
@@ -503,53 +495,6 @@ describe('the palette (agent workbench spec 6)', () => {
 });
 
 describe('every composer that runs turns has the bar (agent workbench spec 5)', () => {
-  it("shows the bar on a workflow step's thread in the context panel", async () => {
-    const step: Thread = { ...thread, runId: 'run-1', stepId: 'build' };
-    const run: WorkflowRun = {
-      id: 'run-1',
-      workflowId: 'w',
-      projectId: 'kettle',
-      calendarItemId: null,
-      backlogItemId: null,
-      state: 'running',
-      currentStep: 0,
-      baseSha: null,
-      baseFiles: null,
-      steps: [
-        {
-          stepId: 'build',
-          state: 'running',
-          threadId: step.id,
-          startedAt: '2026-11-02T08:00:00.000Z',
-          artifactsFound: [],
-        },
-      ],
-      startedAt: '2026-11-02T08:00:00.000Z',
-      endedAt: null,
-    };
-    const { connection } = connectionWith({
-      threads: [step],
-      providerInstances: [claude],
-      turns: [],
-      threadItems: [],
-    });
-    // The panel's own component, which links to the thread, so it needs a router around it.
-    const router = createRouter({
-      routeTree: createRootRoute({
-        component: () => <RunStepThread run={run} workflow={undefined} />,
-      }),
-      history: createMemoryHistory({ initialEntries: ['/'] }),
-    });
-    await router.load();
-    render(
-      <RuntimeProvider runtime={runtimeOf(connection)}>
-        <RouterProvider router={router} />
-      </RuntimeProvider>,
-    );
-    const panel = screen.getByTestId('panel-step-thread');
-    expect(await within(within(panel).getByTestId('model-bar')).findByText('Opus')).toBeTruthy();
-  });
-
   it('shows the bar on a new thread in place of the selects', async () => {
     const { connection } = connectionWith({
       providerInstances: [claude],
@@ -628,90 +573,5 @@ describe('a new thread starts from what the provider names (agent workbench spec
       effort: 'high',
       permissionMode: 'read-only',
     });
-  });
-});
-
-describe("the Assistant view's bar (agent workbench spec 10)", () => {
-  const assistantThread: Thread = {
-    ...thread,
-    id: 'assistant',
-    kind: 'assistant',
-    model: 'opus',
-    effort: 'high',
-    permissionMode: 'dontAsk',
-  };
-  const other: ProviderInstance = { ...claude, id: 'claude-home', name: 'Claude at home' };
-
-  it('writes the instance, model and effort settings and shows Read only', async () => {
-    const write = vi.fn<(key: string, value: string) => Promise<boolean>>(() =>
-      Promise.resolve(true),
-    );
-    const props = assistantBar({
-      thread: assistantThread,
-      instances: [claude, other, codex],
-      stored: { instanceId: '', model: '', effort: '', allowCodex: false },
-      write,
-    });
-    if (!props) throw new Error('no bar');
-    // Codex is offered only when the assistant may run on it.
-    expect(props.instances?.choices.map((choice) => choice.id)).toEqual(['claude', 'claude-home']);
-    const { connection } = connectionWith({});
-    render(
-      <RuntimeProvider runtime={runtimeOf(connection)}>
-        <ModelBar {...props} />
-      </RuntimeProvider>,
-    );
-    await within(bar()).findByText('Opus');
-    expect(bar().textContent).toBe('Claude·Opus·High·Read only');
-    expect(within(bar()).queryByRole('button', { name: 'Permission mode' })).toBeNull();
-
-    const user = userEvent.setup();
-    await user.click(within(bar()).getByRole('button', { name: 'Model' }));
-    await user.click(
-      within(await screen.findByRole('listbox', { name: 'Model' })).getByRole('option', {
-        name: /Sonnet/,
-      }),
-    );
-    expect(write).toHaveBeenLastCalledWith('assistant.model', 'sonnet');
-    await user.click(within(bar()).getByRole('button', { name: 'Effort' }));
-    await user.click(
-      within(await screen.findByRole('listbox', { name: 'Effort' })).getByRole('option', {
-        name: /^Low/,
-      }),
-    );
-    expect(write).toHaveBeenLastCalledWith('assistant.effort', 'low');
-    await user.click(within(bar()).getByRole('button', { name: 'Provider instance' }));
-    await user.click(
-      within(await screen.findByRole('listbox', { name: 'Provider instance' })).getByRole(
-        'option',
-        { name: /Claude at home/ },
-      ),
-    );
-    await act(async () => undefined);
-    // The instance last, so the assistant never opens on it with the old instance's model.
-    expect(write.mock.calls.slice(-3)).toEqual([
-      ['assistant.model', ''],
-      ['assistant.effort', ''],
-      ['assistant.providerInstanceId', 'claude-home'],
-    ]);
-    // Shift+Tab does not change the assistant's mode.
-    expect(activeModelBar(modelBarStore.getState())?.modeLocked).toBe(true);
-    expect(
-      modelBarCommands(activeModelBar(modelBarStore.getState())).some((command) =>
-        command.id.startsWith('modelBar.mode.'),
-      ),
-    ).toBe(false);
-  });
-
-  it('shows what the settings name before the thread has caught up', () => {
-    const props = assistantBar({
-      thread: assistantThread,
-      instances: [claude, other],
-      stored: { instanceId: 'claude-home', model: 'sonnet', effort: '', allowCodex: false },
-      write: () => Promise.resolve(true),
-    });
-    expect(props?.providerInstanceId).toBe('claude-home');
-    // Another instance than the thread's starts from its own defaults.
-    expect(props?.value).toEqual({ model: 'sonnet', effort: 'low', permissionMode: 'dontAsk' });
   });
 });

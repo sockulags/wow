@@ -11,7 +11,7 @@ import { useTopic } from '@/chat/data';
 import { Badge } from '@/components/ui/badge';
 import { Markdown } from '@/components/markdown';
 import { EmptyState } from '@/components/states';
-import { HostLink, HostReadLine, useHostRefresh } from '@/plans/host-read';
+import { HostLink, HostReadLine, useHostRefresh } from '@/hosts/host-read';
 
 // The run's Jira ticket (review loop spec 33) as the server last read it: the issue its backlog
 // item was published as, else the one whose key is in its pull request title or branch name.

@@ -1,5 +1,5 @@
 import {
-  defaultAssistantInstructions,
+  defaultChatInstructions,
   settingsRegistry,
   type AssistantChange,
   type AssistantProposal,
@@ -314,9 +314,9 @@ describe('one Undo for each change of a series (spec 13)', () => {
 });
 
 describe('the instruction text (spec 19)', () => {
-  it('says to make one repeating card for anything recurring and never a card per day', () => {
-    expect(defaultAssistantInstructions).toMatch(/one repeating card/);
-    expect(defaultAssistantInstructions).toMatch(/never a card per day/);
-    expect(settingsRegistry['assistant.instructions'].default).toBe(defaultAssistantInstructions);
+  it('says to make one repeating card for anything recurring and never a card per occurrence', () => {
+    expect(defaultChatInstructions).toMatch(/one repeating card/);
+    expect(defaultChatInstructions).toMatch(/never a card per occurrence/);
+    expect(settingsRegistry['chat.instructions'].default).toBe(defaultChatInstructions);
   });
 });

@@ -1,5 +1,4 @@
 import {
-  assistantToolsetName,
   attachmentMediaType,
   boundedSessionTools,
   HandOverResult,
@@ -28,9 +27,7 @@ import {
 import type { SecretStore } from '@wow/secrets';
 import { and, eq, isNotNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
-import { instructionsWithNotes } from '../assistant/memory.js';
 import { AssistantRedactor } from '../assistant/redact.js';
-import { prepareAssistantFolder } from '../assistant/thread.js';
 import { prepareThreadFolder, threadFolderOf } from '../core/thread-folder.js';
 import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
@@ -553,11 +550,9 @@ export class ProviderService {
             providerInstanceId,
             turn.threadId,
             true,
-            start.kind === 'assistant'
-              ? () => this.#assistantTurn(command)
-              : this.#chatThread(turn.threadId)
-                ? () => this.#chatTurn(command, turn.id, turn.index, start.restoreFiles)
-                : command,
+            this.#chatThread(turn.threadId)
+              ? () => this.#chatTurn(command, turn.id, turn.index, start.restoreFiles)
+              : command,
           );
           break;
         }
@@ -858,7 +853,23 @@ export class ProviderService {
     }
     await snapshots?.take(command.threadId, turnId, 'start');
     const helperTools = this.#deps.helpers?.grant(command.threadId);
-    return this.#marked(helperTools ? { ...command, helperTools } : command, turnId, index);
+    // Every main thread's agent is told `chat.instructions` after its provider's own
+    // (orchestrator threads spec 25); a helper is told its brief by the thread that started it.
+    const main = !this.#deps.db
+      .select({ parent: threads.parentThreadId })
+      .from(threads)
+      .where(eq(threads.id, command.threadId))
+      .get()?.parent;
+    const instructions = main ? this.#deps.settings.get('chat.instructions') : undefined;
+    return this.#marked(
+      {
+        ...command,
+        ...(helperTools ? { helperTools } : {}),
+        ...(instructions ? { appendInstructions: instructions } : {}),
+      },
+      turnId,
+      index,
+    );
   }
 
   // Before a chat thread's turn goes out, the folder is read (agent workbench spec 34): its
@@ -898,26 +909,6 @@ export class ProviderService {
       );
     }
     return command;
-  }
-
-  // The assistant's turn (app assistant spec 2): wow's tools and no others, the instruction
-  // text, and the app's empty folder whatever the thread row says.
-  async #assistantTurn(command: StartTurn): Promise<StartTurn> {
-    const access = this.#deps.assistant();
-    if (!access) throw new Error("The assistant's tools are not running yet");
-    return {
-      ...command,
-      cwd: await prepareAssistantFolder(this.#deps.home),
-      toolset: { name: assistantToolsetName, url: access.url, token: access.token },
-      instructions: instructionsWithNotes(
-        {
-          db: this.#deps.db,
-          settings: this.#deps.settings,
-          clock: () => new Date(this.#deps.now?.() ?? Date.now()),
-        },
-        this.#deps.settings.get('assistant.instructions'),
-      ),
-    };
   }
 
   // Effects run after commit. When one that drives a turn fails, the turn fails with the reason,

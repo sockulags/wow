@@ -351,6 +351,13 @@
       "when": 1795510938978,
       "tag": "0049_retire_thread_list_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1795528530311,
+      "tag": "0050_assistant_is_a_main_thread",
+      "breakpoints": true
     }
   ]
 }

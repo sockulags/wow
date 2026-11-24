@@ -487,7 +487,7 @@ describe('what the preview makes plain before Apply (spec 22)', () => {
     const instructions = `Answer in rhyme. ${'Mind the kettle. '.repeat(20)}The end.`;
     const body = [
       'settings:',
-      `  assistant.instructions: "${instructions}"`,
+      `  chat.instructions: "${instructions}"`,
       'workflows:',
       '  - id: w',
       '    name: W',

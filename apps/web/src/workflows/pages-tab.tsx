@@ -14,8 +14,8 @@ import { EmptyState } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
 import { openPage, pageDocument } from '@/panel/viewer';
-import { HostLink, HostReadLine, useHostRefresh } from '@/plans/host-read';
-import { settingGroup, settingLabel } from '@/plans/model';
+import { HostLink, HostReadLine, useHostRefresh } from '@/hosts/host-read';
+import { settingGroup, settingLabel } from '@/hosts/labels';
 
 // The Confluence pages the run's ticket description, pull request body or intent link to (review
 // loop spec 35), as the server last read them. Opening one shows its body in the side panel.

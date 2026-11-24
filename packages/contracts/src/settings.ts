@@ -6,7 +6,7 @@ import {
   AssistantPermission,
   SecretPattern,
   defaultAskRefusedWords,
-  defaultAssistantInstructions,
+  defaultChatInstructions,
   defaultSecretPatterns,
 } from './assistant.js';
 import { defaultModelGuidance } from './models.js';
@@ -605,6 +605,15 @@ export const settingsRegistry = {
     description:
       'The model a new thread on the provider of a new thread starts with. Empty: the project names one, else the last thread on that instance used, else the instance default.',
     default: '',
+    scope: 'global',
+  }),
+  'chat.instructions': defineSetting({
+    schema: z.string().trim().min(1).meta({ widget: 'template', placeholders: [] }),
+    group: 'chat',
+    label: 'Instructions for main threads',
+    description:
+      "What every main thread's agent is told after its provider's own instructions: how to use wow's app tools and that it never asks for a secret. What it can do is decided by the tools it is given, not by this text. A changed text applies from the next start of a thread's session.",
+    default: defaultChatInstructions,
     scope: 'global',
   }),
   'chat.helperDepth': defineSetting({
@@ -1263,16 +1272,6 @@ export const settingsRegistry = {
     default: true,
     scope: 'global',
   }),
-  'desktop.quickAskShortcut': defineSetting({
-    personal: 'machine',
-    schema: z.string().trim().max(60),
-    group: 'desktop',
-    label: 'Ask the assistant from anywhere',
-    description:
-      "A key that opens a small assistant prompt over any window, in Electron's accelerator form (for example CommandOrControl+Alt+Space). Empty turns it off. When another program holds the key, wow says so once and the key does nothing.",
-    default: 'CommandOrControl+Alt+Space',
-    scope: 'global',
-  }),
   'desktop.startMinimized': defineSetting({
     schema: z.boolean(),
     group: 'desktop',
@@ -1923,50 +1922,6 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'ms',
   }),
-  'assistant.providerInstanceId': defineSetting({
-    personal: 'machine',
-    schema: z.string(),
-    group: 'assistant',
-    label: 'Provider',
-    description:
-      'The provider instance that runs the assistant, by its id. Empty: the first connected instance that may run it.',
-    default: '',
-    scope: 'global',
-  }),
-  'assistant.allowCodex': defineSetting({
-    schema: z.boolean(),
-    group: 'assistant',
-    label: 'Let the assistant run on Codex',
-    description:
-      'Off: the assistant runs only on Claude Code, and never on a Codex instance even when one is chosen above. On Codex wow switches off its command, image, image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool suggestion, sleep, code mode, web search and question tools and your Codex hooks for the assistant and keeps it in a read-only sandbox without network. Codex has no switch for its file edit tool or its MCP resource tools, and nobody has yet checked the tool list a real Codex then offers, so the assistant might still read files on this computer, including files that hold secrets. Only the assistant itself is kept off Codex; chat threads and workflow steps are not affected.',
-    default: false,
-    scope: 'global',
-  }),
-  'assistant.model': defineSetting({
-    schema: z.string(),
-    group: 'assistant',
-    label: 'Model',
-    description: "The model the assistant uses. Empty: the provider instance's default model.",
-    default: '',
-    scope: 'global',
-  }),
-  'assistant.effort': defineSetting({
-    schema: z.string(),
-    group: 'assistant',
-    label: 'Effort',
-    description: "How hard the assistant thinks. Empty: the provider instance's default effort.",
-    default: '',
-    scope: 'global',
-  }),
-  'assistant.instructions': defineSetting({
-    schema: z.string().trim().min(1).meta({ widget: 'template', placeholders: [] }),
-    group: 'assistant',
-    label: 'Instructions',
-    description:
-      "What the assistant's agent is told it is for, in place of the provider's own instructions for coding: it operates wow only, never asks for a secret, and sends other work to the chat view. What it can do is decided by the tools it is given, not by this text. A changed text applies from the next message on Claude Code, and on Codex from the next start of the assistant's session (after wow or the provider instance restarts).",
-    default: defaultAssistantInstructions,
-    scope: 'global',
-  }),
   'assistant.modelGuidance': defineSetting({
     schema: z.string().trim().min(1).meta({ widget: 'template', placeholders: [] }),
     group: 'assistant',
@@ -2266,14 +2221,7 @@ export const settingsRegistry = {
   'keybindings.goCalendar': keybinding('Go to Calendar', 'Open the calendar.', 'Mod+1'),
   'keybindings.goChat': keybinding('Go to Chat', 'Open the chat.', 'Mod+2'),
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
-  // Ctrl+1 to Ctrl+6 follow the sidebar's order (agent workbench spec 92).
-  'keybindings.goPlans': keybinding('Go to Plans', 'Open the plans.', 'Mod+4'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+5'),
-  'keybindings.goAssistant': keybinding(
-    'Go to Assistant',
-    'Open the assistant, the chat that runs wow for you.',
-    'Mod+6',
-  ),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
   'keybindings.calendarToday': keybinding('Calendar: today', 'Show today in the calendar.', 'T'),
   'keybindings.calendarNext': keybinding(
@@ -2324,26 +2272,6 @@ export const settingsRegistry = {
     'Interrupt the running turn of the open thread. What it produced so far stays.',
     'Mod+.',
   ),
-  'keybindings.gateApprove': keybinding(
-    'Approve',
-    "Approve the step a workflow run waits for you on, so the run continues, from its run view or the waiting step's thread.",
-    'Mod+Enter',
-  ),
-  'keybindings.gateSendBack': keybinding(
-    'Send back',
-    "Open the note field to send the step a workflow run waits for you on back to its agent, from its run view or the waiting step's thread.",
-    'Mod+Shift+Enter',
-  ),
-  'keybindings.runChanges': keybinding(
-    'Run: show changes',
-    'Switch the open workflow run between its steps and its Changes tab.',
-    'Mod+Shift+D',
-  ),
-  'keybindings.runPath': keybinding(
-    'Run: show path',
-    'Switch the open workflow run between its steps and its Path tab.',
-    'Mod+Shift+Y',
-  ),
   'keybindings.openInEditor': keybinding(
     'Open in editor',
     'Open the focused changed file, diff line, artifact or file link, or the file shown in the side panel, in your editor at its line (the "Editor command" setting).',
@@ -2358,26 +2286,6 @@ export const settingsRegistry = {
     'Changes: this step only',
     "Narrow the open run's Changes tab to the files the step under review changed, or a thread's Changes to the last turn, and back (while they are open).",
     'O',
-  ),
-  'keybindings.ruleAdd': keybinding(
-    'Rule: add',
-    'Add a rule under "After this step" to the step being edited in the workflow builder.',
-    'Alt+R',
-  ),
-  'keybindings.ruleMoveUp': keybinding(
-    'Rule: move up',
-    'Move the rule that has the keyboard one place up in its step, so it is tried earlier (in the workflow builder).',
-    'Alt+ArrowUp',
-  ),
-  'keybindings.ruleMoveDown': keybinding(
-    'Rule: move down',
-    'Move the rule that has the keyboard one place down in its step, so it is tried later (in the workflow builder).',
-    'Alt+ArrowDown',
-  ),
-  'keybindings.stopRun': keybinding(
-    'Stop run',
-    'Stop the open workflow run. Empty by default, because a stopped run cannot be continued.',
-    '',
   ),
   'keybindings.approvalAllowOnce': keybinding(
     'Approval: allow once',
@@ -2423,11 +2331,6 @@ export const settingsRegistry = {
     'Chat: commit…',
     "Open the commit dialog of the open chat thread's Changes, which commits the files you tick with the repository's hooks.",
     'Mod+Shift+K',
-  ),
-  'keybindings.threadsAtWork': keybinding(
-    'Threads at work',
-    'Show every thread that works, waits for you or finished a turn you have not seen, with what each does now.',
-    'Mod+Shift+O',
   ),
   'keybindings.threadToPanel': keybinding(
     'Threads at work: open in panel',

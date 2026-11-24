@@ -1,7 +1,6 @@
 import {
   AttachmentId,
   TextItemPayload,
-  assistantThreadId,
   attachmentExtensions,
   attachmentMediaType,
   imageSizeRefusal,
@@ -99,9 +98,6 @@ export class ImageStore {
   }
 
   async put(params: AttachmentPutParams): Promise<AttachmentPutResult> {
-    if (params.threadId === assistantThreadId) {
-      throw new ImageRefused('The assistant takes no images.');
-    }
     const thread = this.#deps.db
       .select()
       .from(threads)

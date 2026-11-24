@@ -1,6 +1,5 @@
 import type { Skill } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
-import { skillChoices } from '@/workflows/step-skills';
 import { skillRefOf } from './model';
 import { skillsForProject } from './view-model';
 
@@ -54,13 +53,5 @@ describe('skillRefOf', () => {
   it('names a workflow by its source, so the server sends it as a workflow', () => {
     expect(skillRefOf(mine)).toEqual({ name: 'release', source: 'workflow' });
     expect(skillRefOf(tea)).toEqual({ name: 'release', source: 'project-workflow' });
-  });
-});
-
-describe('skillChoices', () => {
-  it('never offers a workflow as a step skill', () => {
-    expect(skillChoices([mine, tea, folderSkill]).map((choice) => choice.label)).toEqual([
-      'plan-work',
-    ]);
   });
 });

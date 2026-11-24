@@ -1,77 +1,10 @@
-import {
-  changeRequestName,
-  changeRequestRef,
-  type ChangeRequest,
-  type HostRead,
-  type WorkflowRun,
-} from '@wow/contracts';
-import { GitPullRequestIcon } from 'lucide-react';
-import { useTopic } from '@/chat/data';
-import { EmptyState } from '@/components/states';
-import {
-  ChangeRequestState,
-  ChecksBadge,
-  HostLink,
-  HostReadLine,
-  useHostRefresh,
-} from '@/plans/host-read';
-import { failingChecks, runRead } from '@/plans/model';
-
-// The run's pull request (review loop spec 28): the one whose head is the branch the run's
-// folder is on, as the server last read it from the host. Read only: state, checks with the
-// failing ones by name, and review comments, each linked to the host. wow never writes there.
-
-// The pull request a run's read names, if the host showed one.
-export function runPullRequest(
-  read: HostRead | undefined,
-  requests: readonly ChangeRequest[],
-): ChangeRequest | undefined {
-  const id = read?.changeRequestIds[0];
-  return id === undefined ? undefined : requests.find((request) => request.id === id);
-}
-
-// The tab's name: GitLab calls it a merge request.
-export const pullRequestTabLabel = (read: HostRead | undefined): string =>
-  read?.host === 'gitlab' ? 'Merge request' : 'Pull request';
-
-// Why there is nothing to show, in the order the user can do something about it.
-export function emptyPullRequest(read: HostRead | undefined): string {
-  if (!read) return 'The host has not been asked about this run yet.';
-  const noun = read.host === 'gitlab' ? 'merge request' : 'pull request';
-  if (read.fetchedAt === null)
-    return `The host could not be read, so this run has no ${noun} to show.`;
-  if (read.branch === null) {
-    return `The run’s folder is on no branch, so there is no ${noun} to look for.`;
-  }
-  return `No ${noun} has the branch ${read.branch} as its head.`;
-}
-
-export function PullRequestTab({ run }: { readonly run: WorkflowRun }) {
-  const reads = useTopic('hostReads');
-  const requests = useTopic('changeRequests');
-  const refresh = useHostRefresh({ runId: run.id });
-  const read = runRead(reads ?? [], run.id);
-  const request = runPullRequest(read, requests ?? []);
-  return (
-    <div className="flex h-full flex-col gap-4 overflow-y-auto px-4 py-3">
-      <HostReadLine read={read} refresh={refresh} openUrl={request?.url} />
-      {!request ? (
-        <EmptyState
-          icon={GitPullRequestIcon}
-          title="Nothing to show yet"
-          description={emptyPullRequest(read)}
-          className="h-auto flex-1"
-        />
-      ) : (
-        <ChangeRequestBody request={request} />
-      )}
-    </div>
-  );
-}
+import { changeRequestName, changeRequestRef, type ChangeRequest } from '@wow/contracts';
+import { ChangeRequestState, ChecksBadge, HostLink } from '@/hosts/host-read';
+import { failingChecks } from '@/hosts/labels';
 
 // A pull or merge request as the host last answered it: state, checks with the failing ones by
-// name, and review comments, each linked to the host. Shared by the run's tab and a chat link's
-// tab (agent workbench spec 21).
+// name, and review comments, each linked to the host, in a chat link's tab (agent workbench
+// spec 21). Read only: wow never writes there.
 export function ChangeRequestBody({
   request,
 }: {

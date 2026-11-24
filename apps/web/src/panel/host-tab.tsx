@@ -26,7 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { HostLink, HostReadLine } from '@/plans/host-read';
+import { HostLink, HostReadLine } from '@/hosts/host-read';
 import { ChangeRequestBody } from '@/workflows/pull-request-tab';
 import { PageBody } from '@/workflows/pages-tab';
 import { TicketBody } from '@/workflows/ticket-tab';

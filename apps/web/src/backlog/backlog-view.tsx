@@ -24,7 +24,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { offerUndo } from '@/lib/feedback';
 import { formatWhen } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { runStateLabels } from '@/workflows/model';
 import { MarkdownPreview } from './markdown';
 import {
   allTags,
@@ -36,7 +35,6 @@ import {
   filterItems,
   isManualState,
   manualStates,
-  runProblem,
   sortItems,
   type BacklogFilter,
 } from './model';
@@ -327,12 +325,9 @@ function PlanStatus({ item }: { item: BacklogItem }) {
   const cards = (useTopic('calendarItems') ?? []).filter(
     (card) => card.source === 'local' && card.backlogItemId === item.id,
   );
-  const runs = useTopic('workflowRuns') ?? [];
   const workflows = useTopic('workflows') ?? [];
   const { zone } = useCalendarPrefs();
-  const run = runs.find((candidate) => candidate.id === item.runId);
-  const problem = runProblem(run);
-  if (cards.length === 0 && !run && !item.remote) return null;
+  if (cards.length === 0 && !item.remote) return null;
   const workflowName = (id: string | null) =>
     workflows.find((workflow) => workflow.id === id)?.name ?? 'no workflow';
   const linkClass =
@@ -361,19 +356,6 @@ function PlanStatus({ item }: { item: BacklogItem }) {
           </p>
         );
       })}
-      {run && (
-        <p data-testid="backlog-run" className="flex flex-wrap items-center gap-1">
-          <span className="text-muted-foreground">Last run:</span>
-          <Link to="/workflows/runs/$runId" params={{ runId: run.id }} className={linkClass}>
-            {workflowName(run.workflowId)} ({runStateLabels[run.state].toLowerCase()})
-          </Link>
-        </p>
-      )}
-      {problem && (
-        <p role="alert" data-testid="backlog-run-problem" className="text-destructive">
-          {problem}
-        </p>
-      )}
       {item.remote && (
         <p data-testid="backlog-remote" className="flex flex-wrap items-center gap-1">
           <span className="text-muted-foreground">

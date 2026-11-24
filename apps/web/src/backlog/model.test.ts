@@ -1,4 +1,4 @@
-import type { BacklogItem, WorkflowRun } from '@wow/contracts';
+import type { BacklogItem } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
 import { backlogCommands } from './commands';
 import type { CalendarItem } from '@wow/contracts';
@@ -14,7 +14,6 @@ import {
   overlaps,
   parseTags,
   planRange,
-  runProblem,
   sortItems,
 } from './model';
 
@@ -36,26 +35,6 @@ const items = [
   item('c', { title: 'Old idea', state: 'dropped', createdAt: '2026-10-01T08:00:00.000Z' }),
   item('d', { title: 'Shipped', state: 'done', tags: ['auth'] }),
 ];
-
-const runIn = (state: WorkflowRun['state'], error?: string): WorkflowRun => ({
-  id: 'r1',
-  workflowId: 'w1',
-  projectId: 'p1',
-  calendarItemId: null,
-  backlogItemId: 'a',
-  state,
-  currentStep: 0,
-  steps: [
-    {
-      stepId: 's1',
-      state: state === 'failed' ? 'failed' : 'done',
-      artifactsFound: [],
-      ...(error ? { error } : {}),
-    },
-  ],
-  startedAt: '2026-11-02T08:00:00.000Z',
-  endedAt: null,
-});
 
 const meeting = (title: string, start: string, end: string, extra: Partial<CalendarItem> = {}) =>
   ({
@@ -101,14 +80,6 @@ describe('backlog model', () => {
 
   it('lists open work first and dropped items last', () => {
     expect(sortItems(items).map((entry) => entry.id)).toEqual(['a', 'b', 'd', 'c']);
-  });
-
-  it('says why the last run did not finish', () => {
-    expect(runProblem(runIn('failed', 'Tests failed'))).toBe('The run failed: Tests failed');
-    expect(runProblem(runIn('stopped'))).toBe('The run was stopped.');
-    expect(runProblem(runIn('running'))).toBeUndefined();
-    expect(runProblem(runIn('done'))).toBeUndefined();
-    expect(runProblem(undefined)).toBeUndefined();
   });
 
   it('turns the plan form into a card time in the calendar zone', () => {

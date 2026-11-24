@@ -777,9 +777,14 @@ export class CodexAdapter implements ProviderAdapter {
           sandbox: mode.sandbox,
           ...(toolset
             ? toolsOnlySettings(toolset, command.instructions)
-            : command.helperTools
-              ? helperToolSettings(command.helperTools)
-              : {}),
+            : {
+                ...(command.helperTools ? helperToolSettings(command.helperTools) : {}),
+                // After codex's own instructions, as a developer message (orchestrator threads
+                // spec 25); read when the thread starts or resumes.
+                ...(command.appendInstructions
+                  ? { developerInstructions: command.appendInstructions }
+                  : {}),
+              }),
         };
         const resumeId = thread?.codexId ?? command.resumeId;
         const response = resumeId

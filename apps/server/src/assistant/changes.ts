@@ -261,15 +261,15 @@ function showSettingWhole(
   context: DecideContext,
 ): string {
   if (typeof value === 'string' && value !== '') {
-    if (key === 'assistant.model') {
-      const instanceId = read.setting('assistant.providerInstanceId', 'global')?.value;
+    if (key === 'chat.defaultModel') {
+      const instanceId = read.setting('chat.defaultInstance', 'global')?.value;
       return modelWords(
         value,
         typeof instanceId === 'string' && instanceId !== '' ? instanceId : undefined,
         context,
       );
     }
-    if (key === 'assistant.providerInstanceId') return read.providerInstance(value)?.name ?? value;
+    if (key === 'chat.defaultInstance') return read.providerInstance(value)?.name ?? value;
   }
   const definition = context.registry[key];
   return (
@@ -381,10 +381,11 @@ export function settingPlace(key: string, scope: string, context: DecideContext)
     : { label: 'Settings', path: '/settings' };
 }
 
+// Workflows are files on Settings › Workflows (orchestrator threads spec 22, 34).
 const workflowPlace = (id: string, name: string | undefined, exists: boolean): AssistantPlace =>
   exists
-    ? { label: `Workflows → ${name ?? id}`, path: `/workflows/${encodeURIComponent(id)}` }
-    : { label: 'Workflows', path: '/workflows' };
+    ? { label: `Settings → Workflows → ${name ?? id}`, path: '/settings/workflows' }
+    : { label: 'Settings → Workflows', path: '/settings/workflows' };
 
 const cardPlace = (id: string, exists: boolean): AssistantPlace => ({
   label: 'Calendar',
@@ -422,7 +423,7 @@ function placeOf(
       return { label: 'Plans', path: `/plans/${projectId}/${intentId}` };
     }
     case 'trigger':
-      return { label: 'Workflows → Triggers', path: triggersPath };
+      return { label: 'Calendar', path: triggersPath };
     case 'skill':
       return skillsPlace;
   }
@@ -1161,7 +1162,7 @@ export function proposalOf(
               to: `start ${workflowName(command.workflowId)}`,
             },
           ],
-          place: { label: 'Workflows → Triggers', path: triggersPath },
+          place: { label: 'Calendar', path: triggersPath },
         };
       case 'trigger.setEnabled': {
         const trigger = read.trigger(command.triggerId);
@@ -1177,7 +1178,7 @@ export function proposalOf(
               to: onOff(command.enabled),
             },
           ],
-          place: { label: 'Workflows → Triggers', path: triggersPath },
+          place: { label: 'Calendar', path: triggersPath },
         };
       }
       case 'project.update': {

@@ -53,7 +53,13 @@ export function busyThreadOf(card: CalendarItem, read: ReadModel) {
 // then the project's defaults, then, for a card made before workflows were files, the instance,
 // model and effort the first step of its stored workflow named (its run used those), then the
 // instance's own. A step's permission mode is not taken: it was for that step, not a whole thread.
-function newThreadSettings(card: CalendarItem, read: ReadModel, context: DecideContext) {
+// The same with the model left undefined when nothing names one, for a caller that can ask the
+// provider for its models (the Assistant thread at first start).
+export function newThreadChoice(
+  card: Pick<CalendarItem, 'projectId' | 'workflowId'>,
+  read: ReadModel,
+  context: DecideContext,
+) {
   const project = card.projectId === null ? undefined : read.project(card.projectId);
   const step = card.workflowId === null ? undefined : read.workflow(card.workflowId)?.steps[0];
   const instances = read.providerInstances();
@@ -73,16 +79,10 @@ function newThreadSettings(card: CalendarItem, read: ReadModel, context: DecideC
     fromProject?.defaultModel ||
     fromStep?.model ||
     instance.defaultModel;
-  if (!model) {
-    throw new CommandRejected(
-      'rejected',
-      `${instance.name} has no default model. Choose one in Settings › Chat (chat.defaultModel) or give ${instance.name} a default model in Settings › Providers.`,
-    );
-  }
   const options = providerChatOptions[instance.kind];
   return {
     instance,
-    model,
+    model: model || undefined,
     effort:
       fromProject?.defaultEffort ||
       fromStep?.effort ||
@@ -95,6 +95,24 @@ function newThreadSettings(card: CalendarItem, read: ReadModel, context: DecideC
       options.permissionModes[0]?.id ||
       'default',
   };
+}
+
+export function newThreadSettings(
+  card: Pick<CalendarItem, 'projectId' | 'workflowId'>,
+  read: ReadModel,
+  context: DecideContext,
+  fallbackModel?: string,
+) {
+  const choice = newThreadChoice(card, read, context);
+  const model = choice.model ?? fallbackModel;
+  if (!model) {
+    const name = choice.instance.name;
+    throw new CommandRejected(
+      'rejected',
+      `${name} has no default model. Choose one in Settings › Chat (chat.defaultModel) or give ${name} a default model in Settings › Providers.`,
+    );
+  }
+  return { ...choice, model };
 }
 
 // The title of a thread a card starts: the card and the occurrence's day (spec 27).

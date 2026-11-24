@@ -1,9 +1,8 @@
-import { runFolder, type PageRead, type Project, type WorkflowRun } from '@wow/contracts';
+import { type PageRead, type Project } from '@wow/contracts';
 import { openInBrowser } from '@/chat/host-links';
 import { safeHref } from '@/components/markdown';
 import type { AppCommand, CommandGroup } from '@/app/commands';
 import { DETAILS_TAB, type LayoutState, type OpenFileDialog } from '@/app/runtime';
-import { artifactPath } from '@/workflows/model';
 import { pageTitle, runPageRead } from '@/workflows/pages-tab';
 import { hasSelection, type PanelSelection } from './model';
 import { openInEditor } from './editor';
@@ -15,8 +14,6 @@ import {
   closeViewer,
   copyFilePath,
   cycleTab,
-  openFile,
-  openPage,
   panelTabsOf,
   selectedTab,
   shownFile,
@@ -28,16 +25,12 @@ import {
 const groups: Readonly<Partial<Record<PanelSelection['view'], CommandGroup>>> = {
   calendar: 'Calendar',
   chat: 'Chat',
-  run: 'Workflows',
-  workflow: 'Workflows',
   backlog: 'Backlog',
 };
 
 const details: Readonly<Partial<Record<PanelSelection['view'], string>>> = {
   calendar: 'The selected card or meeting',
   chat: 'The open thread',
-  run: "The run's active step",
-  workflow: 'The open workflow',
   backlog: 'The open item',
 };
 
@@ -62,8 +55,6 @@ export interface ViewerCommandData {
   // The open tabs of every view; the one on screen is `pathname`'s.
   readonly panelTabs: LayoutState['panelTabs'];
   readonly pathname: string;
-  // The run open in the run view, or the run waiting at a gate after the open thread's step.
-  readonly openRun: WorkflowRun | undefined;
   readonly projects: readonly Project[];
   // What was last read about the pages of each run.
   readonly pageReads?: readonly PageRead[] | undefined;
@@ -76,47 +67,9 @@ export interface ViewerCommandData {
 export function viewerCommands({
   panelTabs,
   pathname,
-  openRun,
-  projects,
   pageReads = [],
 }: ViewerCommandData): AppCommand[] {
   const commands: AppCommand[] = [];
-  const project = openRun && projects.find((candidate) => candidate.id === openRun.projectId);
-  if (openRun && project) {
-    const paths = new Set(openRun.steps.flatMap((step) => step.artifactsFound));
-    for (const path of paths) {
-      commands.push({
-        id: `viewer.open.${path}`,
-        title: `Open artifact: ${path}`,
-        value: `Open artifact ${path}`,
-        group: 'Workflows',
-        keywords: ['file', 'view', 'side panel'],
-        detail: 'In the side panel',
-        run: (context) =>
-          openFile(context, {
-            runId: openRun.id,
-            path,
-            fullPath: artifactPath(runFolder(openRun, project.cwd), path),
-            from: pathname,
-          }),
-      });
-    }
-  }
-  // Every linked page of the open run that has been read opens in the side panel (spec 35).
-  const runId = openRun?.id;
-  for (const link of runId ? (runPageRead(pageReads, runId)?.pages ?? []) : []) {
-    if (!link.page || !runId) continue;
-    const title = pageTitle(link);
-    commands.push({
-      id: `viewer.page.${link.ref}`,
-      title: `Open page: ${title}`,
-      value: `Open page ${title} ${link.ref}`,
-      group: 'Workflows',
-      keywords: ['confluence', 'page', 'wiki', 'side panel'],
-      detail: 'In the side panel',
-      run: (context) => openPage(context, { runId, ref: link.ref, from: pathname }),
-    });
-  }
   const shown = shownPage({ panelTabs }, pathname);
   if (shown) {
     const link = runPageRead(pageReads, shown.runId)?.pages.find(

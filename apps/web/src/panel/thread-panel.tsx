@@ -17,7 +17,6 @@ import {
   formatTokens,
   latestContext,
   permissionOptions,
-  runLabel,
   threadTitle,
 } from '@/chat/model';
 import { TaskDetails } from '@/chat/task-pin';
@@ -36,7 +35,6 @@ import { filePathOf } from '@/components/file-links';
 import { PathText } from '@/components/path-text';
 import { EmptyState } from '@/components/states';
 import { formatWhen } from '@/lib/format';
-import { runStateLabels } from '@/workflows/model';
 import { FactList, PanelSection, PanelTitle, panelLinkClass } from './details';
 import { threadUsage, usePanelRoute } from './model';
 import { openThreadTools, toolsSummary } from './tools-tab';
@@ -183,8 +181,6 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
   const projects = useTopic('projects') ?? [];
   const turns = useTopic('turns', threadId) ?? [];
   const items = useTopic('threadItems', threadId) ?? [];
-  const runs = useTopic('workflowRuns') ?? [];
-  const workflows = useTopic('workflows') ?? [];
   const cards = useTopic('calendarItems') ?? [];
   const backlog = useTopic('backlogItems') ?? [];
   const { zone } = useCalendarPrefs();
@@ -202,14 +198,11 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
     : thread.permissionMode;
   const usage = threadUsage(turns);
   const context = latestContext(items);
-  const run = thread.runId === null ? undefined : runs.find((r) => r.id === thread.runId);
-  const card = run?.calendarItemId
-    ? cards.find((candidate) => candidate.id === run.calendarItemId)
+  // The card that started the thread last (orchestrator threads spec 28), and its backlog item.
+  const card = cards.find((candidate) => candidate.threadId === thread.id);
+  const item = card?.backlogItemId
+    ? backlog.find((candidate) => candidate.id === card.backlogItemId)
     : undefined;
-  const item = run?.backlogItemId
-    ? backlog.find((candidate) => candidate.id === run.backlogItemId)
-    : undefined;
-  const label = runLabel(thread, runs, workflows);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto pb-4" data-testid="panel-thread">
@@ -272,22 +265,10 @@ export function ThreadPanel({ threadId }: { readonly threadId: string }) {
       {thread.kind !== 'assistant' && (
         <Mentioned threadId={thread.id} cwd={thread.cwd} items={items} />
       )}
-      {(run || card || item) && (
+      {(card || item) && (
         <PanelSection label="Belongs to">
           <FactList
             facts={[
-              run !== undefined && {
-                label: 'Run',
-                value: (
-                  <Link
-                    to="/workflows/runs/$runId"
-                    params={{ runId: run.id }}
-                    className={panelLinkClass}
-                  >
-                    {label ?? 'Workflow run'} ({runStateLabels[run.state].toLowerCase()})
-                  </Link>
-                ),
-              },
               card !== undefined && {
                 label: 'Card',
                 value: (

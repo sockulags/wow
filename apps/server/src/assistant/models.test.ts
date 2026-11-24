@@ -2,7 +2,6 @@ import {
   Diagnosis,
   ModelGuidance,
   ModelsRead,
-  defaultAssistantInstructions,
   defaultModelGuidance,
   type AssistantChange,
   type ProviderModel,
@@ -313,15 +312,6 @@ describe('the workflows the assistant writes (spec 15, 16)', () => {
       },
     });
   });
-
-  it('has an instruction text that names the tools, says to give the reason and when to ask', () => {
-    expect(defaultAssistantInstructions).toContain('read_models');
-    expect(defaultAssistantInstructions).toContain('read_model_guidance');
-    expect(defaultAssistantInstructions).toContain('what you recommend for each step and why');
-    expect(defaultAssistantInstructions).toContain(
-      'such as cost against quality, ask with ask_questions',
-    );
-  });
 });
 
 describe('a step on a provider that requires a model (spec 17)', () => {
@@ -413,7 +403,7 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
         what: 'Workflow Older review, step check-work',
         reason:
           'Step check-work has no model, which Codex needs; choose one in the workflow, or the step fails when it starts.',
-        place: { label: 'Workflows → Older review', path: '/workflows/old' },
+        place: { label: 'Settings → Workflows → Older review', path: '/settings/workflows' },
       },
     ]);
   });

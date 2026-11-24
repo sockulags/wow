@@ -93,7 +93,6 @@ export const subscriptionTopics = {
   // Chat threads and the threads of workflow steps; never the assistant thread.
   threads: { row: Thread, threadScoped: false },
   // The assistant thread: no row before it was first opened, one row after.
-  assistantThread: { row: Thread, threadScoped: false },
   turns: { row: Turn, threadScoped: true },
   threadItems: { row: ThreadItem, threadScoped: true },
   approvals: { row: Approval, threadScoped: true },

@@ -163,6 +163,7 @@ describe('TimeGrid', () => {
             fixed: false,
             state: null,
             runId: null,
+            threadId: null,
           },
         ],
       ]),
