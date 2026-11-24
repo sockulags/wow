@@ -72,7 +72,7 @@ test.describe('first start', () => {
     await page.goto('/calendar');
     // Only the step: no sidebar, no view behind it.
     await expect(step(page).getByRole('heading', { name: 'Connect an agent' })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Sections' })).toHaveCount(0);
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Calendar' })).toHaveCount(0);
     const claude = step(page).getByRole('region', { name: 'Claude Code' });
     const codex = step(page).getByRole('region', { name: 'Codex' });
@@ -88,12 +88,12 @@ test.describe('first start', () => {
     // The gate stays up in this window; after a reload an install with an instance is not gated
     // (an existing install is never locked out), and Assistant shows the same step.
     await expect(step(page).getByRole('heading', { name: 'Connect an agent' })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Sections' })).toHaveCount(0);
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toHaveCount(0);
 
     // One that passes opens the assistant, which greets with what is set up and what is missing.
     await claude.getByRole('button', { name: 'Test' }).click();
     await expect(page).toHaveURL(/\/assistant$/);
-    await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     await expect(conversation(page).getByTestId('item-user').first()).toContainText(greeting);
     const answer = lastAnswer(page);
     await expect(answer).toContainText('Providers: Claude (Claude)');

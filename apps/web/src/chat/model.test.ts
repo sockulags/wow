@@ -8,7 +8,6 @@ import {
   canMarkDone,
   effortOptions,
   filterSkills,
-  groupThreads,
   latestContext,
   permissionOptions,
   runLabel,
@@ -48,25 +47,7 @@ const skill = (name: string, description: string): Skill => ({
   invocations: { claude: `/${name}`, codex: `$${name}` },
 });
 
-describe('thread groups', () => {
-  it('groups by state with pinned threads first, then the most recent', () => {
-    const groups = groupThreads([
-      thread('old', { updatedAt: '2026-11-02T08:00:00Z' }),
-      thread('new', { updatedAt: '2026-11-02T09:00:00Z' }),
-      thread('pinned', { pinned: true, updatedAt: '2026-11-01T08:00:00Z' }),
-      thread('failed', { state: 'failed', updatedAt: '2026-11-02T07:00:00Z' }),
-      thread('asking', { state: 'needs_you' }),
-      thread('busy', { state: 'working' }),
-      thread('finished', { state: 'done' }),
-    ]);
-    expect(groups.map(([group, members]) => [group, members.map((member) => member.id)])).toEqual([
-      ['Needs you', ['asking']],
-      ['Working', ['busy']],
-      ['Idle', ['pinned', 'new', 'old', 'failed']],
-      ['Done', ['finished']],
-    ]);
-  });
-
+describe('workflow thread labels', () => {
   it('labels a workflow thread with the run and step name', () => {
     const workflows = [
       {

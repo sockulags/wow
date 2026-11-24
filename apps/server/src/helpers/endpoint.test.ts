@@ -5,6 +5,7 @@ import type {
   ProviderInstance,
   ProviderToolset,
   ServerCommand,
+  Thread,
 } from '@wow/contracts';
 import { RpcResponse } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
@@ -25,6 +26,7 @@ import {
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { WebSocket } from 'ws';
+import { snapshot } from '../core/subscriptions.js';
 import { startServer, type RunningServer } from '../server.js';
 import { exportStoredWorkflows } from '../workflows/files.js';
 
@@ -207,6 +209,9 @@ const startTurnsOf = (threadId: string) =>
       (command): command is Extract<ProviderCommand, { type: 'startTurn' }> =>
         command.type === 'startTurn' && command.threadId === threadId,
     );
+
+// The thread list's rows as the app receives them (spec 30, 31).
+const listRows = () => snapshot(server.database.db, { topic: 'threads' }) as Thread[];
 
 const threadRow = (threadId: string) =>
   server.database.db.select().from(threads).where(eq(threads.id, threadId)).get();
@@ -867,6 +872,11 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
       depth: 2,
       parentTitle: 'Plan the deploy',
     });
+    // The main thread waits for the user while a helper two levels down does; helpers are no
+    // rows of the list.
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).toBe('waits_for_you');
+    expect(listRows().find((row) => row.id === deepId)?.listStatus).toBeUndefined();
+    expect(listRows().find((row) => row.id === firstId)?.listStatus).toBeUndefined();
     // An approval is the user's alone: the helper that started it is not asked.
     expect(startTurnsOf(firstId).some((turn) => turn.prompt.includes('Approve the release'))).toBe(
       false,
@@ -878,6 +888,7 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
       server.database.db.select().from(approvals).where(eq(approvals.threadId, deepId)).get()
         ?.decision,
     ).toBe('allowOnce');
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).not.toBe('waits_for_you');
     expect(
       adapters
         .flatMap((adapter) => adapter.sent)

@@ -1170,27 +1170,27 @@ test.describe('chat', () => {
     await page.evaluate("window.dispatchEvent(new Event('blur'))");
     await page.keyboard.press('Control+.');
     await expect(page.getByTestId('thread-state')).toHaveText('Idle');
-    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.locator('[data-status="unread"]')).toBeVisible();
     await page.goto('/chat');
-    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.locator('[data-status="unread"]')).toBeVisible();
     await expect(renamed.getByTestId('thread-row-title')).toHaveCSS('font-weight', '600');
     await page.keyboard.press('Alt+Shift+ArrowDown');
     await expect(
       page.locator('#main-view').getByRole('heading', { name: 'Kettle whistle census' }),
     ).toBeVisible();
-    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
+    await expect(renamed.locator('[data-status="unread"]')).toHaveCount(0);
 
     await page.keyboard.press('Control+k');
     await palette.getByRole('combobox').fill('mark unread');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(/\/chat$/);
-    await expect(renamed.getByTestId('thread-unread')).toBeVisible();
+    await expect(renamed.locator('[data-status="unread"]')).toBeVisible();
     // Opening it again reads it.
     await renamed.click();
     await expect(
       page.locator('#main-view').getByRole('heading', { name: 'Kettle whistle census' }),
     ).toBeVisible();
-    await expect(renamed.getByTestId('thread-unread')).toHaveCount(0);
+    await expect(renamed.locator('[data-status="unread"]')).toHaveCount(0);
   });
 
   test('picks model, effort and mode from the composer bar @agent-workbench-1 @agent-workbench-2 @agent-workbench-3 @agent-workbench-4 @agent-workbench-5 @agent-workbench-7', async ({
@@ -1669,7 +1669,7 @@ test.describe('sketch', () => {
     await expect(
       threadList(page)
         .getByRole('link', { name: /Sketch the tea timer screen/ })
-        .getByTestId('thread-unread'),
+        .locator('[data-status="unread"]'),
     ).toBeVisible();
     await expect(threadList(page).getByRole('link', { name: /Descale the kettle/ })).toBeVisible();
     await page.keyboard.press('Control+Shift+F');

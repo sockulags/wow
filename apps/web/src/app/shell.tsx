@@ -22,7 +22,7 @@ import { usePresence } from './presence';
 import { CommandPalette } from './palette';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { sections } from './sections';
-import { Sidebar } from './sidebar';
+import { Sidebar, useEscapeToThread } from './sidebar';
 import { UpdateBanner } from './update-banner';
 import { ShellToolbarSlot } from './shell-toolbar';
 import { useCommands, useGlobalKeybindings } from './use-commands';
@@ -60,6 +60,7 @@ export function Shell() {
   const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
   useGlobalKeybindings(commands, context);
   usePresence();
+  useEscapeToThread();
   // The composer's `/` list runs the palette's commands (agent workbench spec 58).
   useLayoutEffect(() => publishPaletteCommands(commands, context), [commands, context]);
   useApplyTheme();

@@ -101,17 +101,16 @@ async function show(ui: ReactNode) {
 }
 
 describe('the Assistant section (spec 1)', () => {
-  it('sits above Settings and opens from the palette and with its key', async () => {
+  // Its sidebar entry went with the sections (orchestrator threads spec 33); the page goes in U8.
+  it('opens from the palette and with its key', async () => {
     const user = userEvent.setup();
     const { router } = await renderApp('/calendar');
-    const nav = screen.getByRole('navigation', { name: 'Sections' });
-    expect(within(nav).getByRole('link', { name: 'Assistant' }).getAttribute('href')).toBe(
-      '/assistant',
-    );
 
     await user.keyboard('{Control>}6{/Control}');
     expect(router.state.location.pathname).toBe('/assistant');
-    expect(await screen.findByText('Not connected to the wow server')).toBeTruthy();
+    expect(
+      await within(screen.getByRole('main')).findByText('Not connected to the wow server'),
+    ).toBeTruthy();
 
     await act(() => router.navigate({ to: '/calendar' }));
     await user.keyboard('{Control>}k{/Control}');

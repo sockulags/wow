@@ -114,7 +114,6 @@ test.describe('assistant', () => {
     await expect(first.getByRole('list', { name: 'What would change' })).toContainText(
       'Run scripts in HTML files',
     );
-    await expect(page.getByTestId('needs-you-assistant')).toHaveText('1');
 
     // No takes a reason, and nothing changes.
     await first.getByRole('button', { name: 'No' }).click();
@@ -133,7 +132,6 @@ test.describe('assistant', () => {
     if (sketching) await second.screenshot({ path: sketchPath(intent, 'proposal') });
     await second.getByRole('button', { name: 'Yes' }).click();
     await expect(second.getByTestId('assistant-proposal-answer')).toHaveText('Yes: applied');
-    await expect(page.getByTestId('needs-you-assistant')).toHaveCount(0);
 
     await say(page, 'What now?');
     await expect(conversation(page).getByTestId('item-assistant_text').last()).toContainText(

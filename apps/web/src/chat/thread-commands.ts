@@ -4,7 +4,8 @@ import { createStore } from 'zustand';
 import type { AppCommand, CommandContext } from '@/app/commands';
 import { notify } from '@/lib/feedback';
 import { errorMessage } from './data';
-import { groupThreads, threadTitle } from './model';
+import { threadTitle } from './model';
+import { threadListOrder } from './thread-sections';
 
 // The thread list's filter, project chip and rename state (agent workbench spec 66 to 70). It is
 // UI state only: archive and unread come from the server's rows.
@@ -95,8 +96,7 @@ export const pickedProject = (
     : undefined;
 
 // The order the list shows the threads in, top to bottom.
-export const listOrder = (threads: readonly Thread[]): Thread[] =>
-  groupThreads(threads).flatMap(([, members]) => members);
+export const listOrder = threadListOrder;
 
 // The unread thread after the open one in list order, wrapping around (spec 70).
 export function nextUnread(
@@ -182,22 +182,6 @@ export function threadListCommands({
       group: 'Chat',
       keywords: ['project', 'chip', 'thread list'],
       run: showProject(undefined),
-    });
-  }
-  // Group the list by state or by project (chat overview spec 12).
-  for (const [groupBy, title] of [
-    ['state', 'Group threads by state'],
-    ['project', 'Group threads by project'],
-  ] as const) {
-    commands.push({
-      id: groupBy === 'state' ? 'chat.groupByState' : 'chat.groupByProject',
-      title,
-      group: 'Chat',
-      keywords: ['thread list', 'group', 'sort', groupBy],
-      run: ({ settings, navigate }) => {
-        if (!inChat) void navigate({ to: '/chat' });
-        void settings.write('chat.threadListGroupBy', groupBy);
-      },
     });
   }
   const next = nextUnread(listOrder(threads), openThread?.id);

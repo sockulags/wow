@@ -5,7 +5,7 @@ import {
   type SubscribeParams,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { asc, desc, eq, getTableColumns, ne, sql } from 'drizzle-orm';
+import { asc, desc, eq, getTableColumns, isNull, ne, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
@@ -13,6 +13,57 @@ import type { Engine } from './engine.js';
 import { readOutlookStatus, skillOf } from './projector.js';
 import { decisionRows, decisionSources } from '../assistant/decisions.js';
 import { activitySources, threadActivityRows } from './thread-activity.js';
+import { threadListStatuses } from './thread-list.js';
+
+// The threads, each main thread with its place in the thread list (orchestrator threads spec 31).
+function threadRows(db: Db) {
+  const threads = db
+    .select()
+    .from(t.threads)
+    .where(ne(t.threads.kind, 'assistant'))
+    .orderBy(asc(t.threads.createdAt))
+    .all();
+  const statuses = threadListStatuses(threads, openGates(db));
+  return threads.map((thread) => {
+    const listStatus = statuses.get(thread.id);
+    return listStatus === undefined ? thread : { ...thread, listStatus };
+  });
+}
+
+// The threads that hold a gate card whose approval or question nobody answered yet (spec 14).
+function openGates(db: Db): Set<string> {
+  const cards = db
+    .select({ threadId: t.threadItems.threadId, payload: t.threadItems.payload })
+    .from(t.threadItems)
+    .where(eq(t.threadItems.kind, 'gate_card'))
+    .all();
+  if (cards.length === 0) return new Set();
+  const approvals = new Set(
+    db
+      .select({ id: t.approvals.id })
+      .from(t.approvals)
+      .where(isNull(t.approvals.decision))
+      .all()
+      .map((row) => row.id),
+  );
+  const questions = new Set(
+    db
+      .select({ id: t.questions.id })
+      .from(t.questions)
+      .where(isNull(t.questions.answer))
+      .all()
+      .map((row) => row.id),
+  );
+  const open = new Set<string>();
+  for (const { threadId, payload } of cards) {
+    const card = payload as { kind?: unknown; requestId?: unknown } | null;
+    if (typeof card?.requestId !== 'string') continue;
+    const waits =
+      card.kind === 'approval' ? approvals.has(card.requestId) : questions.has(card.requestId);
+    if (waits) open.add(threadId);
+  }
+  return open;
+}
 
 // Reads the current rows of a topic. Thread-scoped topics only read one thread.
 export function snapshot(db: Db, params: SubscribeParams): unknown[] {
@@ -24,12 +75,7 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
       case 'providerInstances':
         return db.select().from(t.providerInstances).orderBy(asc(t.providerInstances.name)).all();
       case 'threads':
-        return db
-          .select()
-          .from(t.threads)
-          .where(ne(t.threads.kind, 'assistant'))
-          .orderBy(asc(t.threads.createdAt))
-          .all();
+        return threadRows(db);
       case 'assistantThread':
         return db.select().from(t.threads).where(eq(t.threads.kind, 'assistant')).all();
       case 'turns':
@@ -229,6 +275,8 @@ export class Subscriptions {
     // change with them.
     const topics = new Set(changed);
     if ([...changed].some((topic) => decisionSources.has(topic as never))) topics.add('decisions');
+    // A gate card is answered in the approvals or questions of the thread that asked.
+    if (changed.has('approvals') || changed.has('questions')) topics.add('threads');
     if ([...changed].some((topic) => activitySources.has(topic as never))) {
       topics.add('threadActivity');
     }

@@ -67,10 +67,10 @@ instead of a project; cards with a trigger and workflow runs need a project.
 
 ### Finding your way
 
-The left sidebar has Calendar, Chat, Workflows, Plans, Backlog, Assistant and Settings. Chat and Workflows
-show a yellow count when threads or runs wait for you; hovering an item or focusing it shows its
-key.
-Below 1280 pixels wide the sidebar narrows to icons. When the window cannot reach the wow server, a
+wow opens on chat. The left side is the list of your threads. The **Settings** button at its bottom
+opens a menu with **Calendar**, **Backlog**, **Workflows** and **Settings**; each opens its page in
+the main area, and **Escape** there takes you back to the thread you had open. Each page keeps its
+key (Ctrl+1 for Calendar and so on) and its "Go to" command in the palette. When the window cannot reach the wow server, a
 bar under the header says so and offers **Retry now**; lists keep what they last showed, dimmed,
 until the connection is back. Everything you can do is in
 the command palette: press **Ctrl+K** and type. The palette searches threads, cards, backlog items,
@@ -692,7 +692,7 @@ how much of the context window the thread uses, with a Compact action for Claude
   when its turn ended or was stopped says "Not answered" and takes no answer any more; an answered
   one keeps showing what you answered.
 
-Either way, the thread moves to "Needs you" in the sidebar until you answer. When the thread is a
+Either way, the thread's row in the list shows **Waits for you** until you answer. When the thread is a
 workflow step, its run says "Waiting for an answer" in the lists of runs, the run view and the context panel.
 
 While a turn runs, the thread shows how long it has been working. You can write the next message
@@ -812,24 +812,20 @@ Backlog item bodies and the publish preview use the same rendering.
 
 ### Managing threads
 
-The sidebar groups threads under **Needs you**, **Working**, **Idle** and **Done**, with pinned
-threads first (pin from the thread header). Each row's second line says where the thread stands:
-what it waits for ("Wants to run rm -rf build") or runs ("Running pnpm test"), how far its task
-list is ("3/7"), what it changed ("+42 −7"), its branch when it has its own working copy or else
-its project, and when it was last active. Hover the row for the whole line. Settings → Chat →
-**Second line of a thread in the list** (`chat.threadRowDetail`) chooses which of these parts
-show.
+The list on the left shows the threads you started and the ones your scheduled cards started; the
+helpers they start are not rows of their own. Each row has the thread's title, its project (or
+"No project") under it, and a mark for where it stands:
 
-Idle and Done are grouped under **Today**, **Yesterday**, **This week** and **Older**, by when
-each thread was last active (in the calendar's time zone, the week starting on its first day),
-with pinned threads above. Click a group's heading, or press Enter on it, to fold or unfold it;
-wow keeps which groups are folded. Done starts folded; a folded group still shows the thread you
-have open, and while the filter has text every group is open. A done thread that has not been
-active for 14 days is archived by itself (**Archive done threads after**, `chat.doneArchiveDays`;
-0 never does); pinned threads and workflow steps' threads are never archived this way. **Group
-the thread list by** (`chat.threadListGroupBy`, or "Group threads by project" and "Group threads
-by state" in the palette) groups the list by project instead, each project's threads ordered as
-needs you, working, then by last activity.
+- **Waits for you**: an exclamation mark in a yellow ring. The thread, or a helper at any depth
+  under it, asks for an approval or an answer.
+- **Working**: a pulsing blue dot. The thread or one of its helpers works.
+- **Unread**: a dot, and the title in bold. A turn ended since you last looked.
+- **Done**: a hollow dot. None of the above.
+
+The list is in that order, the newest activity first within each, with pinned threads (pin from
+the thread header) above all of them. A done thread that has not been active for 14 days is
+archived by itself (**Archive done threads after**, `chat.doneArchiveDays`; 0 never does);
+pinned threads and workflow steps' threads are never archived this way.
 
 Right-click a row, or press the context-menu key or Shift+F10 on it, for **Open**, **Open in
 panel**, **Pin**, **Mark done** or **Reopen**, **Archive**, **Rename** and **Mark unread**.
@@ -838,7 +834,7 @@ Ctrl+click rows (or press Space on them), or Shift+click and Shift+Up/Down to pi
 a bar over the list says how many are picked and offers Pin, Unpin, Mark done, Reopen, Archive
 and Unarchive. Each applies to the picked threads that allow it and says which it skipped and
 why, such as "Skipped 1 is working." Archiving several offers **Undo**. Escape clears the
-pick. A thread whose turn failed sits under Idle with a marker. A thread started
+pick. A thread whose turn failed says **Failed** on its row. A thread started
 by a workflow is titled by its step, with the workflow on the second line.
 
 The thread header shows the project (hover it for the folder) and the provider instance; the
@@ -1615,7 +1611,7 @@ Windows may refuse while wow runs. Close wow first if it does.
 
 ## Assistant
 
-The Assistant section (sidebar, above Settings; `keybindings.goAssistant`, Ctrl+6) is one
+The Assistant section (`keybindings.goAssistant`, Ctrl+6, or "Go to Assistant" in the palette) is one
 conversation whose agent can only operate wow itself. Say what you want ("my projects are on our
 GitLab", "move my work hours to end at four") and it asks what it needs, does it through the same
 commands the views use, and says what it did and where that lives. The conversation is kept

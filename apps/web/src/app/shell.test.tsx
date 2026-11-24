@@ -33,16 +33,37 @@ describe('keybindings', () => {
 });
 
 describe('shell', () => {
-  it('redirects / to the calendar and says it is not connected', async () => {
+  it('opens on chat with the thread list on the left, and says it is not connected (spec 30)', async () => {
     const { router } = await renderApp('/');
-    expect(router.state.location.pathname).toBe('/calendar');
-    expect(await screen.findByText('Not connected to the wow server')).toBeTruthy();
-    const nav = screen.getByRole('navigation', { name: 'Sections' });
+    expect(router.state.location.pathname).toBe('/chat');
     expect(
-      within(nav)
-        .getAllByRole('link')
-        .map((link) => link.textContent),
-    ).toEqual(['Calendar', 'Chat', 'Workflows', 'Plans', 'Backlog', 'Assistant', 'Settings']);
+      await within(screen.getByRole('main')).findByText('Not connected to the wow server'),
+    ).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Threads' })).toBeTruthy();
+  });
+
+  it('opens each page from the settings button and goes back to the thread with Escape (spec 33)', async () => {
+    const user = userEvent.setup();
+    const { router } = await renderApp('/chat/t1');
+    const nav = screen.getByRole('navigation', { name: 'Threads' });
+    for (const [name, path] of [
+      ['Calendar', '/calendar'],
+      ['Backlog', '/backlog'],
+      ['Workflows', '/workflows'],
+      ['Settings', '/settings/providers'],
+    ] as const) {
+      await user.click(within(nav).getByRole('button', { name: 'Settings' }));
+      const menu = await screen.findByRole('menu');
+      expect(
+        within(menu)
+          .getAllByRole('menuitem')
+          .map((item) => item.textContent?.replace(/Ctrl.*$/, '')),
+      ).toEqual(['Calendar', 'Backlog', 'Workflows', 'Settings']);
+      await user.click(within(menu).getByRole('menuitem', { name: new RegExp(`^${name}`) }));
+      expect(router.state.location.pathname).toBe(path);
+      await user.keyboard('{Escape}');
+      expect(router.state.location.pathname).toBe('/chat/t1');
+    }
   });
 
   it('opens the palette with Ctrl+K and navigates with the keyboard', async () => {
@@ -56,7 +77,9 @@ describe('shell', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(router.state.location.pathname).toBe('/backlog');
     // Without a server the view says so rather than claiming an empty backlog.
-    expect(await screen.findByText('Not connected to the wow server')).toBeTruthy();
+    expect(
+      await within(screen.getByRole('main')).findByText('Not connected to the wow server'),
+    ).toBeTruthy();
   });
 
   it('lists settings pages and actions in the palette', async () => {
@@ -139,9 +162,9 @@ describe('shell', () => {
     const user = userEvent.setup();
     await renderApp('/chat');
     await user.keyboard('{Control>}b{/Control}');
-    expect(screen.queryByRole('navigation', { name: 'Sections' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Threads' })).toBeNull();
     await user.keyboard('{Control>}b{/Control}');
-    expect(screen.getByRole('navigation', { name: 'Sections' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Threads' })).toBeTruthy();
   });
 
   it('renders every setting group from the registry, with Projects after Providers', async () => {

@@ -3,23 +3,29 @@ import { expect, test } from '@playwright/test';
 // U3 ground truth: open every route, toggle the theme, change a setting.
 
 test.describe('shell', () => {
-  test('opens every route from the sidebar', async ({ page }) => {
+  test('opens on chat and opens each page from the settings button (orchestrator threads spec 30, 33)', async ({
+    page,
+  }) => {
     await page.goto('/');
-    await expect(page).toHaveURL(/\/calendar$/);
-    const nav = page.getByRole('navigation', { name: 'Sections' });
+    await expect(page).toHaveURL(/\/chat$/);
+    const main = page.getByRole('main');
+    // Without a server the views say so instead of claiming to be empty (audit A-08).
+    await expect(main.getByText('Not connected to the wow server', { exact: true })).toBeVisible();
+    const nav = page.getByRole('navigation', { name: 'Threads' });
     const routes = [
       ['Calendar', /\/calendar$/, 'Not connected to the wow server'],
-      // Without a server the views say so instead of claiming to be empty (audit A-08).
-      ['Chat', /\/chat$/, 'Not connected to the wow server'],
-      ['Workflows', /\/workflows$/, 'Not connected to the wow server'],
       ['Backlog', /\/backlog$/, 'Not connected to the wow server'],
-      ['Assistant', /\/assistant$/, 'Not connected to the wow server'],
+      ['Workflows', /\/workflows$/, 'Not connected to the wow server'],
       ['Settings', /\/settings\/providers$/, 'Test timeout'],
     ] as const;
     for (const [name, url, text] of routes) {
-      await nav.getByRole('link', { name }).click();
+      await nav.getByRole('button', { name: 'Settings' }).click();
+      await page.getByRole('menuitem', { name: new RegExp(`^${name}`) }).click();
       await expect(page).toHaveURL(url);
-      await expect(page.getByText(text, { exact: true }).first()).toBeVisible();
+      await expect(main.getByText(text, { exact: true }).first()).toBeVisible();
+      // Escape goes back to chat.
+      await page.keyboard.press('Escape');
+      await expect(page).toHaveURL(/\/chat$/);
     }
   });
 

@@ -1676,8 +1676,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
   `chat.editRestoresFiles` (see "Restore files when going back"), `chat.defaultInstance`, `chat.defaultModel` (see "Main threads with the app tools"), `chat.helperDepth`, `chat.helpersPerThread`, `chat.helpersLive`,
   `chat.helpersPerTree`, `chat.helperBranch`, `chat.mergeBrief`, `chat.helperAnswerMaxLength` (see "Helper tools in a chat session"),
   `chat.activityTextMaxLength` (see
-  "Threads at work and a thread in the panel"), `chat.threadRowDetail`, `chat.threadListGroupBy`,
-  `chat.threadListFolded`, `chat.doneArchiveDays` (see "Thread list, unread and chat
+  "Threads at work and a thread in the panel"), `chat.doneArchiveDays` (see "Thread list, unread and chat
   notifications"), `chat.toolImagesShown` (see "Tool rows, the task pin and copy"), `chat.limitWarnPercent` (see
   "Plan limits"), `chat.attachTextMaxBytes`, `chat.mentionMaxChars`, `chat.mentionHostItems`
   (project-scoped) (see "Images in the composer"), `chat.commitTimeoutMs`,
@@ -2918,8 +2917,7 @@ cards) ends the run. Its open state is the window's own.
   the server while a turn runs, as the answer to a waiting question), skipping only the check.
 - Palette (`assistant/commands.ts`): Yes and No for every waiting proposal (Yes under "Needs
   you"), "Show proposal: <title>" (searched for), Undo for every applied change (the newest
-  before typing). A refusal from the palette is a toast with the reason. The sidebar counts
-  waiting proposals as "need you".
+  before typing). A refusal from the palette is a toast with the reason.
 - Tool rows (agent workbench spec 82). `ConversationExtras.toolWords(item)` says how a tool
   call reads: undefined for the tool's own row, a text for a row in those words
   (`chat/tools/words.tsx`, carried as `ItemContext.toolWords`), null for no row at all. The
@@ -4301,27 +4299,30 @@ with a note without a message and goes on until stopped.
 
 ### Thread list, unread and chat notifications
 
-A row's second line (`chat/thread-row.ts`, chat overview spec 6 to 8) is, after "Helper of …"
-and the workflow's name where they apply: what the thread does or waits for (the decision
-queue's title for the thread, "Waits for you", "Running <the running call>" from the
-`threadActivity` topic, or "Working"), its task progress ("3/7" from `Thread.tasks` while tasks
-are open), its changes ("+42 −7" from `Thread.changeCount`), its branch when it has its own
-working copy or else its project or folder, and when it was last active. `chat.threadRowDetail`
-names the parts shown; the order stays. Each part is a `data-part` span, and the whole line is
-the row's hover title. Nothing counts on a clock of the list's own.
-
-The groups come from `chat/thread-sections.ts` (chat overview spec 9, 10, 12). By state
-(`chat.threadListGroupBy` `state`), Needs you and Working are flat, and Idle and Done hold their
-pinned threads first and then Today, Yesterday, This week and Older by `updatedAt` in the
-calendar's zone, the week starting on the calendar's first day; the day is read from the
-browser's clock, which only places rows and decides no state. By project, each project is a
-group ordered by name, "Other folders" last, with pinned threads, then state, then last activity.
-Every group has a key (`needs`, `idle.older`, `project:<id>`); a heading is a button that folds
-its group, writing `chat.threadListFolded` (`done` by default). While the filter has text no
-group is folded, and a folded group still lists the thread on screen. On every scheduler tick
+The thread list is the app's left side (`chat/thread-list.tsx`, rendered by `app/sidebar.tsx`;
+orchestrator threads spec 30 to 33). It lists main threads only: a helper (`parentThreadId` set)
+is no row. A row has the title, the project's name or "No project" under it
+(`chat/thread-row.ts`), and a status mark. The status is `Thread.listStatus`
+(`ThreadListStatus`), which the server adds to each main thread when it sends the `threads`
+topic (`core/thread-list.ts`, read in `core/subscriptions.ts`): `waits_for_you` when the
+thread needs the user itself or holds a gate card whose approval or question is still open (every
+request for the user from any depth is drawn there), `working` when it or any helper under it
+works, `unread` when `seen` is false, else `done`. A change to approvals or questions sends
+the `threads` topic again, since answering a gate card changes no thread row by itself. The
+mark for "Waits for you" is an exclamation mark in a ring of `--state-needs-you`; Working is a
+pulsing dot of `--state-working`, Unread a dot of `--primary`, Done a hollow dot.
+`chat/thread-sections.ts` orders the rows: pinned threads first, then Waits for you, Working,
+Unread, Done, the newest `updatedAt` first within each. "Next unread thread" walks the same
+order. There are no groups; migration `0049_retire_thread_list_groups` deletes the stored
+values of the settings the groups and the second line had. On every scheduler tick
 `core/archive-by-age.ts` archives, with the ordinary `thread.setArchived`, each chat thread that
 is done, not pinned, not a step's and not active for `chat.doneArchiveDays` days (0: never).
-The palette has "Group threads by state" and "Group threads by project".
+
+The app opens on `/chat`. At the bottom of the list one Settings button opens a shadcn
+`DropdownMenu` with Calendar, Backlog, Workflows and Settings; each opens its page in the main
+area, and their palette commands and keybindings stay. On those pages Escape that nothing else
+handled (no dialog or menu open, not in a field) goes back to the thread that was open last, or
+to `/chat` (`useEscapeToThread`).
 
 Each row is the trigger of a shadcn `ContextMenu` (`chat/row-menu.tsx`, chat overview spec 13 to 16) with Open, Open in panel, the row's actions from `chat/row-actions.ts` (`rowMenuActions`:
 pin, unpin, mark done, reopen, archive, unarchive, each where `refusal` finds no reason against
@@ -4398,7 +4399,7 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
   browser's own `title`, for a place that is itself a button). The builder's step summary, the
   run view's step rows and the Assistant header use it; the conversation's settings dividers use
   `modelLabel`.
-- **Keys** (spec 92). The section keys follow the sidebar: Ctrl+4 is Plans
+- **Keys** (spec 92). The section keys follow the order of `sections`: Ctrl+4 is Plans
   (`keybindings.goPlans`) and Ctrl+5 Backlog (`keybindings.goBacklog`).
 - **Palette** (spec 93). The palette (and the sessions dialog) sit at 12 % of the window's
   height instead of its middle, so the input stays put as the results change.
@@ -5570,8 +5571,7 @@ Shared pieces in `apps/web/src/components` (views compose them; none restyles `c
 Tokens add `--warning`, `--info`, `--destructive-foreground`, `--overlay` and `--border-strong`,
 the calendar's `--event-outlook`, `--event-outlook-border`, `--event-card`, `--event-card-border`,
 `--event-work-hours` and `--event-now`, and an 11px `text-2xs` step; type uses only `text-2xs`, `text-xs`, `text-sm` and `text-base`. The
-sidebar narrows to an icon rail below 1280 px (`max-xl`), with "needs you" counts read from the
-`threads` and `workflowRuns` topics.
+left side is the thread list (see "Thread list, unread and chat notifications").
 
 ## Testing strategy
 
