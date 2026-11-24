@@ -1,12 +1,10 @@
 import type {
-  AssistantProposal,
   ProviderInstance,
   ProviderModel,
   Skill,
   Thread,
   ThreadItem,
   Turn,
-  WorkflowRun,
 } from '@wow/contracts';
 import {
   createMemorySettingsSource,
@@ -558,10 +556,10 @@ describe('the chat skill list (spec 57)', () => {
   });
 });
 
-// A waiting element that asks for the keyboard as the gate bar's Approve does.
+// A waiting element that asks for the keyboard as an approval card does.
 function Target({ name }: { name: string }) {
   const ref = useRef<HTMLButtonElement>(null);
-  useNeedsYouFocus('run:run-1', ref);
+  useNeedsYouFocus('thread:thread-9', ref);
   return <button ref={ref}>{name}</button>;
 }
 
@@ -572,35 +570,21 @@ describe('next that needs you (spec 76)', () => {
     state: 'needs_you',
     updatedAt: '2026-11-12T08:05:00.000Z',
   };
-  const run = {
-    id: 'run-1',
-    state: 'waiting',
-    startedAt: '2026-11-12T08:00:00.000Z',
-    steps: [],
-  } as unknown as WorkflowRun;
-  const proposal = {
-    id: 'proposal-1',
-    at: '2026-11-12T08:07:00.000Z',
-    state: 'pending',
-    title: 'Turn on weekends',
-  } as unknown as AssistantProposal;
 
-  it('goes to the oldest first and to the next one when pressed again', () => {
-    const targets = needsYouTargets({
-      threads: [waitingThread, thread],
-      runs: [run],
-      proposals: [proposal],
-    });
-    expect(targets.map((target) => target.key)).toEqual([
-      'run:run-1',
-      'thread:thread-2',
-      'proposal:proposal-1',
-    ]);
-    expect(nextNeedsYou(targets, '/chat', undefined)?.key).toBe('run:run-1');
-    expect(nextNeedsYou(targets, '/workflows/runs/run-1', 'run:run-1')?.key).toBe(
-      'thread:thread-2',
-    );
-    expect(nextNeedsYou(targets, '/assistant', 'proposal:proposal-1')?.key).toBe('run:run-1');
+  it('goes to the oldest first and to the next one when pressed again, helpers left out', () => {
+    const older: Thread = {
+      ...waitingThread,
+      id: 'thread-1',
+      state: 'working',
+      listStatus: 'waits_for_you',
+      stateSince: '2026-11-12T07:00:00.000Z',
+    };
+    const helper: Thread = { ...waitingThread, id: 'helper-1', parentThreadId: 'thread-1' };
+    const targets = needsYouTargets([waitingThread, thread, helper, older]);
+    expect(targets.map((target) => target.key)).toEqual(['thread:thread-1', 'thread:thread-2']);
+    expect(nextNeedsYou(targets, '/chat', undefined)?.key).toBe('thread:thread-1');
+    expect(nextNeedsYou(targets, '/chat/thread-1', 'thread:thread-1')?.key).toBe('thread:thread-2');
+    expect(nextNeedsYou(targets, '/chat/thread-2', 'thread:thread-2')?.key).toBe('thread:thread-1');
   });
 
   it('orders a waiting thread by when its wait began, not by its last change', () => {
@@ -610,31 +594,11 @@ describe('next that needs you (spec 76)', () => {
       stateSince: '2026-11-12T08:01:00.000Z',
       updatedAt: '2026-11-12T08:09:00.000Z',
     };
-    const targets = needsYouTargets({
-      threads: [{ ...waitingThread, stateSince: '2026-11-12T08:05:00.000Z' }, renamed],
-      runs: [],
-      proposals: [],
-    });
+    const targets = needsYouTargets([
+      { ...waitingThread, stateSince: '2026-11-12T08:05:00.000Z' },
+      renamed,
+    ]);
     expect(targets.map((target) => target.key)).toEqual(['thread:thread-3', 'thread:thread-2']);
-  });
-
-  it('leaves out a run whose gate waits for the checks', () => {
-    const checks = {
-      id: 'run-2',
-      state: 'waiting',
-      startedAt: '2026-11-12T07:00:00.000Z',
-      currentStep: 0,
-      steps: [
-        {
-          stepId: 'step-1',
-          endedAt: '2026-11-12T07:10:00.000Z',
-          waits: 'after',
-          gate: { state: 'waitingForChecks', parts: [], since: '2026-11-12T07:10:00.000Z' },
-        },
-      ],
-    } as unknown as WorkflowRun;
-    const targets = needsYouTargets({ threads: [waitingThread], runs: [checks], proposals: [] });
-    expect(targets.map((target) => target.key)).toEqual(['thread:thread-2']);
   });
 
   it('puts the keyboard on the waiting approval of the thread on screen', () => {
@@ -671,7 +635,7 @@ describe('next that needs you (spec 76)', () => {
 
   it('takes the focus again when the view moves its target after it landed', () => {
     const view = render(<Target key="view" name="Approve in the view" />);
-    act(() => requestNeedsYouFocus('run:run-1'));
+    act(() => requestNeedsYouFocus('thread:thread-9'));
     expect(document.activeElement?.textContent).toBe('Approve in the view');
     // The gate bar moves from the run view into the side panel: a new element.
     view.rerender(<Target key="panel" name="Approve in the panel" />);
@@ -682,16 +646,9 @@ describe('next that needs you (spec 76)', () => {
 });
 
 describe('the conversation keys (spec 74, 88)', () => {
-  it('work in chat, beside the workflow builder keys that share them', () => {
+  it('work in chat', () => {
     expect(keyScope('keybindings.previousMessage')).toBe('Chat');
     expect(keyScope('keybindings.copyMessage')).toBe('Chat');
-    expect(keyScope('keybindings.ruleMoveUp')).toBe('Workflows');
     expect(keyScope('keybindings.nextNeedsYou')).toBe('General');
-    expect(
-      keyConflicts({
-        'keybindings.previousMessage': 'Alt+ArrowUp',
-        'keybindings.ruleMoveUp': 'Alt+ArrowUp',
-      }).size,
-    ).toBe(0);
   });
 });

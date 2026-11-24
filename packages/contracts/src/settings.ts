@@ -2266,14 +2266,7 @@ export const settingsRegistry = {
   'keybindings.goCalendar': keybinding('Go to Calendar', 'Open the calendar.', 'Mod+1'),
   'keybindings.goChat': keybinding('Go to Chat', 'Open the chat.', 'Mod+2'),
   'keybindings.goWorkflows': keybinding('Go to Workflows', 'Open the workflows.', 'Mod+3'),
-  // Ctrl+1 to Ctrl+6 follow the sidebar's order (agent workbench spec 92).
-  'keybindings.goPlans': keybinding('Go to Plans', 'Open the plans.', 'Mod+4'),
   'keybindings.goBacklog': keybinding('Go to Backlog', 'Open the backlog.', 'Mod+5'),
-  'keybindings.goAssistant': keybinding(
-    'Go to Assistant',
-    'Open the assistant, the chat that runs wow for you.',
-    'Mod+6',
-  ),
   'keybindings.goSettings': keybinding('Go to Settings', 'Open the settings.', 'Mod+,'),
   'keybindings.calendarToday': keybinding('Calendar: today', 'Show today in the calendar.', 'T'),
   'keybindings.calendarNext': keybinding(
@@ -2324,26 +2317,6 @@ export const settingsRegistry = {
     'Interrupt the running turn of the open thread. What it produced so far stays.',
     'Mod+.',
   ),
-  'keybindings.gateApprove': keybinding(
-    'Approve',
-    "Approve the step a workflow run waits for you on, so the run continues, from its run view or the waiting step's thread.",
-    'Mod+Enter',
-  ),
-  'keybindings.gateSendBack': keybinding(
-    'Send back',
-    "Open the note field to send the step a workflow run waits for you on back to its agent, from its run view or the waiting step's thread.",
-    'Mod+Shift+Enter',
-  ),
-  'keybindings.runChanges': keybinding(
-    'Run: show changes',
-    'Switch the open workflow run between its steps and its Changes tab.',
-    'Mod+Shift+D',
-  ),
-  'keybindings.runPath': keybinding(
-    'Run: show path',
-    'Switch the open workflow run between its steps and its Path tab.',
-    'Mod+Shift+Y',
-  ),
   'keybindings.openInEditor': keybinding(
     'Open in editor',
     'Open the focused changed file, diff line, artifact or file link, or the file shown in the side panel, in your editor at its line (the "Editor command" setting).',
@@ -2358,26 +2331,6 @@ export const settingsRegistry = {
     'Changes: this step only',
     "Narrow the open run's Changes tab to the files the step under review changed, or a thread's Changes to the last turn, and back (while they are open).",
     'O',
-  ),
-  'keybindings.ruleAdd': keybinding(
-    'Rule: add',
-    'Add a rule under "After this step" to the step being edited in the workflow builder.',
-    'Alt+R',
-  ),
-  'keybindings.ruleMoveUp': keybinding(
-    'Rule: move up',
-    'Move the rule that has the keyboard one place up in its step, so it is tried earlier (in the workflow builder).',
-    'Alt+ArrowUp',
-  ),
-  'keybindings.ruleMoveDown': keybinding(
-    'Rule: move down',
-    'Move the rule that has the keyboard one place down in its step, so it is tried later (in the workflow builder).',
-    'Alt+ArrowDown',
-  ),
-  'keybindings.stopRun': keybinding(
-    'Stop run',
-    'Stop the open workflow run. Empty by default, because a stopped run cannot be continued.',
-    '',
   ),
   'keybindings.approvalAllowOnce': keybinding(
     'Approval: allow once',
@@ -2423,11 +2376,6 @@ export const settingsRegistry = {
     'Chat: commit…',
     "Open the commit dialog of the open chat thread's Changes, which commits the files you tick with the repository's hooks.",
     'Mod+Shift+K',
-  ),
-  'keybindings.threadsAtWork': keybinding(
-    'Threads at work',
-    'Show every thread that works, waits for you or finished a turn you have not seen, with what each does now.',
-    'Mod+Shift+O',
   ),
   'keybindings.threadToPanel': keybinding(
     'Threads at work: open in panel',

@@ -231,12 +231,12 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
     return ids;
   }, [cards, triggers, occurrences]);
   const cardIdOf = (itemId: string) => occurrences.get(itemId)?.cardId ?? itemId;
-  // A reached occurrence opens the run it started; any other opens the card, and one still to
+  // A reached occurrence opens the thread it started; any other opens the card, and one still to
   // come names the day it was opened from so Delete can offer "This occurrence" (spec 12, 15).
   const open = (itemId: string, deleting = false) => {
     const occurrence = occurrences.get(itemId);
-    if (!deleting && occurrence?.runId) {
-      void navigate({ to: '/workflows/runs/$runId', params: { runId: occurrence.runId } });
+    if (!deleting && occurrence?.threadId) {
+      void navigate({ to: '/chat/$threadId', params: { threadId: occurrence.threadId } });
       return;
     }
     layout.setState({

@@ -1,3 +1,4 @@
+import { assistantThreadId } from '@wow/contracts';
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { createStore, useStore } from 'zustand';
@@ -53,7 +54,7 @@ export function useFirstStart(): boolean {
     if (offer) void settings.write('providers.offerSetup', false);
     if (up) {
       firstStartStore.setState({ up: false });
-      void navigate({ to: '/assistant' });
+      void navigate({ to: '/chat/$threadId', params: { threadId: assistantThreadId } });
     }
   }, [passed, settingsReady, offer, up, settings, navigate]);
 

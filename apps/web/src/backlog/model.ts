@@ -3,7 +3,6 @@ import {
   type BacklogItem,
   type CalendarItem,
   type TrackerService,
-  type WorkflowRun,
 } from '@wow/contracts';
 import { atMinute, parseClockTime, parseIsoDate } from '@/calendar/time';
 
@@ -91,16 +90,6 @@ export const allTags = (items: readonly BacklogItem[]): string[] =>
 
 // Why the item's last run did not finish, when it did not: the failed step's error, or that it
 // was stopped. Undefined while it runs or after it finished.
-export function runProblem(run: WorkflowRun | undefined): string | undefined {
-  if (!run) return undefined;
-  if (run.state === 'failed') {
-    const failed = run.steps.find((step) => step.state === 'failed');
-    return `The run failed${failed?.error ? `: ${failed.error}` : '.'}`;
-  }
-  if (run.state === 'stopped') return 'The run was stopped.';
-  return undefined;
-}
-
 // Where "Plan on calendar" puts the card: the date, start and end typed in the dialog, in the
 // calendar's zone, like the card dialog. Returns a message instead when the form does not
 // describe a time.

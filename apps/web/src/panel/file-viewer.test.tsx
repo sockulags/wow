@@ -165,53 +165,6 @@ const fileAt = (path: string, from = route): ViewerFile => ({
 const viewer = () => screen.findByRole('region', { name: 'File viewer' });
 
 describe('file viewer', () => {
-  it('opens from an artifact button, which is not a file:// link, and goes back to the conversation @agent-workbench-14', async () => {
-    const user = userEvent.setup();
-    const server = fake(
-      {
-        'review/notes.md': {
-          kind: 'markdown',
-          absolutePath: '/real/demo/file',
-          size: 1200,
-          text: '# Review notes\n\nAll good.',
-        },
-      },
-      { settings: { 'appearance.contextPanel': false } },
-    );
-    const { container } = await renderApp(route, server.runtime);
-    const artifacts = await screen.findByRole('list', { name: 'Artifacts of check-work' });
-    expect(container.querySelector('a[href^="file:"]')).toBeNull();
-    // The run waits at a gate, so the panel shows its conversation although the setting is off.
-    expect(
-      within(screen.getByRole('complementary', { name: 'Context panel' })).getByTestId('panel-run'),
-    ).toBeTruthy();
-
-    await user.click(within(artifacts).getByRole('button', { name: 'Open review/notes.md' }));
-    const shown = await viewer();
-    expect(server.asked).toEqual([{ runId: 'run-1', path: 'review/notes.md' }]);
-    expect(await within(shown).findByRole('heading', { name: 'Review notes' })).toBeTruthy();
-    expect(within(shown).getByTestId('viewer-path').textContent).toBe('review/notes.md');
-    expect(within(shown).getByText('Markdown · 1.2 KB')).toBeTruthy();
-    // The run view stays next to it.
-    expect(screen.getByRole('list', { name: 'Run steps' })).toBeTruthy();
-    // The step's conversation is a tab beside the file (agent workbench spec 14).
-    const strip = screen.getByRole('tablist', { name: 'Panel tabs' });
-    expect(
-      within(strip)
-        .getAllByRole('tab')
-        .map((tab) => tab.textContent),
-    ).toEqual(['Conversation', 'notes.md']);
-
-    await user.click(within(shown).getByRole('button', { name: 'Copy path' }));
-    expect(await navigator.clipboard.readText()).toBe('/real/demo/file');
-
-    await user.click(within(shown).getByRole('button', { name: 'Back to conversation' }));
-    expect(screen.queryByRole('region', { name: 'File viewer' })).toBeNull();
-    const panel = screen.getByRole('complementary', { name: 'Context panel' });
-    expect(within(panel).getByTestId('panel-run')).toBeTruthy();
-    expect(document.activeElement).toBe(panel);
-  });
-
   it('goes back with Escape', async () => {
     const user = userEvent.setup();
     const server = fake(
@@ -371,35 +324,29 @@ describe('file viewer', () => {
   });
 });
 
-const titles = (file: ViewerFile | undefined, openRun: WorkflowRun | undefined = run) =>
-  viewerCommands({ panelTabs: tabsWith(file), pathname: route, openRun, projects: [project] })
+const titles = (file: ViewerFile | undefined) =>
+  viewerCommands({ panelTabs: tabsWith(file), pathname: route, projects: [project] })
     .map((command) => command.title)
     .filter((title) => !title.includes('panel tab'));
 
 describe('viewer commands', () => {
-  it('lists every artifact of the open run, and the open file’s actions only while it shows', () => {
-    expect(titles(undefined)).toEqual([
-      'Open artifact: review/notes.md',
-      'Open artifact: review/screen.png',
-    ]);
-    expect(
-      viewerCommands({ panelTabs: {}, pathname: route, openRun: undefined, projects: [] }),
-    ).toEqual([]);
+  it('lists the open file’s actions only while it shows', () => {
+    expect(titles(undefined)).toEqual([]);
     const actions = ['Back to conversation', 'Open file in editor', 'Copy file path'];
-    expect(titles(fileAt('review/notes.md')).slice(2)).toEqual(actions);
+    expect(titles(fileAt('review/notes.md'))).toEqual(actions);
     // The size switch is for a file the server read as a picture, not for one named like one.
-    expect(titles(fileAt('review/screen.png')).slice(2)).toEqual(actions);
+    expect(titles(fileAt('review/screen.png'))).toEqual(actions);
     const markdown = { kind: 'markdown', absolutePath: '/real/demo/notes.md' } as const;
-    expect(titles({ ...fileAt('review/notes.md'), read: markdown }).slice(2)).toEqual(actions);
+    expect(titles({ ...fileAt('review/notes.md'), read: markdown })).toEqual(actions);
     const picture = { kind: 'image', absolutePath: '/real/demo/screen.png' } as const;
-    expect(titles({ ...fileAt('review/screen.png'), read: picture }).slice(2)).toEqual([
+    expect(titles({ ...fileAt('review/screen.png'), read: picture })).toEqual([
       ...actions,
       'Show picture at full size',
     ]);
     expect(titles({ ...fileAt('review/screen.png'), read: picture, fullSize: true }).at(-1)).toBe(
       'Fit picture to panel',
     );
-    expect(titles(fileAt('review/notes.md', '/calendar'))).toHaveLength(2);
+    expect(titles(fileAt('review/notes.md', '/calendar'))).toHaveLength(0);
   });
 
   it('copies the path the server resolved, and the named path until it has answered', async () => {
@@ -413,7 +360,6 @@ describe('viewer commands', () => {
       await viewerCommands({
         panelTabs: tabsWith(shown),
         pathname: route,
-        openRun: run,
         projects: [project],
       })
         .find((command) => command.id === 'viewer.copyPath')

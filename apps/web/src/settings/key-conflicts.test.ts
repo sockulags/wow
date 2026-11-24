@@ -30,7 +30,6 @@ describe('keybinding clashes', () => {
     expect(keyScope('keybindings.commitConfirm')).toBe('Dialog');
     expect(keyScope('keybindings.calendarSaveCard')).toBe('Dialog');
     expect(keyScope('keybindings.approvalDeny')).toBe('Approval');
-    expect(keyScope('keybindings.runChanges')).toBe('Workflows');
     expect(keyScope('keybindings.threadChanges')).toBe('Chat');
   });
 });

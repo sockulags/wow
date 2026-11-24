@@ -17,7 +17,7 @@ import { useRuntime } from '@/app/runtime';
 import { errorMessage, useTopic } from '@/chat/data';
 import { Input } from '@/components/ui/input';
 import { testInstance } from '@/providers/model';
-import { HostLink } from '@/plans/host-read';
+import { HostLink } from '@/hosts/host-read';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SecretField } from '@/settings/secret-field';

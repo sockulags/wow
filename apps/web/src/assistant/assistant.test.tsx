@@ -23,14 +23,12 @@ import { RuntimeProvider } from '@/app/runtime';
 import { Composer, type ComposerHandle } from '@/chat/composer';
 import { ConversationItem, type ItemContext } from '@/chat/items';
 import { createTestRuntime, renderApp } from '@/test/render';
-import { HeldLine } from './assistant-view';
 import { SecretFieldCard, SecretVariableCard } from './cards';
-import { assistantCommands } from './commands';
 import { askOf, askedFields, holdMessage, placeRows, withoutSecret } from './model';
 import { ChangeRow, ProposalCard } from './rows';
 
-// The Assistant view (app assistant plan U3). The whole view against a server is in
-// e2e/assistant.spec.ts; these cases cover its parts.
+// The assistant's rows and cards, drawn in every main thread (orchestrator threads spec 24). All
+// invented.
 
 const at = '2026-11-10T08:00:00.000Z';
 const githubToken = 'ghp_abcdefghijklmnopqrstuvwxyz012345';
@@ -99,27 +97,6 @@ async function show(ui: ReactNode) {
   );
   return router;
 }
-
-describe('the Assistant section (spec 1)', () => {
-  // Its sidebar entry went with the sections (orchestrator threads spec 33); the page goes in U8.
-  it('opens from the palette and with its key', async () => {
-    const user = userEvent.setup();
-    const { router } = await renderApp('/calendar');
-
-    await user.keyboard('{Control>}6{/Control}');
-    expect(router.state.location.pathname).toBe('/assistant');
-    expect(
-      await within(screen.getByRole('main')).findByText('Not connected to the wow server'),
-    ).toBeTruthy();
-
-    await act(() => router.navigate({ to: '/calendar' }));
-    await user.keyboard('{Control>}k{/Control}');
-    const dialog = await screen.findByRole('dialog');
-    await user.type(within(dialog).getByRole('combobox'), 'go to assistant');
-    await user.keyboard('{Enter}');
-    expect(router.state.location.pathname).toBe('/assistant');
-  });
-});
 
 describe('placing rows in the conversation (spec 7, 13)', () => {
   it('puts each row after the tool call that made it, in either provider form, and the rest at the end', () => {
@@ -455,13 +432,13 @@ describe("a secret field card for a provider's environment variable (spec 14)", 
     });
   });
 
-  it('is drawn by the Assistant view after the call that asked for it', async () => {
+  it('is drawn in a main thread after the call that asked for it (orchestrator threads spec 24)', async () => {
     const request = { providerInstanceId: 'claude-work', variable: 'ANTHROPIC_API_KEY' };
     const thread = {
-      id: 'assistant',
-      kind: 'assistant' as const,
+      id: 'main-1',
+      kind: 'chat' as const,
       projectId: null,
-      cwd: '/home/me/.wow/assistant',
+      cwd: '/home/me/.wow/threads/main-1',
       branch: null,
       providerInstanceId: 'claude-work',
       providerSessionId: null,
@@ -478,11 +455,10 @@ describe("a secret field card for a provider's environment variable (spec 14)", 
     };
     const connection: Connection = {
       state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
-      request: (method) =>
-        Promise.resolve(method === 'assistant.open' ? { thread: null, problem: null } : []),
+      request: () => Promise.resolve([]),
       subscribe(topic, _params, onData) {
         const topics: Readonly<Record<string, unknown[]>> = {
-          assistantThread: [thread],
+          threads: [thread],
           providerInstances: [instance({})],
           threadItems: [toolCall('mcp__wow__show_secret_variable', request, '{"outcome":"shown"}')],
         };
@@ -492,7 +468,7 @@ describe("a secret field card for a provider's environment variable (spec 14)", 
       retry: () => undefined,
       close: () => undefined,
     };
-    await renderApp('/assistant', { ...createTestRuntime(), connection });
+    await renderApp('/chat/main-1', { ...createTestRuntime(), connection });
     expect(
       await screen.findByRole('region', {
         name: 'Secret field: ANTHROPIC_API_KEY (Claude at work)',
@@ -723,66 +699,6 @@ describe('Send anyway on a held message (spec 17)', () => {
   });
 });
 
-const runtimeWithSettings = (rows: unknown[]) => {
-  const connection: Connection = {
-    state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
-    request: () => Promise.resolve(null),
-    subscribe(topic, _params, onData) {
-      onData(topic === 'settings' ? rows : []);
-      return () => undefined;
-    },
-    retry: () => undefined,
-    close: () => undefined,
-  };
-  return { ...createTestRuntime(), connection };
-};
-const held = () => {
-  const found = holdMessage(githubToken, defaultSecretPatterns, []);
-  if (!found) throw new Error('not held');
-  return found;
-};
-
-const line = (
-  rows: unknown[],
-  onPut = vi.fn<(replaces: boolean) => Promise<void>>(() => Promise.resolve()),
-) => {
-  render(
-    <RuntimeProvider runtime={runtimeWithSettings(rows)}>
-      <HeldLine held={held()} onPut={onPut} onSend={() => undefined} onDismiss={() => undefined} />
-    </RuntimeProvider>,
-  );
-  return onPut;
-};
-
-describe('Put it in <field> on a held message (spec 17)', () => {
-  it('says that it replaces the value the field already holds', async () => {
-    const onPut = line([
-      {
-        key: 'trackers.github.token',
-        scope: 'global',
-        value: { secretRef: 'setting:trackers.github.token' },
-      },
-    ]);
-    expect(screen.getByTestId('held-replaces').textContent).toBe(
-      'GitHub token already holds a value; putting this one there replaces it.',
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'Put it in GitHub token' }));
-    expect(onPut).toHaveBeenCalledWith(true);
-  });
-
-  it('says nothing of replacing for an empty field, or one set only for a project', () => {
-    line([
-      {
-        key: 'trackers.github.token',
-        scope: 'project:tea',
-        value: { secretRef: 'setting:project:tea:trackers.github.token' },
-      },
-    ]);
-    expect(screen.getByRole('button', { name: 'Put it in GitHub token' })).toBeTruthy();
-    expect(screen.queryByTestId('held-replaces')).toBeNull();
-  });
-});
-
 describe('a stored tool result the net caught (spec 18)', () => {
   it('shows [hidden] where the value was', async () => {
     const context: ItemContext = {
@@ -807,23 +723,5 @@ describe('a stored tool result the net caught (spec 18)', () => {
     expect(screen.getByRole('region', { name: 'Tool output' }).textContent).toContain(
       `{"value":"${hiddenText}"}`,
     );
-  });
-});
-
-describe('palette commands for the assistant (spec 8, 9)', () => {
-  it('offer Yes and No for a waiting proposal and Undo for an applied change', () => {
-    const commands = assistantCommands({
-      changes: [change({ id: 'old' }), change(), change({ id: 'gone', state: 'undone' })],
-      proposals: [proposal(), proposal({ id: 'answered', state: 'accepted' })],
-    });
-    expect(
-      commands.map((command) => [command.title, command.needsYou ?? false, command.searchOnly]),
-    ).toEqual([
-      ['Yes: Turn on scripts in HTML files', true, undefined],
-      ['No: Turn on scripts in HTML files', false, undefined],
-      ['Show proposal: Turn on scripts in HTML files', false, true],
-      ['Undo: Work hours', false, true],
-      ['Undo: Work hours', false, false],
-    ]);
   });
 });

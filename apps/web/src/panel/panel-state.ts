@@ -2,7 +2,7 @@ import { settingValue, type SettingsStore } from '@wow/client-runtime';
 import { useStore } from 'zustand';
 import { useRuntime, useSetting, type LayoutStore } from '@/app/runtime';
 import { isBelow, remPixels, useBelow, useWindowWidth } from '@/lib/use-breakpoint';
-import { effectivePanelWidth, overlayCap, type PanelSelection } from './model';
+import { effectivePanelWidth, overlayCap } from './model';
 
 // Whether the context panel is on screen (owner decision F-1). A wide window follows the
 // appearance.contextPanel setting; a narrow one never gives the panel room, and opening it there
@@ -27,8 +27,7 @@ export function useContextPanelShown(): boolean {
 }
 
 // The panel's width as drawn, and below the narrow breakpoint the widest it may be over `view`.
-// The run view's gate bar ends where this width begins.
-export function useShownPanelWidth(view: PanelSelection['view']): {
+export function useShownPanelWidth(): {
   readonly width: number;
   readonly cap: number | undefined;
 } {
@@ -36,7 +35,7 @@ export function useShownPanelWidth(view: PanelSelection['view']): {
   const preview = useStore(useRuntime().layout, (state) => state.contextPanelPreview);
   const narrow = useBelow('narrow');
   const windowWidth = useWindowWidth();
-  const cap = narrow ? overlayCap(view, windowWidth, remPixels()) : undefined;
+  const cap = narrow ? overlayCap(windowWidth, remPixels()) : undefined;
   return { width: effectivePanelWidth(stored, preview, cap), cap };
 }
 

@@ -32,7 +32,7 @@ import { createStore, useStore } from 'zustand';
 import { useRuntime } from '@/app/runtime';
 import { safeHref } from '@/components/markdown';
 import { cn } from '@/lib/utils';
-import { changeRequestStateLabel } from '@/plans/model';
+import { changeRequestStateLabel } from '@/hosts/labels';
 import { useTopic } from './data';
 
 // Links and references to the user's own hosts in a chat (agent workbench spec 20 to 26). What

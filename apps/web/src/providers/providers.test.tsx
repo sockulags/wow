@@ -281,7 +281,7 @@ describe('first start', () => {
       { ...work, id, name: 'Claude', env: {}, status: 'ready', statusMessage: null },
     ]);
     expect(await screen.findByRole('navigation', { name: 'Threads' })).toBeTruthy();
-    expect(router.state.location.pathname).toBe('/assistant');
+    expect(router.state.location.pathname).toBe('/chat/assistant');
     expect(runtime.settings.getState().values['providers.offerSetup']).toBe(false);
 
     // Removed later: the app stays usable, and Assistant shows the same step.
@@ -323,7 +323,7 @@ describe('first start', () => {
     });
   });
 
-  it('opens the setup file picker of the step in the Assistant view from the palette, and keeps the file', async () => {
+  it('opens the setup file picker of the first-start step from the palette, and keeps the file', async () => {
     const user = userEvent.setup();
     const picked = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
     const server = fakeServer(
@@ -346,13 +346,17 @@ describe('first start', () => {
       },
       { providerInstances: [] },
     );
-    const { router } = await renderApp('/assistant', runtimeFor(server.connection));
+    // No provider yet, so the first-start gate is up with the step (app assistant spec 25).
+    const { router } = await renderApp(
+      '/chat',
+      runtimeFor(server.connection, { 'providers.offerSetup': true }),
+    );
     const step = await screen.findByRole('heading', { name: 'Connect an agent' });
     await user.keyboard('{Control>}k{/Control}');
     const palette = await screen.findByRole('dialog');
     await user.type(within(palette).getByRole('combobox'), 'start from a setup file');
     await user.keyboard('{Enter}');
-    expect(router.state.location.pathname).toBe('/assistant');
+    expect(router.state.location.pathname).toBe('/chat');
     expect(picked).toHaveBeenCalledOnce();
     const input = screen.getByLabelText('Setup file to start from');
     expect(picked.mock.contexts[0]).toBe(input);

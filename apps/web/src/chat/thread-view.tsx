@@ -1,4 +1,5 @@
 import {
+  assistantThreadId,
   providerChatOptions,
   TextItemPayload,
   undoableApply,
@@ -46,7 +47,6 @@ import { normalizeBinding } from '@/app/keybindings';
 import { FileLinkContext, type FileLinks } from '@/components/file-links';
 import { IconButton, WithTooltip } from '@/components/hint';
 import { EmptyState } from '@/components/states';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -60,8 +60,6 @@ import { cn } from '@/lib/utils';
 import { openInEditor } from '@/panel/editor';
 import { routerPanelRoute } from '@/panel/model';
 import { fullPathOf, openFile, openHostItem } from '@/panel/viewer';
-import { GateBar } from '@/workflows/gate-bar';
-import { gateRunForThread } from '@/workflows/model';
 import { modelLabel } from './model-label';
 import { Composer, type ComposerHandle } from './composer';
 import type { QuestionHold } from './question-card';
@@ -99,7 +97,6 @@ import {
   lastTurn,
   latestContext,
   permissionOptions,
-  runLabel,
   threadTitle,
   runningTurn,
   type ContextUsage,
@@ -159,10 +156,7 @@ function ThreadHeader({
   instances: readonly ProviderInstance[];
 }) {
   const send = useDispatch();
-  const runs = useTopic('workflowRuns') ?? [];
-  const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
-  const run = runLabel(thread, runs, workflows);
   const project = projects.find((candidate) => candidate.id === thread.projectId);
   const threads = useTopic('threads') ?? [];
   const origin = thread.forkedFrom
@@ -180,13 +174,6 @@ function ThreadHeader({
         <span data-testid="thread-state" className="shrink-0 text-xs text-muted-foreground">
           {threadStateLabels[thread.state]}
         </span>
-        {run && thread.runId && (
-          <Badge asChild variant="outline" className="min-w-0 text-muted-foreground">
-            <Link to="/workflows/runs/$runId" params={{ runId: thread.runId }}>
-              <span className="truncate">{run}</span>
-            </Link>
-          </Badge>
-        )}
         <div className="ml-auto flex min-w-0 items-center gap-0.5">
           {thread.kind !== 'assistant' && <ToolsChip threadId={thread.id} />}
           {thread.runId === null && <ThreadChangesChip threadId={thread.id} />}
@@ -253,7 +240,8 @@ function ThreadHeader({
               ·
             </span>
             <Link
-              to="/assistant"
+              to="/chat/$threadId"
+              params={{ threadId: assistantThreadId }}
               data-testid="thread-started-by-assistant"
               className="text-xs text-muted-foreground underline-offset-2 hover:underline"
             >
@@ -553,8 +541,6 @@ export function ThreadConversation({
   );
   const approvals = useTopic('approvals', threadId) ?? noApprovals;
   const questions = useTopic('questions', threadId) ?? noQuestions;
-  const runs = useTopic('workflowRuns') ?? [];
-  const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
   const showMeter = useSetting('chat.contextMeter');
   const resumePrompt = useSetting('chat.resumePrompt');
@@ -989,7 +975,6 @@ export function ThreadConversation({
   };
   const approval = pendingApproval(approvals);
   const question = pendingQuestion(questions, items ?? [], running);
-  const gateRun = gateRunForThread(thread, runs);
   const context = latestContext(items ?? []);
   const retry = lastUserSent(items ?? []);
   const errorId = canResume ? lastErrorId(items ?? []) : undefined;
@@ -1470,14 +1455,6 @@ export function ThreadConversation({
             onFocus={() => frontModelBar(barId)}
           >
             <TaskPin threadId={threadId} items={items ?? []} turns={turns} />
-            {gateRun && (
-              <GateBar
-                run={gateRun}
-                workflow={workflows.find((candidate) => candidate.id === gateRun.workflowId)}
-                project={projects.find((candidate) => candidate.id === gateRun.projectId)}
-                review={false}
-              />
-            )}
             {hostLinks && <PastedLinks draftKey={threadId} links={hostLinks} />}
             <Composer
               ref={composer}

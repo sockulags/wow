@@ -1,94 +1,37 @@
-import type { AssistantProposal, Decision, Thread, WorkflowRun } from '@wow/contracts';
+import type { Thread } from '@wow/contracts';
 import { useEffect, type RefObject } from 'react';
 import { createStore, useStore } from 'zustand';
 import type { AppCommand } from '@/app/commands';
-import { gateRunForThread, gateStanding, reviewedStep } from '@/workflows/model';
 import { threadTitle } from './model';
+import { listStatusOf } from './thread-sections';
 
-// "Next that needs you" (agent workbench spec 76): whatever waits for the user, oldest first,
-// read from the persisted rows the app already subscribes to. A thread that needs the user holds
-// an approval, a question or a plan card; a run waits at a gate; the assistant waits on a
-// proposal. The keyboard lands on it once its view is on screen.
+// "Next that needs you" (agent workbench spec 76): every main thread that waits for the user,
+// where it or a helper under it holds an approval or a question (orchestrator threads spec 31),
+// oldest first. The keyboard lands on it once its view is on screen.
 
 export interface NeedsYouTarget {
-  // What the waiting element answers to: `thread:<id>`, `run:<id>` or `proposal:<id>`.
+  // What the waiting element answers to: `thread:<id>`.
   readonly key: string;
   // Since when it waits, as stored by the server.
   readonly at: string;
   readonly title: string;
   readonly path: string;
-  readonly open: NeedsYouRoute;
+  readonly threadId: string;
 }
 
-export type NeedsYouRoute =
-  | { readonly to: '/chat/$threadId'; readonly params: { readonly threadId: string } }
-  | { readonly to: '/workflows/runs/$runId'; readonly params: { readonly runId: string } }
-  | { readonly to: '/assistant' };
-
-// A gate that waits for the pull request's checks waits for the host, not for the user.
-export const runNeedsYou = (run: WorkflowRun): boolean =>
-  run.state === 'waiting' && gateStanding(run)?.waitsFor !== 'checks';
-
-// The key of the element a queued decision lands on.
-export const decisionTargetKey = (decision: Decision): string | undefined =>
-  decision.kind === 'proposal' && decision.proposalId
-    ? `proposal:${decision.proposalId}`
-    : (decision.kind === 'gate' || decision.kind === 'limit') && decision.runId
-      ? `run:${decision.runId}`
-      : (decision.kind === 'approval' || decision.kind === 'question') && decision.threadId
-        ? `thread:${decision.threadId}`
-        : undefined;
-
-export function needsYouTargets({
-  threads,
-  runs,
-  proposals,
-  decisions = [],
-}: {
-  threads: readonly Thread[];
-  runs: readonly WorkflowRun[];
-  proposals: readonly AssistantProposal[];
-  // The server's decision queue (chief of staff spec 16, 17): what it lists comes in its order,
-  // anything else after, oldest first.
-  decisions?: readonly Decision[];
-}): NeedsYouTarget[] {
-  const targets: NeedsYouTarget[] = [
-    // A thread waits since it came to need the user; a row from before the server kept that
-    // falls back to its last change. A step's thread that needs the user because its run waits at
-    // the gate after it is the run's gate, listed once below.
-    ...threads
-      .filter((thread) => thread.state === 'needs_you' && !gateRunForThread(thread, runs))
-      .map((thread) => ({
-        key: `thread:${thread.id}`,
-        at: thread.stateSince ?? thread.updatedAt,
-        title: threadTitle(thread),
-        path: `/chat/${thread.id}`,
-        open: { to: '/chat/$threadId' as const, params: { threadId: thread.id } },
-      })),
-    ...runs.filter(runNeedsYou).map((run) => ({
-      key: `run:${run.id}`,
-      at: reviewedStep(run)?.endedAt ?? run.startedAt,
-      title: 'Gate',
-      path: `/workflows/runs/${run.id}`,
-      open: { to: '/workflows/runs/$runId' as const, params: { runId: run.id } },
-    })),
-    ...proposals
-      .filter((proposal) => proposal.state === 'pending')
-      .map((proposal) => ({
-        key: `proposal:${proposal.id}`,
-        at: proposal.at,
-        title: proposal.title,
-        path: '/assistant',
-        open: { to: '/assistant' as const },
-      })),
-  ];
-  const rank = new Map<string, number>();
-  decisions.forEach((decision, index) => {
-    const key = decisionTargetKey(decision);
-    if (key !== undefined && !rank.has(key)) rank.set(key, index);
-  });
-  const rankOf = (target: NeedsYouTarget) => rank.get(target.key) ?? Infinity;
-  return targets.toSorted((a, b) => rankOf(a) - rankOf(b) || Date.parse(a.at) - Date.parse(b.at));
+export function needsYouTargets(threads: readonly Thread[]): NeedsYouTarget[] {
+  // A thread waits since it came to need the user; a row from before the server kept that falls
+  // back to its last change.
+  return threads
+    .filter((thread) => !thread.parentThreadId && listStatusOf(thread) === 'waits_for_you')
+    .map((thread) => ({
+      key: `thread:${thread.id}`,
+      at: thread.stateSince ?? thread.updatedAt,
+      title: threadTitle(thread),
+      path: `/chat/${thread.id}`,
+      threadId: thread.id,
+    }))
+    .toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 // The target after the one on screen, so pressing the key again moves on; the oldest otherwise.
@@ -174,14 +117,16 @@ export function needsYouCommands(
       id: 'chat.nextNeedsYou',
       title: 'Next that needs you',
       group: 'Actions',
-      keywords: ['waiting', 'approval', 'question', 'gate', 'proposal', 'plan'],
+      keywords: ['waiting', 'approval', 'question', 'gate', 'plan'],
       keybinding: 'keybindings.nextNeedsYou',
       ...(target ? { detail: target.title } : {}),
       run: ({ navigate }) => {
         const next = nextNeedsYou(targets, pathname, needsYouStore.getState().last);
         if (!next) return;
         requestNeedsYouFocus(next.key);
-        if (pathname !== next.path) void navigate(next.open);
+        if (pathname !== next.path) {
+          void navigate({ to: '/chat/$threadId', params: { threadId: next.threadId } });
+        }
       },
     },
   ];
