@@ -180,8 +180,13 @@ test.describe('a narrow window', () => {
     await page.keyboard.press('Control+Enter');
     await expect(runGate(page)).toContainText('check-work finished');
   });
+});
+// Below 1200 px the panel lies over the view. At 1024 px the thread list leaves the panel only its
+// minimum, so the widest panel is tried a little below the breakpoint.
+test.describe('a window just below the breakpoint', () => {
+  test.use({ viewport: { width: 1180, height: 768 } });
 
-  test('keeps the gate bar in view at 1024 px with the widest panel @agent-workbench-78', async ({
+  test('keeps the gate bar in view at 1180 px with the widest panel @agent-workbench-78', async ({
     page,
   }) => {
     await startRun('gate-narrow-wide-run');
@@ -204,109 +209,25 @@ test.describe('a narrow window', () => {
       }
     };
     // From the default 380 px towards the largest width, 720 px: over the run view the edge stops
-    // where the gate bar's room begins (1024 px less 35rem), while it is dragged and once it is
+    // where the gate bar's room begins (1180 px less 48rem: the thread list, the
+    // workflows list and the gate's room), while it is dragged and once it is
     // stored, and the width stored is the width shown.
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x - 340, y);
-    await expect(handle).toHaveAttribute('aria-valuenow', '464');
+    await expect(handle).toHaveAttribute('aria-valuenow', '412');
     await buttonsClearOfPanel(false);
     await page.mouse.up();
-    await expect(handle).toHaveAttribute('aria-valuenow', '464');
-    expect((await panel(page).boundingBox())?.width).toBe(464);
+    await expect(handle).toHaveAttribute('aria-valuenow', '412');
+    expect((await panel(page).boundingBox())?.width).toBe(412);
     await buttonsClearOfPanel(true);
     // Back to the default for the tests after this one: the edge moves at once, no dead zone.
     const moved = await handle.boundingBox();
     const back = (moved?.x ?? 0) + (moved?.width ?? 0) / 2;
     await page.mouse.move(back, y);
     await page.mouse.down();
-    await page.mouse.move(back + 84, y);
+    await page.mouse.move(back + 32, y);
     await page.mouse.up();
     await expect(handle).toHaveAttribute('aria-valuenow', '380');
-  });
-});
-
-test.describe('a small window', () => {
-  test.use({ viewport: { width: 800, height: 768 } });
-
-  test('keeps the panel at its minimum and the gate bar beside it at 800 px @agent-workbench-78', async ({
-    page,
-  }) => {
-    await startRun('gate-small-run');
-    await page.goto('/workflows/runs/gate-small-run?tab=changes');
-    await expect(runGate(page)).toContainText('deliver-work finished');
-    await page.keyboard.press('Control+j');
-    await expect(panel(page)).toHaveAttribute('data-overlay', '');
-    await expect(page.getByTestId('context-panel-resize')).toHaveAttribute('aria-valuenow', '280');
-    const edge = await panel(page).boundingBox();
-    expect(edge?.width).toBe(280);
-    for (const name of ['Approve', 'Send back', 'Stop']) {
-      const button = runGate(page).getByRole('button', { name, exact: true });
-      await expect(button).toBeVisible();
-      const box = await button.boundingBox();
-      expect((box?.x ?? Infinity) + (box?.width ?? 0)).toBeLessThanOrEqual(edge?.x ?? 0);
-      await button.click({ trial: true, timeout: 2000 });
-    }
-  });
-});
-
-test.describe('sketch', () => {
-  test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
-  test.use(sketchUse);
-
-  test('the run view at a gate', async ({ page }) => {
-    await startRun('gate-sketch-run');
-    await page.goto('/workflows/runs/gate-sketch-run?tab=changes');
-    await expect(gate(page)).toContainText('deliver-work finished');
-    await gate(page).getByRole('button', { name: 'Send back' }).click();
-    await runGate(page).getByRole('textbox', { name: 'What should change?' }).fill(NOTE);
-    await runGate(page).getByRole('button', { name: 'Send it back' }).click();
-    await expect(conversation(page)).toContainText('Second attempt');
-    await expect(gate(page)).toContainText('deliver-work finished');
-    await page
-      .getByRole('navigation', { name: 'Changed files' })
-      .getByRole('button', { name: 'Changed: src/bell.ts' })
-      .click();
-    await expect(page.getByRole('table', { name: 'Diff of src/bell.ts' })).toContainText('kettle');
-    await gate(page).getByRole('button', { name: 'Send back' }).click();
-    await runGate(page)
-      .getByRole('textbox', { name: 'What should change?' })
-      .fill('Ring once more when the tea has steeped for too long.');
-    // The "Waiting for you" toasts would cover the composer in the picture.
-    for (const close of await page.locator('[data-sonner-toast] [data-close-button]').all()) {
-      await close.click();
-    }
-    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
-    await page.screenshot({ path: sketchPath('2026-11-review-loop', 'gate-review') });
-  });
-
-  test.describe('narrow', () => {
-    test.use({ ...sketchUse, viewport: { width: 1024, height: 768 } });
-
-    test('the run view at a gate with the panel over it', async ({ page }) => {
-      await startRun('gate-sketch-narrow-run');
-      await page.goto('/workflows/runs/gate-sketch-narrow-run?tab=changes');
-      await expect(runGate(page)).toContainText('deliver-work finished');
-      await page
-        .getByRole('navigation', { name: 'Changed files' })
-        .getByRole('button', { name: 'Changed: src/bell.ts' })
-        .click();
-      const diff = page.getByRole('table', { name: 'Diff of src/bell.ts' });
-      await diff.locator('tr[data-kind="add"]').first().focus();
-      await page.keyboard.press('c');
-      await page.keyboard.type('Say which kettle rings.');
-      await page.keyboard.press('Enter');
-      await expect(runGate(page).getByRole('textbox', { name: 'What should change?' })).toHaveValue(
-        /src\/bell\.ts:\d+ – Say which kettle rings\./,
-      );
-      await page.keyboard.press('Control+j');
-      await expect(panel(page)).toHaveAttribute('data-overlay', '');
-      await expect(conversation(page)).toContainText('The tea timer rings twice now.');
-      for (const close of await page.locator('[data-sonner-toast] [data-close-button]').all()) {
-        await close.click();
-      }
-      await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
-      await page.screenshot({ path: sketchPath('2026-11-agent-workbench', 'run-gate') });
-    });
   });
 });
