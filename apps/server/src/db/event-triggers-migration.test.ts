@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { databaseFileName, startServer, type RunningServer } from '../server.js';
 import { migrationsFolder } from './database.js';
-import { calendarItems, providerInstances, triggers, workflowRuns } from './schema.js';
+import { calendarItems, providerInstances, threads, triggers } from './schema.js';
 
 // Card triggers made before event triggers existed still fire after the migration that puts
 // both kinds into one table. The store is built with the migrations up to the one before, filled
@@ -81,7 +81,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await server?.workflows.settled();
+  await server?.providerService.idle();
+  await server?.cardFollower.settled();
   await server?.stop();
   server = undefined;
   await rm(root, { recursive: true, force: true });
@@ -210,13 +211,15 @@ describe('migration 0011_event_triggers', () => {
 
     now = new Date(start.getTime() + 61_000);
     server.scheduler.tick();
-    const [run] = db.select().from(workflowRuns).all();
-    expect(run).toMatchObject({ workflowId: 'wf1', calendarItemId: 'c1', state: 'waiting' });
+    // The stored workflow was written out as a file at start, and the card starts a main thread
+    // that runs it (orchestrator threads spec 22, 27).
+    const [run] = db.select().from(threads).all();
+    expect(run).toMatchObject({ projectId: 'p1', parentThreadId: null });
     expect(db.select().from(triggers).all()).toContainEqual(
       expect.objectContaining({ id: 'c1:trigger', state: 'fired', runId: run?.id }),
     );
     expect(db.select().from(calendarItems).all()).toContainEqual(
-      expect.objectContaining({ id: 'c1', state: 'waiting', runId: run?.id }),
+      expect.objectContaining({ id: 'c1', state: 'running', threadId: run?.id }),
     );
 
     // The missed card's "Run now" still works, and an event trigger fits beside them.

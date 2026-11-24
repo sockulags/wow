@@ -4,6 +4,7 @@ import type {
   ProviderCommand,
   ProviderEvent,
   ProviderInstance,
+  RepeatRule,
   ServerCommand,
   Thread,
   Trigger,
@@ -18,6 +19,7 @@ import {
   calendarItems,
   notifications,
   providerInstances,
+  threadItems,
   threads,
   triggers,
   workflowRuns,
@@ -354,6 +356,60 @@ describe('the tick', () => {
 });
 
 const runs = () => db().select().from(workflowRuns).all();
+
+// What the user's messages in a thread said, and the workflow each one sent.
+const sentIn = (threadId: string) =>
+  db()
+    .select()
+    .from(threadItems)
+    .where(eq(threadItems.threadId, threadId))
+    .all()
+    .filter((item) => item.kind === 'user')
+    .map((item) => {
+      const payload = item.payload as { text: string; skills?: { name: string; text?: string }[] };
+      return { text: payload.text, workflow: payload.skills?.[0]?.name };
+    });
+
+const daily: RepeatRule = { frequency: 'daily', interval: 1, weekdays: [], end: { kind: 'never' } };
+
+describe('scheduled jobs as main threads (orchestrator threads spec 27, 28)', () => {
+  it('new: each occurrence of a daily card makes a main thread titled with the card and the day', async () => {
+    createCard({ repeat: daily, body: 'The login page loops.' });
+    now = at(60);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    now = at(60 + 86_400);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    const made = allThreads().toSorted((a, b) => a.title.localeCompare(b.title));
+    expect(made.map((each) => each.title)).toEqual([
+      'Fix the login bug · 2026-11-02',
+      'Fix the login bug · 2026-11-03',
+    ]);
+    for (const each of made) {
+      expect(sentIn(each.id)).toEqual([{ text: 'The login page loops.', workflow: 'Bug' }]);
+    }
+    expect(card().threadId).toBe(made.at(-1)?.id);
+  });
+
+  it('same: each occurrence is the next message in the one thread', async () => {
+    createCard({ repeat: daily, threadMode: 'same' });
+    now = at(60);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    const [only] = allThreads();
+    expect(only?.title).toBe('Fix the login bug');
+    now = at(60 + 86_400);
+    server.scheduler.tick();
+    expect(card()).toMatchObject({ state: 'running', threadId: only?.id });
+    await cardBecomes((current) => current.state === 'done');
+    expect(allThreads()).toHaveLength(1);
+    expect(sentIn(only?.id ?? '')).toEqual([
+      { text: 'Fix the login bug', workflow: 'Bug' },
+      { text: 'Fix the login bug', workflow: 'Bug' },
+    ]);
+  });
+});
 
 const policy = (value: MissedTriggerPolicy) =>
   dispatch({ type: 'setting.set', key: 'scheduler.missedPolicy', scope: 'global', value });

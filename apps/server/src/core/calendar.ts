@@ -272,12 +272,13 @@ function updateEvents(
       payload: { cardId: card.id, changes, updatedAt: context.now },
     },
   ];
-  // A single card that already ran becomes a series whose first occurrence is that run.
+  // A single card that already ran becomes a series whose first occurrence is that run or the
+  // thread it started (orchestrator threads spec 27).
   const trigger = read.trigger(triggerIdFor(card.id));
   if (
     !isRepeating(card) &&
     isRepeating(after) &&
-    card.runId !== null &&
+    (card.runId !== null || (card.threadId ?? null) !== null) &&
     trigger?.state === 'fired' &&
     !read.cardOccurrences(card.id).some((done) => done.date === localDay(card.start, card.zone))
   ) {
@@ -292,6 +293,7 @@ function updateEvents(
           end: card.end,
           outcome: 'fired',
           runId: card.runId,
+          threadId: card.threadId ?? null,
           reason: null,
           offerRunNow: false,
           at: context.now,
