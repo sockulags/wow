@@ -60,6 +60,23 @@ const asUser = (command: ServerCommand) => server.engine.dispatch(`u${++ids}`, c
 const asAssistant = (command: ServerCommand) =>
   server.engine.dispatch(`a${++ids}`, command, 'assistant');
 
+// Workflow files of these names, as the skills scan would list them (orchestrator threads spec
+// 19): a card's Run now starts a thread that follows one.
+const workflowFiles = (...names: string[]) =>
+  asUser({
+    type: 'skills.sync',
+    skills: names.map((name) => ({
+      id: path.join(root, 'workflows', `${name}.md`),
+      name,
+      description: '',
+      dir: path.join(root, 'workflows'),
+      source: 'workflow' as const,
+      manualOnly: true,
+      invocations: { claude: `/${name}`, codex: `$${name}` },
+      text: `## ${name}`,
+    })),
+  });
+
 function refusal(send: () => unknown): string | undefined {
   try {
     send();
@@ -999,7 +1016,6 @@ describe('proposals', () => {
   it("change nothing until the user's yes: a permission mode, a gate condition, step rules, an event trigger, for units, own working copy and the settings of spec 9", async () => {
     asUser({ type: 'setting.set', key: 'scheduler.paused', scope: 'global', value: true });
     asUser({ type: 'setting.set', key: 'hosts.polling', scope: 'global', value: false });
-    asUser({ type: 'setting.set', key: 'triggers.eventsEnabled', scope: 'global', value: false });
     asUser({
       type: 'trigger.create',
       triggerId: 'on-comment',
@@ -1047,7 +1063,6 @@ describe('proposals', () => {
       ['reset_setting', { key: 'scheduler.paused', scope: 'global' }],
       ['set_setting', { key: 'scheduler.missedPolicy', scope: 'global', value: 'run' }],
       ['set_setting', { key: 'hosts.polling', scope: 'global', value: true }],
-      ['set_setting', { key: 'triggers.eventsEnabled', scope: 'global', value: true }],
       ['set_setting', { key: 'viewer.htmlScripts', scope: 'global', value: true }],
       [
         'set_setting',
@@ -1246,30 +1261,6 @@ describe('proposals', () => {
     ).not.toBe('changed');
     await call('test_connection', { service: 'github', projectId: 'tea' });
     expect(hostRequests.some((request) => request.url.includes('collector.example'))).toBe(false);
-  });
-
-  it("ask before a fork's pull requests may start runs or may no longer, at any scope", async () => {
-    asUser({ type: 'setting.set', key: 'triggers.forkPullRequests', scope: 'global', value: true });
-    const untouched = before();
-    for (const args of [
-      { key: 'triggers.forkPullRequests', scope: 'global', value: false },
-      { key: 'triggers.forkPullRequests', scope: 'project:tea', value: true },
-      { key: 'triggers.forkPullRequests', scope: 'project:tea', value: false },
-    ]) {
-      const result = await call('set_setting', args);
-      expect([args.scope, args.value, result.content.outcome]).toEqual([
-        args.scope,
-        args.value,
-        'proposed',
-      ]);
-    }
-    const reset = await call('reset_setting', {
-      key: 'triggers.forkPullRequests',
-      scope: 'global',
-    });
-    expect(reset.content.outcome).toBe('proposed');
-    expect(before()).toBe(untouched);
-    expect(changes()).toEqual([]);
   });
 
   it('ask before the program "Open in editor" runs or its shell changes, either way', async () => {
@@ -1474,6 +1465,7 @@ describe('proposals', () => {
   });
 
   it('are refused at Yes when what the card was written for changed since: the assistant cannot point a pending start somewhere else (spec 9, 10)', async () => {
+    workflowFiles('Delivery', 'Other');
     asUser({
       type: 'workflow.create',
       workflowId: 'other',
@@ -1501,15 +1493,16 @@ describe('proposals', () => {
     expect(refusal(() => asUser({ type: 'assistant.proposal.accept', proposalId }))).toBe(
       '"Start Delivery in Tea" was proposed for how things were then, and the card and the workflow changed since. Say No to it and ask again.',
     );
-    expect(rows('workflowRuns')).toEqual([]);
+    expect(
+      rows('threads').filter((row) => (row as { title: string }).title === 'Brew the plan'),
+    ).toEqual([]);
     expect(proposals()[0]).toMatchObject({ title: 'Start Delivery in Tea', state: 'pending' });
 
     // Back as it was, the card is what the proposal says again.
     asUser({ type: 'card.update', cardId: 'card-1', workflowId: 'delivery' });
     asUser({ type: 'assistant.proposal.accept', proposalId });
-    expect(rows<WorkflowRun>('workflowRuns')).toMatchObject([
-      { workflowId: 'delivery', projectId: 'tea' },
-    ]);
+    // The card's thread, in its project (orchestrator threads spec 27).
+    expect(rows('threads')).toMatchObject([{ title: 'Brew the plan', projectId: 'tea' }]);
 
     // The same for a start by name, a trigger and a setting.
     const start = await call('start_run', { workflowId: 'delivery', projectId: 'tea' });
@@ -1540,7 +1533,7 @@ describe('proposals', () => {
         ),
       ).toContain(`and the ${changed} changed since`);
     }
-    expect(rows('workflowRuns')).toHaveLength(1);
+    expect(rows('workflowRuns')).toEqual([]);
     expect(setting('viewer.htmlScripts')).toBe(false);
   });
 
@@ -1600,6 +1593,7 @@ describe('proposals', () => {
   });
 
   it("hold a card's run, a plan run and an event trigger the same way", async () => {
+    workflowFiles('Delivery');
     asUser({
       type: 'card.create',
       cardId: 'card-1',
@@ -1668,35 +1662,6 @@ describe('what the assistant may not do', () => {
         .list()
         .filter((tool) => /continue|approve|send_?back|stop/i.test(tool.name)),
     ).toEqual([]);
-
-    // A card whose run is live cannot be removed by the assistant either: that would stop it.
-    asUser({
-      type: 'card.create',
-      cardId: 'card-1',
-      title: 'Brew the plan',
-      start: '2026-11-11T12:00:00.000Z',
-      end: '2026-11-11T13:00:00.000Z',
-      zone: 'Europe/Stockholm',
-      projectId: 'tea',
-      workflowId: 'gated',
-    });
-    asUser({ type: 'card.runNow', cardId: 'card-1', runId: 'run-2' });
-    expect(await call('delete_card', { cardId: 'card-1' })).toMatchObject({
-      isError: true,
-      content: {
-        outcome: 'refused',
-        reason:
-          "The card's run is live and only the user stops a run. The run is at /workflows/runs/run-2.",
-      },
-    });
-    expect(await call('delete_card', { cardId: 'card-1', stopRun: true })).toMatchObject({
-      isError: true,
-      content: { outcome: 'invalid input' },
-    });
-    expect(
-      refusal(() => asAssistant({ type: 'card.delete', cardId: 'card-1', stopRun: true })),
-    ).toContain('only the user stops a run');
-    expect(card('card-1')).toBeDefined();
 
     // The user still can.
     asUser({ type: 'workflowRun.continue', runId: 'run-1' });

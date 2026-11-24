@@ -177,6 +177,10 @@ const withoutUpdatedAt = ({
   nextAt: _nextAt,
   occurrences: _occurrences,
   pastSeries: _pastSeries,
+  // A card's own columns, which an Outlook row stores with their defaults.
+  workflowName: _workflowName,
+  threadMode: _threadMode,
+  threadId: _threadId,
   ...rest
 }: CalendarItem) => rest;
 

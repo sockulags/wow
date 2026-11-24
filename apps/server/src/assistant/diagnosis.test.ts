@@ -243,7 +243,7 @@ describe('the diagnosis (spec 19, 20)', () => {
     ]);
   });
 
-  it('names an event trigger that could not start its run, and a failed host read with the setting it names', async () => {
+  it('names no event trigger, which starts nothing now, and a failed host read with the setting it names', async () => {
     dispatch({ type: 'workflow.create', workflowId: 'mend', name: 'Mend', steps: [step('fix')] });
     dispatch({
       type: 'trigger.create',
@@ -297,13 +297,9 @@ describe('the diagnosis (spec 19, 20)', () => {
     dispatch({ type: 'workflow.delete', workflowId: 'mend' });
     sync('merged');
 
+    // Event triggers are gone (orchestrator threads spec 29): the merge starts nothing to fail.
     const { diagnosis } = await diagnose();
-    const [trigger] = ofKind(diagnosis.problems, 'trigger');
-    expect(trigger).toMatchObject({
-      what: 'Trigger "Pull request merged" for mend in Tea',
-      place: { label: 'Workflows → Triggers', path: '/workflows/triggers' },
-    });
-    expect(trigger?.reason).toMatch(/^It could not start a run: .*mend/i);
+    expect(ofKind(diagnosis.problems, 'trigger')).toEqual([]);
 
     dispatch({
       type: 'hosts.sync',
@@ -336,76 +332,6 @@ describe('the diagnosis (spec 19, 20)', () => {
         place: { label: 'Settings → Trackers', path: '/settings/trackers' },
       },
     ]);
-  });
-
-  it('names the newest failure of each trigger in the words of a GitLab project, within the limit', async () => {
-    for (const id of ['mend', 'tidy']) {
-      dispatch({ type: 'workflow.create', workflowId: id, name: id, steps: [step('fix')] });
-      dispatch({
-        type: 'trigger.create',
-        triggerId: `on-merged-${id}`,
-        projectId: 'tea',
-        event: 'merged',
-        workflowId: id,
-      });
-    }
-    dispatch({
-      type: 'workflowRun.start',
-      runId: 'run-watch',
-      workflowId: 'brew',
-      projectId: 'tea',
-    });
-    const request = (number: number, merged: boolean): ChangeRequest => ({
-      id: `tea:${number}`,
-      projectId: 'tea',
-      host: 'gitlab',
-      number,
-      title: 'Ring the bell',
-      url: `https://gitlab.example.invalid/acme/tea/-/merge_requests/${number}`,
-      state: merged ? 'merged' : 'open',
-      draft: false,
-      mergedAt: merged ? new Date(clock).toISOString() : null,
-      headBranch: 'agent/bell',
-      headSha: 'b2b2b2b',
-      units: [],
-      checkState: 'none',
-      checks: [],
-      comments: [],
-      newestCommentId: null,
-    });
-    const sync = (...requests: ChangeRequest[]) =>
-      dispatch({
-        type: 'hosts.sync',
-        projectId: 'tea',
-        at: new Date(clock).toISOString(),
-        host: 'gitlab',
-        hostName: 'gitlab.example.invalid',
-        reads: [
-          {
-            id: 'run:run-watch',
-            scope: 'run',
-            branch: 'agent/bell',
-            result: { ok: true, changeRequestIds: requests.map((entry) => entry.id) },
-          },
-        ],
-        changeRequests: requests,
-      });
-    sync(request(14, false), request(15, false));
-    dispatch({ type: 'workflow.delete', workflowId: 'mend' });
-    dispatch({ type: 'workflow.delete', workflowId: 'tidy' });
-    clock = Date.parse(at(1));
-    sync(request(14, true), request(15, false));
-    clock = Date.parse(at(2));
-    sync(request(14, true), request(15, true));
-
-    const triggers = ofKind((await diagnose()).diagnosis.problems, 'trigger');
-    expect(triggers.map((problem) => problem.what).toSorted()).toEqual([
-      'Trigger "Merge request merged" for mend in Tea',
-      'Trigger "Merge request merged" for tidy in Tea',
-    ]);
-    expect(triggers.every((problem) => problem.reason.includes('!15'))).toBe(true);
-    set('assistant.diagnosisLimit', 1);
-    expect(ofKind((await diagnose()).diagnosis.problems, 'trigger')).toHaveLength(1);
   });
 
   it('names a failed run with its error and its link, until a later run of it ends done', async () => {

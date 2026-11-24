@@ -1,6 +1,7 @@
 import {
   isCardTrigger,
   isEventTrigger,
+  triggerEventLabel,
   type AppNotification,
   type CalendarItem,
   type CardOccurrence,
@@ -22,7 +23,13 @@ import {
   startsWork,
   type CardThreadStart,
 } from './card-threads.js';
-import { CommandRejected, decide, type DecideContext, type ReadModel } from './orchestrator.js';
+import {
+  CommandRejected,
+  codeHostOf,
+  decide,
+  type DecideContext,
+  type ReadModel,
+} from './orchestrator.js';
 import {
   isRepeating,
   liveRunOf,
@@ -549,11 +556,47 @@ export function decideTrigger(
       const card = read.calendarItem(command.cardId);
       return card ? cardFollowsThread(card, read, context) : [];
     }
-    case 'trigger.create':
-      throw new CommandRejected(
-        'rejected',
-        'Event triggers are gone. Schedule a card with a workflow in the calendar instead.',
-      );
+    // An event trigger is stored as before but nothing fires it any more (spec 29); the command
+    // goes with the Triggers tab and the assistant's trigger tools (orchestrator threads U8).
+    case 'trigger.create': {
+      // A card's trigger is `<cardId>:trigger`; an event trigger's id must never be one.
+      if (command.triggerId.includes(':')) {
+        throw new CommandRejected('rejected', 'A trigger id cannot contain a colon');
+      }
+      if (read.trigger(command.triggerId)) {
+        throw new CommandRejected('conflict', `Trigger ${command.triggerId} already exists`);
+      }
+      const project = read.project(command.projectId);
+      if (!project) throw new CommandRejected('not_found', `No project ${command.projectId}`);
+      const workflow = read.workflow(command.workflowId);
+      if (!workflow) throw new CommandRejected('not_found', `No workflow ${command.workflowId}`);
+      const same = read
+        .eventTriggers(project.id)
+        .some((trigger) => trigger.event === command.event && trigger.workflowId === workflow.id);
+      if (same) {
+        throw new CommandRejected(
+          'conflict',
+          `${project.name} already has a trigger that starts ${workflow.name} for "${triggerEventLabel(command.event, codeHostOf(read, context, project.id))}"`,
+        );
+      }
+      return [
+        triggerSet({
+          id: command.triggerId,
+          kind: 'event',
+          workflowId: workflow.id,
+          runId: null,
+          calendarItemId: null,
+          runAt: null,
+          zone: null,
+          state: null,
+          offerRunNow: false,
+          projectId: project.id,
+          event: command.event,
+          enabled: true,
+          createdAt: context.now,
+        }),
+      ];
+    }
     case 'trigger.setEnabled': {
       const trigger = requireEventTrigger(read, command.triggerId);
       if (trigger.enabled === command.enabled) return [];
