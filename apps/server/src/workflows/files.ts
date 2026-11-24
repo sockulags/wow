@@ -73,6 +73,10 @@ export async function exportStoredWorkflows(deps: {
   readonly home: string;
   readonly logger: Logger;
 }): Promise<string[]> {
+  const folder = userWorkflowsDir(deps.home);
+  // Made on every start, even with nothing to write, so the folder is there to be watched
+  // (orchestrator threads spec 19): a file the user puts in it later is listed without a restart.
+  await mkdir(folder, { recursive: true });
   const mark = exportedMark(deps.home);
   if (existsSync(mark)) return [];
   const stored = deps.db.select().from(workflows).all();
@@ -83,11 +87,7 @@ export async function exportStoredWorkflows(deps: {
       .all()
       .map((row) => [row.id, row.name]),
   );
-  const folder = userWorkflowsDir(deps.home);
   const written: string[] = [];
-  // Made even with nothing to write, so the folder is there to be watched (orchestrator threads
-  // spec 19): a file the user puts in it later is listed without a restart.
-  await mkdir(folder, { recursive: true });
   for (const workflow of stored) {
     const base = workflowFileBase(workflow.name);
     let file = path.join(folder, `${base}.md`);

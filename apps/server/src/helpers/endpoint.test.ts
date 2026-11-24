@@ -1359,6 +1359,10 @@ describe('workflows as text (orchestrator threads spec 19, 20, 22)', () => {
       await exportStoredWorkflows({ db: server.database.db, home, logger: server.logger }),
     ).toEqual([]);
     expect((await stat(path.join(home, 'workflows'))).isDirectory()).toBe(true);
+    // Deleted after the export ran: the next start makes it again.
+    await rm(path.join(home, 'workflows'), { recursive: true });
+    await exportStoredWorkflows({ db: server.database.db, home, logger: server.logger });
+    expect((await stat(path.join(home, 'workflows'))).isDirectory()).toBe(true);
   });
 });
 
