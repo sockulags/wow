@@ -14,7 +14,6 @@ import {
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
-import { eventTriggerEvents } from './triggers.js';
 import { gateChecksEvents } from './workflows.js';
 
 // Decides what the host poller's reads and the Follow switch change: the stored reads and change
@@ -251,23 +250,9 @@ export function decideHosts(
         if (request.projectId === projectId) changeRequests.set(request.id, request);
       }
       const after = { reads, changeRequests };
-      // Event triggers see what this read shows that the stored rows did not. Only pull
-      // requests a plan or run still names count, like the rows that are kept.
-      const named = new Set([...reads.values()].flatMap((row) => row.changeRequestIds));
-      const readNow = command.changeRequests.filter(
-        (request) => request.projectId === projectId && named.has(request.id),
-      );
       return [
         ...hostEvents(projectId, before, after),
         ...planEvents(stored, stored, after, (plan) => planIsOpen(plan, read)),
-        ...eventTriggerEvents(
-          projectId,
-          before.changeRequests,
-          readNow,
-          reads.values(),
-          read,
-          context,
-        ),
         // A run whose gate waits for its pull request's checks is decided by what this read
         // shows (review loop spec 56).
         ...command.reads.flatMap((outcome) => {

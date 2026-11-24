@@ -19,6 +19,7 @@ import {
   BacklogState,
   CalendarItem,
   CardState,
+  CardThreadMode,
   CopiedTurn,
   ForkOrigin,
   GoBack,
@@ -371,6 +372,10 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.optional(),
     backlogItemId: Id.optional(),
     workflowId: Id.optional(),
+    // A workflow file by its name, and whether each occurrence starts a new main thread or goes
+    // on in the same one (orchestrator threads spec 27).
+    workflowName: z.string().trim().min(1).optional(),
+    threadMode: CardThreadMode.optional(),
     // A focus block (chief of staff spec 28): no workflow, and planning keeps work off it.
     focus: z.boolean().optional(),
     // Makes the card repeat (recurring cards spec 1); start and end are the first occurrence.
@@ -392,6 +397,8 @@ export const Command = z.discriminatedUnion('type', [
     projectId: Id.nullable().optional(),
     backlogItemId: Id.nullable().optional(),
     workflowId: Id.nullable().optional(),
+    workflowName: z.string().trim().min(1).nullable().optional(),
+    threadMode: CardThreadMode.optional(),
     focus: z.boolean().optional(),
     repeat: RepeatRule.nullable().optional(),
     // The whole list of days skipped by hand; Undo of a skip sends the list as it was.
@@ -1018,6 +1025,9 @@ export const InternalCommand = z.discriminatedUnion('type', [
     policy: MissedTriggerPolicy,
     runId: Id,
   }),
+  // Something changed in the main thread a card started: the card's state follows it
+  // (orchestrator threads spec 28).
+  z.object({ type: z.literal('card.followThread'), cardId: Id }),
   // The tracker service created the issue; the item keeps its key and URL (behavior 30).
   z.object({
     type: z.literal('backlog.published'),
@@ -1065,6 +1075,8 @@ export const CardChanges = CalendarItem.pick({
   projectId: true,
   backlogItemId: true,
   workflowId: true,
+  workflowName: true,
+  threadMode: true,
   focus: true,
   repeat: true,
   skippedDates: true,
@@ -1569,6 +1581,8 @@ export const DomainEvent = z.discriminatedUnion('kind', [
       cardId: Id,
       state: CardState,
       runId: Id.nullable(),
+      // The main thread the card follows now (orchestrator threads spec 28).
+      threadId: Id.nullable().optional(),
       updatedAt: Timestamp,
     }),
   }),

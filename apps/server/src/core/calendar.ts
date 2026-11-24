@@ -40,7 +40,9 @@ type CalendarCommand = Extract<
 >;
 
 export const isCalendarCommand = (command: ServerCommand): command is CalendarCommand =>
-  (command.type.startsWith('card.') && command.type !== 'card.runNow') ||
+  (command.type.startsWith('card.') &&
+    command.type !== 'card.runNow' &&
+    command.type !== 'card.followThread') ||
   command.type.startsWith('outlook.');
 
 // Outlook rows are `outlook:<id>`; a card id may not look like one, so a card can never replace a
@@ -55,6 +57,7 @@ const triggerFields = [
   'zone',
   'projectId',
   'workflowId',
+  'workflowName',
   'repeat',
   'skippedDates',
 ] as const;
@@ -145,8 +148,8 @@ function checkLinks(read: ReadModel, links: Links): void {
 }
 
 // A focus block is time kept free of work (chief of staff spec 28), so it never starts a run.
-function checkFocus(card: Pick<CalendarItem, 'focus' | 'workflowId'>): void {
-  if (card.focus && card.workflowId) {
+function checkFocus(card: Pick<CalendarItem, 'focus' | 'workflowId' | 'workflowName'>): void {
+  if (card.focus && (card.workflowId || card.workflowName)) {
     throw new CommandRejected(
       'rejected',
       'A focus card carries no workflow; take the workflow off or make it an ordinary card',
@@ -353,6 +356,9 @@ export function decideCalendar(
         projectId: command.projectId ?? null,
         backlogItemId: command.backlogItemId ?? null,
         workflowId: command.workflowId ?? null,
+        workflowName: command.workflowName ?? null,
+        threadMode: command.threadMode ?? 'new',
+        threadId: null,
         runId: null,
         state: 'scheduled',
         updatedAt: context.now,
@@ -382,11 +388,14 @@ export function decideCalendar(
         'projectId',
         'backlogItemId',
         'workflowId',
+        'workflowName',
+        'threadMode',
         'focus',
       ] as const;
       checkFocus({
         focus: command.focus ?? card.focus ?? false,
         workflowId: command.workflowId === undefined ? card.workflowId : command.workflowId,
+        workflowName: command.workflowName === undefined ? card.workflowName : command.workflowName,
       });
       for (const field of fields) {
         const value = command[field];

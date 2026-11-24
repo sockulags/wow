@@ -464,6 +464,9 @@ export const CardState = z.enum([
 ]);
 export type CardState = z.infer<typeof CardState>;
 
+export const CardThreadMode = z.enum(['new', 'same']);
+export type CardThreadMode = z.infer<typeof CardThreadMode>;
+
 export const OutlookItemState = z.enum(['scheduled', 'cancelled']);
 export type OutlookItemState = z.infer<typeof OutlookItemState>;
 
@@ -487,6 +490,14 @@ export const CalendarItem = z.object({
   projectId: Id.nullable(),
   backlogItemId: Id.nullable(),
   workflowId: Id.nullable(),
+  // The workflow file the card starts, by its name (orchestrator threads spec 27). A card stored
+  // before workflows were files names its stored workflow in `workflowId` instead.
+  workflowName: z.string().min(1).nullable().optional(),
+  // `new`: a new main thread at each occurrence; `same`: the next message in one thread (spec 27).
+  // Absent counts as `new`.
+  threadMode: CardThreadMode.optional(),
+  // The main thread the card started last, which its state follows (spec 28).
+  threadId: Id.nullable().optional(),
   runId: Id.nullable(),
   // A CardState for local cards, an OutlookItemState for Outlook items.
   state: z.string().min(1),

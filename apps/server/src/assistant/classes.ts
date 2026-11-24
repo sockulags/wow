@@ -77,7 +77,6 @@ const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) =>
   'scheduler.paused': turnedOn(false),
   'scheduler.missedPolicy': turnedOn('run'),
   'hosts.polling': turnedOn(true),
-  'triggers.eventsEnabled': turnedOn(true),
   'viewer.htmlScripts': turnedOn(true),
   'workflows.alwaysStopSkills': (next, current) => {
     const kept = new Set(strings(next));
@@ -129,7 +128,6 @@ const guardSettings: ReadonlySet<string> = new Set([
   'assistant.excludedProjects',
   'assistant.delegation',
   'assistant.permissions',
-  'triggers.forkPullRequests',
   'viewer.editorCommand',
   'viewer.editorShell',
 ]);
@@ -528,6 +526,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.workingCopySettled': serverOnly,
   'trigger.fire': serverOnly,
   'trigger.applyMissed': serverOnly,
+  'card.followThread': serverOnly,
   'backlog.published': serverOnly,
 };
 

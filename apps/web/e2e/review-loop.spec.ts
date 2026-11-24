@@ -63,14 +63,7 @@ test.describe('review loop coverage', () => {
 
   test('the user guide names every setting of the groups the review loop added', async () => {
     const guide = await read(path.join(repository, 'docs', 'user-guide.md'));
-    const added = new Set<SettingGroup>([
-      'plans',
-      'hosts',
-      'triggers',
-      'viewer',
-      'diff',
-      'workspaces',
-    ]);
+    const added = new Set<SettingGroup>(['plans', 'hosts', 'viewer', 'diff', 'workspaces']);
     const keybindings = [
       'keybindings.goPlans',
       'keybindings.gateApprove',
