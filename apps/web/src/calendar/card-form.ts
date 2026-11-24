@@ -5,9 +5,9 @@ import {
   RepeatWeekday,
   repeatWeekdays,
   type CalendarItem,
+  type CardState,
+  type CardThreadMode,
   type Project,
-  type Workflow,
-  type WorkflowRun,
 } from '@wow/contracts';
 import {
   addDays,
@@ -30,7 +30,9 @@ export interface CardFormValues {
   readonly start: string;
   readonly end: string;
   readonly projectId: string;
-  readonly workflowId: string;
+  // The workflow file the card starts, by its name (orchestrator threads spec 27).
+  readonly workflowName: string;
+  readonly threadMode: CardThreadMode;
   readonly backlogItemId: string;
   readonly body: string;
   readonly repeat: RepeatDraft;
@@ -187,52 +189,50 @@ export function lastUsedProjectId(
   return latest?.projectId ?? '';
 }
 
-const runStateLabels: Readonly<Record<WorkflowRun['state'], string>> = {
-  running: 'is running',
+export type TriggerSummary =
+  | { readonly tone: 'none' }
+  | { readonly tone: 'info'; readonly text: string }
+  | { readonly tone: 'thread'; readonly text: string; readonly threadId: string };
+
+const threadStateLabels: Readonly<Record<CardState, string>> = {
+  scheduled: 'is waiting for its first message',
+  running: 'is working',
   waiting: 'is waiting for you',
   done: 'is done',
   failed: 'failed',
   stopped: 'was stopped',
+  missed: 'is waiting for its next message',
 };
 
-export type TriggerSummary =
-  | { readonly tone: 'none' }
-  | { readonly tone: 'warning'; readonly text: string }
-  | { readonly tone: 'info'; readonly text: string }
-  | { readonly tone: 'run'; readonly text: string; readonly runId: string };
-
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
-
-// What the card will do (audit B-04): nothing, nothing for lack of a project, start a workflow at
-// its start time, or how its run is doing.
+// What the card will do (audit B-04, orchestrator threads spec 27, 28): nothing, start a main
+// thread at its start time, or how the thread it started is doing.
 export function triggerSummary({
-  workflow,
+  workflowName,
+  threadMode,
   project,
   start,
   zone,
-  run,
+  thread,
 }: {
-  workflow: Workflow | undefined;
+  workflowName: string;
+  threadMode: CardThreadMode;
   project: Project | undefined;
   start: string | undefined;
   zone: string;
-  run: WorkflowRun | undefined;
+  thread: { readonly id: string; readonly state: CardState } | undefined;
 }): TriggerSummary {
-  if (run) {
-    return { tone: 'run', text: `The workflow run ${runStateLabels[run.state]}.`, runId: run.id };
+  if (thread) {
+    return {
+      tone: 'thread',
+      text: `Its thread ${threadStateLabels[thread.state]}.`,
+      threadId: thread.id,
+    };
   }
-  if (!workflow) return { tone: 'none' };
-  if (!project) return { tone: 'warning', text: 'Will not run: pick a project.' };
-  const gates = workflow.steps.reduce(
-    (count, step) => count + (step.gateBefore ? 1 : 0) + (step.gateAfter ? 1 : 0),
-    0,
-  );
+  if (workflowName === '') return { tone: 'none' };
   const when = start
     ? `Starts at ${formatTime(new Date(start), zone)}`
     : 'Starts at the card start';
-  const parts = [
-    plural(workflow.steps.length, 'step'),
-    ...(gates > 0 ? [plural(gates, 'gate')] : []),
-  ];
-  return { tone: 'info', text: `${when} in ${project.name} · ${parts.join(', ')}` };
+  const where = project ? ` in ${project.name}` : '';
+  const how = threadMode === 'same' ? 'the same thread each time' : 'a new thread each time';
+  return { tone: 'info', text: `${when}${where} · ${workflowName} · ${how}` };
 }

@@ -511,9 +511,14 @@ test.describe('calendar', () => {
 
     await choose(dialog.getByLabel('Workflow'), 'Backlog e2e');
     await choose(dialog.getByLabel('Project'), 'No project');
-    await expect(dialog.getByTestId('trigger-summary')).toHaveText('Will not run: pick a project.');
+    await expect(dialog.getByTestId('trigger-summary')).toHaveText(
+      'Starts at 14:45 · Backlog e2e · a new thread each time',
+    );
     await choose(dialog.getByLabel('Project'), 'Demo');
-    await expect(dialog.getByTestId('trigger-summary')).toContainText('Starts at 14:45 in Demo');
+    await choose(dialog.getByLabel('Each time it runs'), 'Same thread');
+    await expect(dialog.getByTestId('trigger-summary')).toHaveText(
+      'Starts at 14:45 in Demo · Backlog e2e · the same thread each time',
+    );
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
   });

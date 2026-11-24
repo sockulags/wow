@@ -330,20 +330,31 @@ Cards are your own blocks of time. They never leave the app.
 - **Move and resize**: drag the card, also to another day; drag its lower edge to resize. Both snap
   to `calendar.snapMinutes`. The keyboard does the same (see above).
 - **Edit**: click the card, or press Enter on it, or use "Edit card: <title>" in the palette. The
-  dialog edits title, date, times, the workflow and project to run, the backlog item and notes.
+  dialog edits title, date, times, the workflow to run, its project and whether it starts a new
+  thread each time, the backlog item and notes.
   With the context panel open, a click shows the card there and **Edit card** opens the dialog.
 - **Delete**: "Delete card" in the form deletes it at once; **Undo** in the message that follows
-  puts it back. A card whose workflow run is still going asks first whether to stop the run.
+  puts it back. The threads the card started stay.
 - **Save from the keyboard**: **Ctrl+Enter** (`keybindings.calendarSaveCard`) creates or saves the
   card from any field of the form. Delete, Cancel and Create card stay at the bottom of the form
   while its fields scroll, also in a small window.
 
-A card with a workflow and a project is a **trigger**: at the card's start time the workflow's first
-step starts (see "Triggers" below). Moving the card moves the trigger with it. Triggers carry a
-workflow icon and their state: Scheduled, Running, Waiting for you, Done, Failed, Stopped or Missed.
-Plain cards show no state. A card with a workflow but no project is drawn dashed with "No project,
-will not run". The form says what a trigger will do ("Starts at 16:30 in Demo · 4 steps, 2 gates"),
-warns when it will not run, and links to its run once it has one.
+A card with a workflow is a **scheduled job**: at the card's start time it starts a main thread
+that runs the workflow, with the card's notes (or its title) as your message. The workflow is one
+of your workflow files or the card's project's (see "Workflows"); a project is not needed, and a
+thread without one works in a folder of its own. **Each time it runs** chooses:
+
+- **New thread each time**: every occurrence gets its own main thread, named with the card and the
+  day ("Morning review · 2026-11-04").
+- **Same thread**: every occurrence is the next message in one thread. When that thread is still
+  working at the next occurrence, the occurrence is skipped and says why.
+
+The thread uses the provider and model of a new thread (`chat.defaultInstance`, `chat.defaultModel`).
+Moving the card moves its time with it. Scheduled jobs carry a workflow icon and the state of their
+thread: Scheduled, Running, Waiting for you (the thread, or a helper in it, waits for your answer),
+Done, Failed, Stopped or Missed. Plain cards show no state. The form says what the card will do
+("Starts at 16:30 in Demo · Release · a new thread each time") and links to its thread once it has
+one. A card whose workflow has no file any more fails at its time and says so.
 
 ### Repeating cards
 
@@ -1395,8 +1406,8 @@ A plan run counts a unit's run as one run, however many times its steps repeat.
 
 ### Triggers
 
-A card with a workflow and a project starts its run at the card's start time while wow is running,
-also from the tray. The first step starts in the card's project, and the card follows the run.
+A card with a workflow starts its main thread at the card's start time while wow is running, also
+from the tray (see "Cards"), and the card follows the thread.
 
 If wow was not running at that time, `scheduler.missedPolicy` decides at the next start:
 
@@ -1407,37 +1418,13 @@ If wow was not running at that time, `scheduler.missedPolicy` decides at the nex
 "Pause scheduler" in the palette or the tray holds every trigger; the calendar shows "Scheduler
 paused" until you resume. Triggers that came due while paused get the missed policy on resume.
 
-Deleting a card whose run is running or waiting asks whether to stop the run too. The threads stay
-either way.
+Deleting a card leaves the threads it started.
 
 ### Event triggers
 
-An event trigger starts a run when something happens to a pull request wow follows (one of a
-followed plan, or one of a live run). Workflows → **Triggers** ("Go to event triggers" in the
-palette) lists them per project, each with an on and off switch and Delete. **New trigger** ("New event
-trigger" in the palette) asks for the project, the event and the workflow:
-
-- **Pull request merged** (**Merge request merged** for a project on GitLab),
-- **Checks failed**,
-- **Review comment added**.
-
-When polling first sees the event, one run of the workflow starts with the pull request's link,
-number, branch and the event in its handover, in the pull request's working copy when one exists
-and otherwise in a new working copy at the pull request's head commit, on its branch when this
-repository's branch is at that commit (a fork's pull request whose branch is named like one here
-gets its own commit, on no branch). A merged pull request's run starts at the tip of the default
-branch, which holds the merged code, unless its branch here is still at the head commit; it is
-never left on the code from before the merge. A pull request or merge request from a fork starts
-nothing: a run would work on the fork's files, and they would steer an agent on this computer. A
-failed notification "Trigger started nothing" says so. Turn on
-`triggers.forkPullRequests` ("Start runs for pull requests from forks", globally or for one
-project) only for forks you trust. The same event seen again starts nothing, and
-what was already true when you created the trigger or followed the plan starts nothing either;
-only later changes do. For a review comment the run gets the comment's link and author, never its
-text: the agent reads it with its own tools. Comments by accounts in
-`triggers.ignoredCommentAuthors` (for example the account your agents write as) start nothing.
-`triggers.eventsEnabled` off, or a paused scheduler, holds every event trigger; events seen
-meanwhile are not started later. A run that cannot start leaves a failed notification.
+Event triggers start nothing any more. To run a workflow at a time, put a card with that workflow in
+the calendar (see "Cards"): each time it comes due it starts a main thread. Workflows →
+**Triggers** still lists triggers made before; it goes away in a later release.
 
 ## Plans
 
@@ -1793,8 +1780,7 @@ A change that lets wow do more on its own shows as a proposal card with exactly 
 **Yes** and **No** (with an optional reason that goes back to the assistant), and nothing changes
 until you press Yes: a step's permission mode, a gate condition, a step's rules, an event
 trigger, "for units" or "own working copy" on a workflow, resuming the scheduler, the missed
-policy `run`, `hosts.polling` or `triggers.eventsEnabled` on, `viewer.htmlScripts` on, any
-change to `triggers.forkPullRequests`, writing, changing or removing one of your own skills (the
+policy `run`, `hosts.polling` on, `viewer.htmlScripts` on, writing, changing or removing one of your own skills (the
 card shows the text, or what changes), and
 starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
 `assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
@@ -1931,8 +1917,7 @@ Useful ones to know:
 - `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
 - `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
-- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`, `triggers.eventsEnabled`,
-  `triggers.forkPullRequests`
+- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`
 - `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `diff.maxHashBytes`, `workspaces.root`
 - `appearance.theme` (dark by default), `appearance.density`
 - `desktop.closeToTray`, `desktop.autostart`, `desktop.startMinimized`

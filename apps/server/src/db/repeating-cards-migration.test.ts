@@ -1,4 +1,4 @@
-import type { CalendarItem, ProviderInstance, WorkflowRun } from '@wow/contracts';
+import type { CalendarItem, ProviderInstance } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import Sqlite from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -11,7 +11,7 @@ import { snapshot } from '../core/subscriptions.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { databaseFileName, startServer, type RunningServer } from '../server.js';
 import { migrationsFolder } from './database.js';
-import { providerInstances, workflowRuns } from './schema.js';
+import { providerInstances, threads } from './schema.js';
 
 // Recurring cards spec 4: a card stored before rules existed loads without one, shows when it
 // fires, and fires once as it did. The store is built with the migrations up to the one before.
@@ -60,7 +60,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await server?.workflows.settled();
+  await server?.providerService.idle();
+  await server?.cardFollower.settled();
   await server?.stop();
   server = undefined;
   await rm(root, { recursive: true, force: true });
@@ -144,9 +145,10 @@ describe('migration 0022_repeating_cards', () => {
 
     now = new Date('2026-11-04T07:30:00.000Z');
     running.scheduler.tick();
-    const runs = (): WorkflowRun[] => running.database.db.select().from(workflowRuns).all();
-    expect(runs()).toHaveLength(1);
-    expect(runs()[0]?.occurrence ?? null).toBeNull();
+    // The stored workflow was written out as Review.md at start (orchestrator threads spec 22),
+    // so the card starts a main thread that runs it (spec 27).
+    const runs = () => running.database.db.select().from(threads).all();
+    expect(runs()).toMatchObject([{ title: 'Morning review · 2026-11-04', projectId: 'p1' }]);
     now = new Date('2026-11-05T07:30:00.000Z');
     running.scheduler.tick();
     expect(runs()).toHaveLength(1);

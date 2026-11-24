@@ -3,6 +3,8 @@ import {
   type BacklogChanges,
   type BacklogItem,
   type BacklogState,
+  type CalendarItem,
+  type CardState,
   type DomainEvent,
   type ServerCommand,
   type WorkflowRun,
@@ -150,4 +152,20 @@ export function backlogFollowsRun(run: WorkflowRun, read: ReadModel): DomainEven
   if (item.state !== state) changes.state = state;
   if (item.runId !== run.id) changes.runId = run.id;
   return updated(item.id, changes);
+}
+
+// A backlog item planned on a card follows the main thread the card started, as it followed the
+// card's run (orchestrator threads spec 28): working or waiting is `running`, done is `done`,
+// anything else leaves it planned.
+export function backlogFollowsCard(
+  card: Pick<CalendarItem, 'backlogItemId'>,
+  state: CardState,
+  read: ReadModel,
+): DomainEvent[] {
+  if (card.backlogItemId === null) return [];
+  const item = read.backlogItem(card.backlogItemId);
+  if (!item) return [];
+  const next: BacklogState =
+    state === 'running' || state === 'waiting' ? 'running' : state === 'done' ? 'done' : 'planned';
+  return item.state === next ? [] : updated(item.id, { state: next });
 }

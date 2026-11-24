@@ -39,7 +39,11 @@ async function taggedBehaviors(): Promise<Map<number, string[]>> {
 
 test.describe('review loop coverage', () => {
   test('every behavior the ground truth names has an e2e case that names it', async () => {
-    const named = groundTruthBehaviors(await read(path.join(intent, 'spec.md')));
+    // Behavior 48, event triggers, is gone: orchestrator threads spec 29 removed it.
+    const removed = new Set([48]);
+    const named = groundTruthBehaviors(await read(path.join(intent, 'spec.md'))).filter(
+      (behavior) => !removed.has(behavior),
+    );
     expect(named.length).toBeGreaterThan(0);
     const covered = await taggedBehaviors();
     expect(named.filter((behavior) => !covered.has(behavior))).toEqual([]);
@@ -63,14 +67,7 @@ test.describe('review loop coverage', () => {
 
   test('the user guide names every setting of the groups the review loop added', async () => {
     const guide = await read(path.join(repository, 'docs', 'user-guide.md'));
-    const added = new Set<SettingGroup>([
-      'plans',
-      'hosts',
-      'triggers',
-      'viewer',
-      'diff',
-      'workspaces',
-    ]);
+    const added = new Set<SettingGroup>(['plans', 'hosts', 'viewer', 'diff', 'workspaces']);
     const keybindings = [
       'keybindings.goPlans',
       'keybindings.gateApprove',

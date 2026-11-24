@@ -73,7 +73,7 @@ function setup(overrides: Partial<TimeGridProps> = {}) {
 const block = (name: RegExp) => screen.getByRole('button', { name });
 
 describe('TimeGrid', () => {
-  it('shows a state only on triggers and warns about a workflow without a project', () => {
+  it('shows a state only on cards that start a thread, with or without a project', () => {
     setup();
     expect(block(/^Focus, /).textContent).not.toMatch(/Scheduled/);
     expect(block(/^Feature run, /)).toHaveProperty(
@@ -81,10 +81,7 @@ describe('TimeGrid', () => {
       'Feature run, 14:00–15:00, waiting for you',
     );
     expect(block(/^Feature run, /).textContent).toContain('Waiting for you');
-    expect(block(/^Lost run, /)).toHaveProperty(
-      'ariaLabel',
-      'Lost run, 16:00–17:00, no project, will not run',
-    );
+    expect(block(/^Lost run, /)).toHaveProperty('ariaLabel', 'Lost run, 16:00–17:00, scheduled');
   });
 
   it('is one Tab stop and moves with the arrow keys', () => {

@@ -1742,9 +1742,12 @@ const seedSettings: Record<string, unknown> = {
 };
 // The assistant's own rhythm runs on the real clock here, so it is off unless a case turns it on:
 // a briefing or a brief arriving in the middle of another case would be a turn it did not expect.
+// A workflow is sent as its own text here: the default follow template's words (questions,
+// waiting) would steer the mock agent's replies, which match on words in the prompt.
 for (const [key, value] of Object.entries({
   'assistant.briefings': false,
   'assistant.briefsPerDay': 0,
+  'workflows.followTemplate': '{{workflow}}',
 })) {
   server.engine.dispatch(`seed-${key}`, { type: 'setting.set', key, scope: 'global', value });
 }
@@ -2395,6 +2398,17 @@ function fire(match: (card: CalendarItem) => boolean): string | undefined {
   const cards = snapshot(server.database.db, { topic: 'calendarItems' }) as CalendarItem[];
   const card = cards.find(match);
   if (!card?.workflowId || !card.projectId) return undefined;
+  // A backlog item's card starts its main thread as the scheduler would (orchestrator threads
+  // spec 27); the panel cases below still start a run of the card's workflow.
+  if (card.backlogItemId) {
+    const threadId = `thread-${card.id}`;
+    server.engine.dispatch(`fire-${card.id}`, {
+      type: 'card.runNow',
+      cardId: card.id,
+      runId: threadId,
+    });
+    return threadId;
+  }
   const runId = `run-${card.id}`;
   server.engine.dispatch(`fire-${card.id}`, {
     type: 'workflowRun.start',
@@ -2622,6 +2636,22 @@ datagrams.on('message', () => {
   received.push({ path: '/leak/datagram', authorization: undefined, body: undefined });
 });
 await new Promise<void>((resolve) => datagrams.bind(trackerPort, '127.0.0.1', resolve));
+// The workflows seeded above as the files a card starts (orchestrator threads spec 19, 27): the
+// one-time export ran at start, before they were seeded. A file already there is kept.
+{
+  const folder = path.join(home, 'workflows');
+  await mkdir(folder, { recursive: true });
+  for (const workflow of snapshot(server.database.db, { topic: 'workflows' }) as {
+    name: string;
+    steps: { skillName: string }[];
+  }[]) {
+    const file = path.join(folder, `${workflow.name}.md`);
+    if (existsSync(file)) continue;
+    const steps = workflow.steps.map((step) => `## ${step.skillName}`).join('\n\n');
+    await writeFile(file, `---\nname: ${JSON.stringify(workflow.name)}\n---\n\n${steps}\n`);
+  }
+  await server.skills.refresh();
+}
 // Seeding again after a restart repeats the same command ids, which the server answers as
 // duplicates. The trigger tests wait for this line.
 process.stdout.write('wow e2e server ready\n');

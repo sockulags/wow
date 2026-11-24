@@ -141,7 +141,6 @@ async function fillSource(): Promise<void> {
   set('trackers.jira.authMode', 'pat');
   set('trackers.jira.email', markedEmail);
   set('trackers.github.owner', 'marked-owner-6620');
-  set('triggers.ignoredCommentAuthors', ['marked-bot-6621']);
   set('hosts.pollSeconds', 600);
   set('scheduler.tickSeconds', 45);
   set('calendar.workHours', { start: '07:00', end: '15:00', days: ['monday'] });
@@ -253,7 +252,6 @@ describe('saving a setup (spec 21)', () => {
       markedFolderName,
       markedEmail,
       'marked-owner-6620',
-      'marked-bot-6621',
       markedCard,
       markedBacklog,
       'Marked thread 5521',
@@ -268,7 +266,6 @@ describe('saving a setup (spec 21)', () => {
     for (const key of [
       'trackers.github.token',
       'trackers.github.owner',
-      'triggers.ignoredCommentAuthors',
       'trackers.jira.email',
       'calendar.workHours',
       'skills.directories',
@@ -578,12 +575,6 @@ describe('refusing a file (spec 23)', () => {
       'settings:\n  trackers.github.owner: ada\n',
       5,
       'trackers.github.owner is an account name, which each person fills in for themselves',
-    ],
-    [
-      'the accounts whose comments start nothing',
-      'settings:\n  triggers.ignoredCommentAuthors: [ada-bot]\n',
-      5,
-      'triggers.ignoredCommentAuthors is an account name, which each person fills in for themselves',
     ],
     [
       'toFillIn naming a setting that is not secret',

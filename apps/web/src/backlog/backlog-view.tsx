@@ -350,7 +350,14 @@ function PlanStatus({ item }: { item: BacklogItem }) {
             <Link to="/calendar" search={{ view: 'day', date }} className={linkClass}>
               {formatWhen(card.start, zone)}
             </Link>
-            <span className="text-muted-foreground">with {workflowName(card.workflowId)}</span>
+            <span className="text-muted-foreground">
+              with {card.workflowName ?? workflowName(card.workflowId)}
+            </span>
+            {card.threadId && (
+              <Link to="/chat/$threadId" params={{ threadId: card.threadId }} className={linkClass}>
+                Open its thread
+              </Link>
+            )}
           </p>
         );
       })}

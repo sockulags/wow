@@ -1,22 +1,26 @@
 import type {
   CalendarItem,
   MissedTriggerPolicy,
+  ProviderCommand,
+  ProviderEvent,
   ProviderInstance,
+  RepeatRule,
   ServerCommand,
   Thread,
   Trigger,
-  WorkflowRun,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   calendarItems,
+  cardOccurrences,
   notifications,
   providerInstances,
+  threadItems,
   threads,
   triggers,
   workflowRuns,
@@ -25,8 +29,9 @@ import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 import type { SchedulerTimers } from './service.js';
 
-// U11 ground truth: the scheduler's tick and missed policy with a clock the test moves. Nothing
-// sleeps: the tick runs when the test calls it, and waits resolve on the commit that matches.
+// U11 ground truth, and scheduled jobs as main threads (orchestrator threads spec 27, 28): the
+// scheduler's tick and missed policy with a clock the test moves. Nothing sleeps: the tick runs
+// when the test calls it, and waits resolve on the commit that matches.
 
 let root: string;
 let projectDir: string;
@@ -62,6 +67,20 @@ const instance: ProviderInstance = {
   updateRun: null,
 };
 
+// What the mock agent does with the card's text: "Keep working" never ends its turn, anything
+// else ends it.
+const script = (command: ProviderCommand): ProviderEvent[] => {
+  if (command.type !== 'startTurn') return [];
+  const { threadId } = command;
+  const session: ProviderEvent = { type: 'session', threadId, providerSessionId: `s-${threadId}` };
+  if (command.prompt.includes('Keep working')) return [session];
+  return [
+    session,
+    { type: 'textDelta', threadId, itemId: `${threadId}-text`, delta: 'Done.' },
+    { type: 'turnCompleted', threadId },
+  ];
+};
+
 let commandCount = 0;
 const dispatch = (command: ServerCommand) =>
   server.engine.dispatch(`test-${(commandCount += 1)}`, command);
@@ -75,7 +94,7 @@ const trigger = (cardId = 'c1') =>
     .from(triggers)
     .where(eq(triggers.id, `${cardId}:trigger`))
     .get() as Trigger | undefined;
-const runs = (): WorkflowRun[] => db().select().from(workflowRuns).all();
+const allThreads = (): Thread[] => db().select().from(threads).all();
 const thread = (id: string): Thread | undefined =>
   db().select().from(threads).where(eq(threads.id, id)).get();
 const notices = () =>
@@ -85,12 +104,12 @@ const notices = () =>
     .all()
     .map((row) => [row.kind, row.title]);
 
-// Resolves on the commit after which the run matches.
-function runBecomes(predicate: (run: WorkflowRun) => boolean): Promise<WorkflowRun> {
+// Resolves on the commit after which the card matches.
+function cardBecomes(predicate: (current: CalendarItem) => boolean): Promise<CalendarItem> {
   return new Promise((resolve) => {
     const check = () => {
-      const found = runs().find(predicate);
-      if (found) {
+      const found = card();
+      if (found && predicate(found)) {
         unsubscribe();
         resolve(found);
       }
@@ -113,14 +132,14 @@ async function launch(): Promise<RunningServer> {
     clock: () => now,
     schedulerTimers: timers,
     hooks: {
-      providers: { claude: (row) => new MockProviderAdapter(row.kind) },
+      providers: { claude: (row) => new MockProviderAdapter(row.kind, script) },
     },
   });
 }
 
 // A server stopped while time passes, then started again.
 async function restart(secondsLater: number): Promise<void> {
-  await server.workflows.settled();
+  await server.providerService.idle();
   await server.stop();
   now = at(secondsLater);
   server = await launch();
@@ -135,7 +154,7 @@ const createCard = (overrides: Partial<Extract<ServerCommand, { type: 'card.crea
     end: iso(60 + 1800),
     zone: 'Europe/Stockholm',
     projectId: 'p1',
-    workflowId: 'wf1',
+    workflowName: 'Bug',
     ...overrides,
   });
 
@@ -143,38 +162,23 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'wow-scheduler-'));
   projectDir = path.join(root, 'project');
   await mkdir(projectDir, { recursive: true });
+  // The workflow the cards start, as a file in wow's own workflow folder (spec 19).
+  await mkdir(path.join(root, '.wow', 'workflows'), { recursive: true });
+  await writeFile(
+    path.join(root, '.wow', 'workflows', 'Bug.md'),
+    '---\nname: Bug\n---\n\n## Fix it\n\ngate: after\n',
+  );
   now = start;
   ticks = [];
   server = await launch();
   db().insert(providerInstances).values(instance).run();
   dispatch({ type: 'project.create', projectId: 'p1', name: 'wow', cwd: projectDir });
-  dispatch({
-    type: 'workflow.create',
-    workflowId: 'wf1',
-    name: 'Bug',
-    steps: [
-      {
-        id: 's1',
-        skillName: 'deliver-work',
-        providerInstanceId: 'claude-work',
-        gateBefore: false,
-        gateAfter: true,
-        expectedArtifacts: [],
-      },
-      {
-        id: 's2',
-        skillName: 'check-work',
-        providerInstanceId: 'claude-work',
-        gateBefore: false,
-        gateAfter: false,
-        expectedArtifacts: [],
-      },
-    ],
-  });
+  await server.skills.refresh();
 });
 
 afterEach(async () => {
-  await server.workflows.settled();
+  await server.providerService.idle();
+  await server.cardFollower.settled();
   await server.stop();
   await rm(root, { recursive: true, force: true });
 });
@@ -184,28 +188,28 @@ describe('triggers follow their card', () => {
     createCard();
     expect(trigger()).toMatchObject({
       calendarItemId: 'c1',
-      workflowId: 'wf1',
+      workflowId: 'Bug',
       runAt: iso(60),
       zone: 'Europe/Stockholm',
       state: 'scheduled',
       runId: null,
       offerRunNow: false,
     });
-    expect(card().state).toBe('scheduled');
+    expect(card()).toMatchObject({ state: 'scheduled', threadMode: 'new', workflowName: 'Bug' });
 
     dispatch({ type: 'card.update', cardId: 'c1', start: iso(3600), end: iso(5400) });
     expect(trigger()).toMatchObject({ runAt: iso(3600), state: 'scheduled' });
 
-    dispatch({ type: 'card.update', cardId: 'c1', workflowId: null });
+    dispatch({ type: 'card.update', cardId: 'c1', workflowName: null });
     expect(trigger()?.state).toBe('cancelled');
-    dispatch({ type: 'card.update', cardId: 'c1', workflowId: 'wf1' });
+    dispatch({ type: 'card.update', cardId: 'c1', workflowName: 'Bug' });
     expect(trigger()?.state).toBe('scheduled');
   });
 
-  it('needs a project and a workflow', () => {
-    createCard({ projectId: undefined });
+  it('needs a workflow but no project (orchestrator threads spec 27)', () => {
+    createCard({ projectId: undefined, workflowName: undefined });
     expect(trigger()).toBeUndefined();
-    dispatch({ type: 'card.update', cardId: 'c1', projectId: 'p1' });
+    dispatch({ type: 'card.update', cardId: 'c1', workflowName: 'Bug' });
     expect(trigger()?.state).toBe('scheduled');
   });
 
@@ -226,51 +230,76 @@ describe('the tick', () => {
     expect(ticks.at(-1)).toBe(5000);
   });
 
-  it('fires a due trigger into a run that waits at the gate (behaviors 8 and 9)', async () => {
-    createCard();
+  it('starts a main thread that runs the workflow with the card text, and the card follows it to done', async () => {
+    createCard({ body: 'The login page loops.' });
     now = at(59);
     server.scheduler.tick();
-    expect(runs()).toEqual([]);
+    expect(allThreads()).toEqual([]);
 
     now = at(60);
     server.scheduler.tick();
-    const [run] = runs();
-    expect(run).toMatchObject({ workflowId: 'wf1', projectId: 'p1', calendarItemId: 'c1' });
-    const runId = run?.id ?? '';
-    expect(trigger()).toMatchObject({ state: 'fired', runId });
-    expect(card()).toMatchObject({ state: 'running', runId });
-    expect(thread(`${runId}.s1`)).toMatchObject({
+    const [started] = allThreads();
+    expect(started).toMatchObject({
+      title: 'Fix the login bug · 2026-11-02',
       projectId: 'p1',
       cwd: projectDir,
       providerInstanceId: 'claude-work',
       model: 'opus',
       effort: 'high',
+      permissionMode: 'default',
+      parentThreadId: null,
+      runId: null,
     });
+    const threadId = started?.id ?? '';
+    expect(trigger()).toMatchObject({ state: 'fired', runId: threadId });
+    expect(card()).toMatchObject({ state: 'running', threadId, runId: null });
+    expect(runs()).toEqual([]);
 
-    await runBecomes((current) => current.state === 'waiting');
-    expect(card().state).toBe('waiting');
-    expect(thread(`${runId}.s1`)?.state).toBe('needs_you');
-    expect(notices()).toEqual([
-      ['started', 'Workflow run started'],
-      ['waiting', 'Waiting for you'],
-    ]);
+    await cardBecomes((current) => current.state === 'done');
+    await server.providerService.idle();
+    expect(notices()).toEqual([['started', 'Scheduled thread started']]);
 
     // A later tick does not fire the trigger again.
     now = at(120);
     server.scheduler.tick();
-    expect(runs()).toHaveLength(1);
-
-    dispatch({ type: 'workflowRun.continue', runId });
-    await runBecomes((current) => current.state === 'done');
-    expect(card().state).toBe('done');
+    expect(allThreads()).toHaveLength(1);
   });
 
+  it('shows waiting while the thread waits for the user, then how its turn ended (spec 28)', async () => {
+    createCard({ body: 'Keep working' });
+    now = at(60);
+    server.scheduler.tick();
+    const threadId = card().threadId ?? '';
+    await server.providerService.idle();
+    dispatch({
+      type: 'provider.events',
+      threadId,
+      events: [
+        {
+          type: 'approvalRequested',
+          threadId,
+          approvalId: 'a1',
+          kind: 'command',
+          summary: 'Allow the build?',
+          request: { toolName: 'Bash' },
+        },
+      ],
+    });
+    await cardBecomes((current) => current.state === 'waiting');
+    expect(thread(threadId)?.state).toBe('needs_you');
+    dispatch({
+      type: 'provider.events',
+      threadId,
+      events: [{ type: 'turnFailed', threadId, error: 'Invented failure' }],
+    });
+    await cardBecomes((current) => current.state === 'failed');
+  });
   it('does not fire while paused and treats what came due as missed on resume', () => {
     createCard();
     dispatch({ type: 'setting.set', key: 'scheduler.paused', scope: 'global', value: true });
     now = at(90);
     server.scheduler.tick();
-    expect(runs()).toEqual([]);
+    expect(allThreads()).toEqual([]);
     expect(trigger()?.state).toBe('scheduled');
 
     dispatch({ type: 'setting.set', key: 'scheduler.paused', scope: 'global', value: false });
@@ -278,15 +307,38 @@ describe('the tick', () => {
     expect(card().state).toBe('missed');
   });
 
-  it('fails the card when its run cannot start', () => {
-    createCard();
-    dispatch({ type: 'workflow.delete', workflowId: 'wf1' });
+  it('fails the card when its workflow file is gone', () => {
+    createCard({ workflowName: 'Gone' });
     now = at(60);
     server.scheduler.tick();
-    expect(runs()).toEqual([]);
+    expect(allThreads()).toEqual([]);
     expect(trigger()).toMatchObject({ state: 'fired', runId: null });
     expect(card().state).toBe('failed');
     expect(notices()).toEqual([['failed', 'Trigger failed']]);
+  });
+
+  it('starts a card stored before workflows were files by its stored workflow’s name', async () => {
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'wf1',
+      name: 'Bug',
+      steps: [
+        {
+          id: 's1',
+          skillName: 'deliver-work',
+          providerInstanceId: 'claude-work',
+          gateBefore: false,
+          gateAfter: false,
+          expectedArtifacts: [],
+        },
+      ],
+    });
+    createCard({ workflowName: undefined, workflowId: 'wf1' });
+    now = at(60);
+    server.scheduler.tick();
+    expect(allThreads()).toHaveLength(1);
+    expect(runs()).toEqual([]);
+    await cardBecomes((current) => current.state === 'done');
   });
 
   it('sends no notifications when they are off', async () => {
@@ -299,8 +351,90 @@ describe('the tick', () => {
     createCard();
     now = at(60);
     server.scheduler.tick();
-    await runBecomes((current) => current.state === 'waiting');
+    await cardBecomes((current) => current.state === 'done');
     expect(notices()).toEqual([]);
+  });
+});
+
+const runs = () => db().select().from(workflowRuns).all();
+
+// What the user's messages in a thread said, and the workflow each one sent.
+const sentIn = (threadId: string) =>
+  db()
+    .select()
+    .from(threadItems)
+    .where(eq(threadItems.threadId, threadId))
+    .all()
+    .filter((item) => item.kind === 'user')
+    .map((item) => {
+      const payload = item.payload as { text: string; skills?: { name: string; text?: string }[] };
+      return { text: payload.text, workflow: payload.skills?.[0]?.name };
+    });
+
+const daily: RepeatRule = { frequency: 'daily', interval: 1, weekdays: [], end: { kind: 'never' } };
+
+describe('scheduled jobs as main threads (orchestrator threads spec 27, 28)', () => {
+  it('fails the occurrence and moves on when its same thread cannot take the message', async () => {
+    createCard({ repeat: daily, threadMode: 'same' });
+    now = at(60);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    // The thread's provider is gone by the next occurrence.
+    db().delete(providerInstances).run();
+    now = at(60 + 86_400);
+    server.scheduler.tick();
+    expect(card().state).toBe('failed');
+    expect(trigger()).toMatchObject({ state: 'scheduled', runAt: iso(60 + 2 * 86_400) });
+    expect(
+      db()
+        .select()
+        .from(cardOccurrences)
+        .all()
+        .map((row) => [row.date, row.outcome]),
+    ).toEqual([
+      ['2026-11-02', 'fired'],
+      ['2026-11-03', 'failed'],
+    ]);
+    // A later tick at the same time tries nothing again.
+    server.scheduler.tick();
+    expect(allThreads()).toHaveLength(1);
+  });
+
+  it('new: each occurrence of a daily card makes a main thread titled with the card and the day', async () => {
+    createCard({ repeat: daily, body: 'The login page loops.' });
+    now = at(60);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    now = at(60 + 86_400);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    const made = allThreads().toSorted((a, b) => a.title.localeCompare(b.title));
+    expect(made.map((each) => each.title)).toEqual([
+      'Fix the login bug · 2026-11-02',
+      'Fix the login bug · 2026-11-03',
+    ]);
+    for (const each of made) {
+      expect(sentIn(each.id)).toEqual([{ text: 'The login page loops.', workflow: 'Bug' }]);
+    }
+    expect(card().threadId).toBe(made.at(-1)?.id);
+  });
+
+  it('same: each occurrence is the next message in the one thread', async () => {
+    createCard({ repeat: daily, threadMode: 'same' });
+    now = at(60);
+    server.scheduler.tick();
+    await cardBecomes((current) => current.state === 'done');
+    const [only] = allThreads();
+    expect(only?.title).toBe('Fix the login bug');
+    now = at(60 + 86_400);
+    server.scheduler.tick();
+    expect(card()).toMatchObject({ state: 'running', threadId: only?.id });
+    await cardBecomes((current) => current.state === 'done');
+    expect(allThreads()).toHaveLength(1);
+    expect(sentIn(only?.id ?? '')).toEqual([
+      { text: 'Fix the login bug', workflow: 'Bug' },
+      { text: 'Fix the login bug', workflow: 'Bug' },
+    ]);
   });
 });
 
@@ -308,36 +442,36 @@ const policy = (value: MissedTriggerPolicy) =>
   dispatch({ type: 'setting.set', key: 'scheduler.missedPolicy', scope: 'global', value });
 
 describe('missed triggers at startup (behavior 12)', () => {
-  it('run: starts the run at once', async () => {
+  it('run: starts the thread at once', async () => {
     policy('run');
     createCard();
     await restart(600);
-    const [run] = runs();
-    expect(run?.calendarItemId).toBe('c1');
-    expect(trigger()).toMatchObject({ state: 'fired', runId: run?.id });
-    expect(card().state).toBe('running');
+    const [started] = allThreads();
+    expect(started?.title).toBe('Fix the login bug · 2026-11-02');
+    expect(trigger()).toMatchObject({ state: 'fired', runId: started?.id });
+    expect(card()).toMatchObject({ threadId: started?.id });
   });
 
   it('mark: marks the card missed and offers Run now', async () => {
     policy('mark');
     createCard();
     await restart(600);
-    expect(runs()).toEqual([]);
+    expect(allThreads()).toEqual([]);
     expect(trigger()).toMatchObject({ state: 'missed', offerRunNow: true });
     expect(card().state).toBe('missed');
 
     dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'now' });
-    expect(card()).toMatchObject({ state: 'running', runId: 'now' });
+    expect(card()).toMatchObject({ state: 'running', threadId: 'now' });
+    expect(thread('now')).toMatchObject({ title: 'Fix the login bug · 2026-11-02' });
     expect(trigger()).toMatchObject({ state: 'fired', runId: 'now', offerRunNow: false });
-    await runBecomes((current) => current.state === 'waiting');
-    expect(card().state).toBe('waiting');
+    await cardBecomes((current) => current.state === 'done');
   });
 
   it('skip: marks the card missed and does nothing', async () => {
     policy('skip');
     createCard();
     await restart(600);
-    expect(runs()).toEqual([]);
+    expect(allThreads()).toEqual([]);
     expect(trigger()).toMatchObject({ state: 'missed', offerRunNow: false });
     expect(card().state).toBe('missed');
   });
@@ -347,40 +481,19 @@ describe('missed triggers at startup (behavior 12)', () => {
     createCard({ start: iso(3600), end: iso(5400) });
     await restart(600);
     expect(trigger()?.state).toBe('scheduled');
-    expect(runs()).toEqual([]);
+    expect(allThreads()).toEqual([]);
   });
 });
 
-describe('deleting a card with a live run (behavior 13)', () => {
-  beforeEach(async () => {
-    createCard();
+describe('deleting a card that started a thread', () => {
+  it('deletes the card and leaves its thread', async () => {
+    createCard({ body: 'Keep working' });
     now = at(60);
     server.scheduler.tick();
-    await runBecomes((current) => current.state === 'waiting');
-  });
-
-  it('asks first', () => {
-    expect(() => dispatch({ type: 'card.delete', cardId: 'c1' })).toThrow(/say whether to stop/);
-    expect(card()).toBeDefined();
-  });
-
-  it('stops the run and keeps its threads', () => {
-    const [run] = runs();
-    dispatch({ type: 'card.delete', cardId: 'c1', stopRun: true });
+    const threadId = card().threadId ?? '';
+    dispatch({ type: 'card.delete', cardId: 'c1' });
     expect(card()).toBeUndefined();
-    expect(runs()[0]?.state).toBe('stopped');
-    expect(thread(`${run?.id ?? ''}.s1`)).toBeDefined();
-  });
-
-  it('or leaves the run going', () => {
-    dispatch({ type: 'card.delete', cardId: 'c1', stopRun: false });
-    expect(card()).toBeUndefined();
-    expect(runs()[0]?.state).toBe('waiting');
-  });
-
-  it('refuses Run now while the run is live', () => {
-    expect(() => dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'again' })).toThrow(
-      /already has a run/,
-    );
+    expect(thread(threadId)).toBeDefined();
+    dispatch({ type: 'thread.interrupt', threadId });
   });
 });

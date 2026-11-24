@@ -337,6 +337,13 @@
       "when": 1795458511290,
       "tag": "0047_retire_chat_helpers",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1795492912970,
+      "tag": "0048_cards_start_threads",
+      "breakpoints": true
     }
   ]
 }

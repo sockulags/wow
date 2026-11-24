@@ -2,26 +2,30 @@ import type {
   CalendarItem,
   CardOccurrence,
   MissedTriggerPolicy,
+  ProviderCommand,
+  ProviderEvent,
   ProviderInstance,
   RepeatRule,
   ServerCommand,
   Trigger,
-  WorkflowRun,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cardStateOfThread } from '../core/card-threads.js';
+import { readModel } from '../core/projector.js';
 import { readCalendarRange } from '../core/series.js';
 import { snapshot } from '../core/subscriptions.js';
 import {
   calendarItems,
+  cardOccurrences,
   notifications,
   providerInstances,
+  threads,
   triggers,
-  workflowRuns,
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
@@ -85,7 +89,36 @@ const trigger = (cardId = 'c1') =>
     .from(triggers)
     .where(eq(triggers.id, `${cardId}:trigger`))
     .get() as Trigger | undefined;
-const runs = (): WorkflowRun[] => db().select().from(workflowRuns).all();
+// The main threads a card started (orchestrator threads spec 27), each with how the card reads
+// it and the occurrence it last ran for.
+interface CardThread {
+  readonly id: string;
+  readonly state: string | undefined;
+  readonly title: string;
+  readonly occurrence: { readonly date: string } | null;
+}
+const runs = (): CardThread[] =>
+  db()
+    .select()
+    .from(threads)
+    .all()
+    .filter((thread) => thread.parentThreadId === null)
+    .map((thread) => {
+      const date = db()
+        .select()
+        .from(cardOccurrences)
+        .all()
+        .filter((row) => row.threadId === thread.id)
+        .map((row) => row.date)
+        .toSorted()
+        .at(-1);
+      return {
+        id: thread.id,
+        state: cardStateOfThread(thread.id, readModel(db())),
+        title: thread.title,
+        occurrence: date === undefined ? null : { date },
+      };
+    });
 const notices = () =>
   db()
     .select()
@@ -95,7 +128,7 @@ const notices = () =>
 const range = (from: string, to: string, limit = 200) =>
   readCalendarRange(db(), { from, to }, limit);
 
-function runBecomes(predicate: (run: WorkflowRun) => boolean): Promise<WorkflowRun> {
+function runBecomes(predicate: (run: CardThread) => boolean): Promise<CardThread> {
   return new Promise((resolve) => {
     const check = () => {
       const found = runs().find(predicate);
@@ -109,6 +142,18 @@ function runBecomes(predicate: (run: WorkflowRun) => boolean): Promise<WorkflowR
   });
 }
 
+const script = (command: ProviderCommand): ProviderEvent[] => {
+  if (command.type !== 'startTurn') return [];
+  const { threadId } = command;
+  const session: ProviderEvent = { type: 'session', threadId, providerSessionId: `s-${threadId}` };
+  if (command.prompt.includes('Keep working')) return [session];
+  return [
+    session,
+    { type: 'textDelta', threadId, itemId: `${threadId}-text`, delta: 'Done.' },
+    { type: 'turnCompleted', threadId },
+  ];
+};
+
 async function launch(): Promise<RunningServer> {
   return startServer({
     home: path.join(root, '.wow'),
@@ -121,12 +166,12 @@ async function launch(): Promise<RunningServer> {
     watchSkills: () => ({ close: () => Promise.resolve() }),
     clock: () => now,
     schedulerTimers: timers,
-    hooks: { providers: { claude: (row) => new MockProviderAdapter(row.kind) } },
+    hooks: { providers: { claude: (row) => new MockProviderAdapter(row.kind, script) } },
   });
 }
 
 async function restart(later: string): Promise<void> {
-  await server.workflows.settled();
+  await server.providerService.idle();
   await server.stop();
   now = new Date(later);
   server = await launch();
@@ -168,6 +213,16 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'wow-repeat-'));
   projectDir = path.join(root, 'project');
   await mkdir(projectDir, { recursive: true });
+  // The stored workflows below as the files they were written out as (spec 22).
+  await mkdir(path.join(root, '.wow', 'workflows'), { recursive: true });
+  await writeFile(
+    path.join(root, '.wow', 'workflows', 'Review.md'),
+    '---\nname: Review\n---\n\n## Look\n',
+  );
+  await writeFile(
+    path.join(root, '.wow', 'workflows', 'Gated.md'),
+    '---\nname: Gated\n---\n\n## Look\n\nKeep working until the person answers.\n',
+  );
   now = new Date('2026-11-04T07:00:00.000Z');
   server = await launch();
   db().insert(providerInstances).values(instance).run();
@@ -189,7 +244,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await server.workflows.settled();
+  await server.providerService.idle();
+  await server.cardFollower.settled();
   await server.stop();
   await rm(root, { recursive: true, force: true });
 });
@@ -294,7 +350,7 @@ describe('firing (spec 5, 6, 9)', () => {
       const run = await runBecomes(
         (current) => current.occurrence?.date === date && current.state === 'done',
       );
-      expect(run.occurrence).toEqual({ date, start: at(date) });
+      expect(run.occurrence).toEqual({ date });
       expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at(next), runId: run.id });
       expect(card()?.nextAt).toBe(at(next));
     }
@@ -326,7 +382,7 @@ describe('firing (spec 5, 6, 9)', () => {
     expect(first).toMatchObject({
       date: '2026-11-04',
       next: false,
-      record: { outcome: 'fired', runId: run.id },
+      record: { outcome: 'fired', threadId: run.id },
     });
     expect(second).toMatchObject({ date: '2026-11-05', next: true, record: null });
   });
@@ -334,25 +390,38 @@ describe('firing (spec 5, 6, 9)', () => {
 
 describe('a busy card (spec 7)', () => {
   it('starts nothing while the run of an earlier occurrence is still going', async () => {
-    createCard({ workflowId: 'gated' });
+    createCard({ workflowId: 'gated', threadMode: 'same' });
     tickAt(at('2026-11-04'));
-    const first = await runBecomes((current) => current.state === 'waiting');
+    const first = await runBecomes((current) => current.state === 'running');
 
     tickAt(at('2026-11-05'));
     expect(runs()).toHaveLength(1);
     expect(records().at(-1)).toMatchObject({
       date: '2026-11-05',
       outcome: 'skipped',
-      runId: null,
-      reason: expect.stringMatching(/2026-11-04.*waiting for you/) as unknown,
+      threadId: first.id,
+      reason: expect.stringMatching(/still working on an earlier occurrence/) as unknown,
     });
     expect(notices()).toContainEqual(['skipped', 'Occurrence skipped']);
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-06') });
 
-    dispatch({ type: 'workflowRun.stop', runId: first.id });
+    // The thread stops; the mock provider reports it as a real one would.
+    dispatch({
+      type: 'provider.events',
+      threadId: first.id,
+      events: [{ type: 'turnInterrupted', threadId: first.id }],
+    });
+    await runBecomes((current) => current.state === 'stopped');
     tickAt(at('2026-11-06'));
+    // The same thread gets the next message.
     const third = await runBecomes((current) => current.occurrence?.date === '2026-11-06');
-    expect(third.id).not.toBe(first.id);
+    expect(third.id).toBe(first.id);
+    await server.providerService.idle();
+    dispatch({
+      type: 'provider.events',
+      threadId: first.id,
+      events: [{ type: 'turnInterrupted', threadId: first.id }],
+    });
   });
 });
 
@@ -393,7 +462,11 @@ describe('three missed occurrences (spec 8)', () => {
     dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'now' });
     const run = await runBecomes((current) => current.id === 'now');
     expect(run.occurrence?.date).toBe('2026-11-06');
-    expect(records().at(-1)).toMatchObject({ outcome: 'fired', runId: 'now', offerRunNow: false });
+    expect(records().at(-1)).toMatchObject({
+      outcome: 'fired',
+      threadId: 'now',
+      offerRunNow: false,
+    });
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-09') });
   });
 
@@ -467,7 +540,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
       ['2026-11-05', at('2026-11-05', 60)],
       ['2026-11-06', at('2026-11-06', 60)],
     ]);
-    expect(found[0]?.record).toMatchObject({ outcome: 'fired', runId: first.id });
+    expect(found[0]?.record).toMatchObject({ outcome: 'fired', threadId: first.id });
   });
 
   it('follows a changed rule and a changed workflow', async () => {
@@ -485,8 +558,8 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
       ),
     ).toEqual(['2026-11-04', '2026-11-09', '2026-11-16']);
     tickAt(at('2026-11-04'));
-    const run = await runBecomes((current) => current.state === 'waiting');
-    expect(run.workflowId).toBe('gated');
+    const run = await runBecomes((current) => current.state === 'running');
+    expect(run.title).toBe('Morning review · 2026-11-04');
     expect(trigger()?.runAt).toBe(at('2026-11-09'));
   });
 
@@ -691,15 +764,15 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     ]);
   });
 
-  it('needs stopRun to delete a series whose run is live', async () => {
+  it('deletes a series whose thread works and leaves the thread', async () => {
     createCard({ workflowId: 'gated' });
     tickAt(at('2026-11-04'));
-    const run = await runBecomes((current) => current.state === 'waiting');
-    expect(() => dispatch({ type: 'card.delete', cardId: 'c1' })).toThrow(/say whether to stop/);
-    dispatch({ type: 'card.delete', cardId: 'c1', stopRun: true });
+    const run = await runBecomes((current) => current.state === 'running');
+    dispatch({ type: 'card.delete', cardId: 'c1' });
     expect(card()).toBeUndefined();
-    expect(runs().find((current) => current.id === run.id)?.state).toBe('stopped');
+    expect(runs().find((current) => current.id === run.id)?.state).toBe('running');
     expect(trigger()?.state).toBe('cancelled');
+    dispatch({ type: 'thread.interrupt', threadId: run.id });
   });
 
   it('turns a single card that ran into a series and back', async () => {
@@ -709,7 +782,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(trigger()?.state).toBe('fired');
 
     dispatch({ type: 'card.update', cardId: 'c1', repeat: weekdays });
-    expect(records()).toMatchObject([{ date: '2026-11-04', outcome: 'fired', runId: run.id }]);
+    expect(records()).toMatchObject([{ date: '2026-11-04', outcome: 'fired', threadId: run.id }]);
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-05') });
 
     dispatch({ type: 'card.update', cardId: 'c1', repeat: null });

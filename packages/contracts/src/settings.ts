@@ -39,7 +39,6 @@ export const SettingGroup = z.enum([
   'plans',
   'trackers',
   'hosts',
-  'triggers',
   'viewer',
   'diff',
   'workspaces',
@@ -65,7 +64,6 @@ export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   plans: 'Plans',
   trackers: 'Trackers',
   hosts: 'Hosts',
-  triggers: 'Event triggers',
   viewer: 'Viewer',
   diff: 'Changes',
   workspaces: 'Working copies',
@@ -1788,34 +1786,6 @@ export const settingsRegistry = {
     description:
       'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
     default: 200,
-    scope: 'global',
-  }),
-  'triggers.eventsEnabled': defineSetting({
-    schema: z.boolean(),
-    group: 'triggers',
-    label: 'Start runs from events',
-    description:
-      'Let event triggers start a workflow run when polling first sees a pull request merged, its checks fail or a review comment arrive. Off: events seen meanwhile start nothing, also not later. A paused scheduler does the same.',
-    default: true,
-    scope: 'global',
-  }),
-  'triggers.forkPullRequests': defineSetting({
-    schema: z.boolean(),
-    group: 'triggers',
-    label: 'Start runs for pull requests from forks',
-    description:
-      "Let an event on a pull request or merge request from a fork start a run. The run's working copy is then at the fork's head commit, so the fork's files (agent instructions, skills, hook settings, scripts) steer an agent on this computer. Off: such an event starts nothing, and a notification says so.",
-    default: false,
-    scope: 'project',
-  }),
-  'triggers.ignoredCommentAuthors': defineSetting({
-    personal: 'account',
-    schema: z.array(z.string().trim().min(1)),
-    group: 'triggers',
-    label: 'Accounts whose comments start nothing',
-    description:
-      "Host account names whose review comments never start a run, for example the account your agents write as. A comment that arrives while the trigger's own run for that pull request is still going starts nothing either, so a run that answers a review cannot start the next one.",
-    default: [],
     scope: 'global',
   }),
   'hosts.polling': defineSetting({

@@ -28,6 +28,7 @@ import { decideDelegation, decideFollow, isDelegationCommand } from '../assistan
 import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
 import { decideHelper, decideHelperFollow } from '../helpers/decide.js';
+import { decideTriggerInSteps, isSteppedTriggerCommand, isTriggerCommand } from './triggers.js';
 import {
   CommandRejected,
   decide,
@@ -54,6 +55,16 @@ export function* decideInSteps(
   // What a held or inverse command is decided as once the user said so.
   const asUser: DecideContext = { ...context, origin: 'user' };
 
+  // A card's occurrence: the trigger's events, then its main thread is made and the workflow
+  // sent (orchestrator threads spec 27).
+  if (
+    context.origin !== 'assistant' &&
+    isSteppedTriggerCommand(command) &&
+    isTriggerCommand(command)
+  ) {
+    yield* decideTriggerInSteps(command, read, context);
+    return;
+  }
   // Helper threads (agent orchestration spec 2): only a thread's agent through wow's helper tools.
   if (command.type === 'helper.followed') {
     if (context.origin !== undefined && context.origin !== 'user') {
@@ -160,9 +171,19 @@ export function* decideInSteps(
     const used =
       covers && 'covered' in covers ? proposalOf(commandId, sent.data, read, context) : undefined;
     const before = target ? snapshot(target, read) : null;
-    const events = decide(sent.data, read, asUser);
-    if (events.length === 0) return;
-    yield events;
+    // A card's Run now is decided in steps; what it did is reported like any change below.
+    if (isSteppedTriggerCommand(sent.data) && isTriggerCommand(sent.data)) {
+      let any = false;
+      for (const step of decideTriggerInSteps(sent.data, read, asUser)) {
+        any ||= step.length > 0;
+        yield step;
+      }
+      if (!any) return;
+    } else {
+      const events = decide(sent.data, read, asUser);
+      if (events.length === 0) return;
+      yield events;
+    }
     const change = target
       ? changeOf(commandId, sent.data, target, before, snapshot(target, read), read, context)
       : undefined;
@@ -204,7 +225,7 @@ export function* decideInSteps(
       // The yes is for what the card says. The proposal stays open so the user can say No.
       const stale = acceptRefusal(proposal, read);
       if (stale !== undefined) throw new CommandRejected('conflict', stale);
-      yield decide(proposal.command, read, asUser);
+      yield* applied(proposal.command, read, asUser);
       yield [answered(proposal.id, 'accepted', null, context)];
       return;
     }
@@ -272,3 +293,15 @@ const answered = (
   aggregate: proposalId,
   payload: { proposalId, state, reason, at: context.now },
 });
+
+// A command the user said yes to, decided as it would be had they sent it: a card's Run now in
+// steps, so its thread is made and the workflow sent (orchestrator threads spec 27).
+function* applied(
+  command: ServerCommand,
+  read: ReadModel,
+  context: DecideContext,
+): Generator<DomainEvent[], void> {
+  if (isSteppedTriggerCommand(command) && isTriggerCommand(command)) {
+    yield* decideTriggerInSteps(command, read, context);
+  } else yield decide(command, read, context);
+}

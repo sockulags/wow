@@ -218,9 +218,7 @@ describe('trigger rows', () => {
   });
 
   it('says why nothing starts while event triggers are off or the scheduler is paused (spec 52)', () => {
-    expect(triggersHeld(true, false)).toBeUndefined();
-    expect(triggersHeld(false, false)).toMatch(/^Event triggers are switched off/);
-    expect(triggersHeld(true, true)).toMatch(/^The scheduler is paused/);
+    expect(triggersHeld()).toMatch(/^Event triggers start nothing any more/);
   });
 });
 
@@ -250,7 +248,7 @@ describe('Triggers tab', () => {
     expect(
       within(shown.getByRole('region', { name: 'Kettle' })).getByText('a workflow that is gone'),
     ).toBeTruthy();
-    expect(shown.queryByTestId('triggers-held')).toBeNull();
+    expect(shown.getByTestId('triggers-held').textContent).toMatch(/^Event triggers start nothing/);
   });
 
   it('switches a trigger off and deletes one', async () => {
@@ -343,13 +341,10 @@ describe('Triggers tab', () => {
     expect((await dialog.findByRole('alert')).textContent).toBe(refuse);
   });
 
-  it('says so while event triggers are switched off', async () => {
-    await renderApp(
-      route,
-      fake([merged], { settings: { 'triggers.eventsEnabled': false } }).runtime,
-    );
+  it('says that event triggers start nothing any more', async () => {
+    await renderApp(route, fake([merged]).runtime);
     expect((await (await panel()).findByTestId('triggers-held')).textContent).toMatch(
-      /^Event triggers are switched off/,
+      /^Event triggers start nothing any more/,
     );
   });
 });

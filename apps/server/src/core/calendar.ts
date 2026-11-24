@@ -40,7 +40,9 @@ type CalendarCommand = Extract<
 >;
 
 export const isCalendarCommand = (command: ServerCommand): command is CalendarCommand =>
-  (command.type.startsWith('card.') && command.type !== 'card.runNow') ||
+  (command.type.startsWith('card.') &&
+    command.type !== 'card.runNow' &&
+    command.type !== 'card.followThread') ||
   command.type.startsWith('outlook.');
 
 // Outlook rows are `outlook:<id>`; a card id may not look like one, so a card can never replace a
@@ -55,6 +57,7 @@ const triggerFields = [
   'zone',
   'projectId',
   'workflowId',
+  'workflowName',
   'repeat',
   'skippedDates',
 ] as const;
@@ -145,8 +148,8 @@ function checkLinks(read: ReadModel, links: Links): void {
 }
 
 // A focus block is time kept free of work (chief of staff spec 28), so it never starts a run.
-function checkFocus(card: Pick<CalendarItem, 'focus' | 'workflowId'>): void {
-  if (card.focus && card.workflowId) {
+function checkFocus(card: Pick<CalendarItem, 'focus' | 'workflowId' | 'workflowName'>): void {
+  if (card.focus && (card.workflowId || card.workflowName)) {
     throw new CommandRejected(
       'rejected',
       'A focus card carries no workflow; take the workflow off or make it an ordinary card',
@@ -174,6 +177,10 @@ const withoutUpdatedAt = ({
   nextAt: _nextAt,
   occurrences: _occurrences,
   pastSeries: _pastSeries,
+  // A card's own columns, which an Outlook row stores with their defaults.
+  workflowName: _workflowName,
+  threadMode: _threadMode,
+  threadId: _threadId,
   ...rest
 }: CalendarItem) => rest;
 
@@ -265,12 +272,13 @@ function updateEvents(
       payload: { cardId: card.id, changes, updatedAt: context.now },
     },
   ];
-  // A single card that already ran becomes a series whose first occurrence is that run.
+  // A single card that already ran becomes a series whose first occurrence is that run or the
+  // thread it started (orchestrator threads spec 27).
   const trigger = read.trigger(triggerIdFor(card.id));
   if (
     !isRepeating(card) &&
     isRepeating(after) &&
-    card.runId !== null &&
+    (card.runId !== null || (card.threadId ?? null) !== null) &&
     trigger?.state === 'fired' &&
     !read.cardOccurrences(card.id).some((done) => done.date === localDay(card.start, card.zone))
   ) {
@@ -285,6 +293,7 @@ function updateEvents(
           end: card.end,
           outcome: 'fired',
           runId: card.runId,
+          threadId: card.threadId ?? null,
           reason: null,
           offerRunNow: false,
           at: context.now,
@@ -353,6 +362,9 @@ export function decideCalendar(
         projectId: command.projectId ?? null,
         backlogItemId: command.backlogItemId ?? null,
         workflowId: command.workflowId ?? null,
+        workflowName: command.workflowName ?? null,
+        threadMode: command.threadMode ?? 'new',
+        threadId: null,
         runId: null,
         state: 'scheduled',
         updatedAt: context.now,
@@ -382,11 +394,14 @@ export function decideCalendar(
         'projectId',
         'backlogItemId',
         'workflowId',
+        'workflowName',
+        'threadMode',
         'focus',
       ] as const;
       checkFocus({
         focus: command.focus ?? card.focus ?? false,
         workflowId: command.workflowId === undefined ? card.workflowId : command.workflowId,
+        workflowName: command.workflowName === undefined ? card.workflowName : command.workflowName,
       });
       for (const field of fields) {
         const value = command[field];

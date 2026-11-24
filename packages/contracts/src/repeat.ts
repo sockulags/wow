@@ -77,6 +77,8 @@ export const CardOccurrence = z.object({
   end: Timestamp,
   outcome: OccurrenceOutcome,
   runId: Id.nullable(),
+  // The main thread the occurrence started or continued (orchestrator threads spec 27).
+  threadId: Id.nullable().optional(),
   // Why nothing started, in words, for `failed` and `skipped`.
   reason: z.string().nullable(),
   // A missed occurrence the card offers "Run now" for (missed policy `mark`).
