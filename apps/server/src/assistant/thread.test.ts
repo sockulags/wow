@@ -190,6 +190,20 @@ describe('the Assistant thread (orchestrator threads spec 25)', () => {
     expect(startTurns('claude-home')[0]?.resumeId).toBeUndefined();
   });
 
+  it("is not asked for a decision's brief, which it has no tool to write", async () => {
+    await instance('claude-work', 'claude', 'Claude at work');
+    await greet();
+    const before = startTurns('claude-work').length;
+    const items = rows<ThreadItem>('threadItems', assistantThreadId).length;
+    dispatch({
+      type: 'assistant.requestBrief',
+      decisionId: 'approval:a1',
+      summary: 'Kettle wants to run pnpm test',
+    });
+    expect(startTurns('claude-work')).toHaveLength(before);
+    expect(rows<ThreadItem>('threadItems', assistantThreadId)).toHaveLength(items);
+  });
+
   it('keeps its id for wow alone', () => {
     expect(
       refusal(() =>
@@ -272,6 +286,7 @@ describe('the greeting after the first-start step (spec 24, 26)', () => {
       'Still needed for a first run:',
       '- A project: the folder a run works in (Settings → Projects).',
       '- A workflow: start one from a template (Workflows → New workflow).',
+      'Greet the person: say what is set up and what a first run still needs, from these lists.',
       '',
       greeting,
     ]);
@@ -365,6 +380,8 @@ describe('the greeting after the first-start step (spec 24, 26)', () => {
       '- GitLab token (trackers.gitlab.token, Settings → Trackers): a secret; show its field.',
       '- Work hours (calendar.workHours, Settings → Calendar): only this person can say.',
       '- Project folders (Settings → Projects): a setup file holds none, they differ per machine.',
+      'Greet the person: say what is set up and what a first run still needs, from these lists.',
+      'Go through the "To fill in" list in order, one thing per answer: a secret through show_secret_field, anything else by asking and then making the change. Move on when the person has answered or says to skip it.',
     ]);
     expect(prompt).not.toContain('invented-jira');
 
@@ -396,6 +413,7 @@ describe('the greeting after the first-start step (spec 24, 26)', () => {
       '- GitLab token (trackers.gitlab.token, Settings → Trackers): a secret; show its field.',
       '- Work hours (calendar.workHours, Settings → Calendar): only this person can say.',
       '- Project folders (Settings → Projects): a setup file holds none, they differ per machine.',
+      'Go through the "To fill in" list in order, one thing per answer: a secret through show_secret_field, anything else by asking and then making the change. Move on when the person has answered or says to skip it.',
       '',
       'I loaded a file',
     ]);

@@ -62,7 +62,7 @@ const assistant: Thread = {
   title: 'Assistant',
   model: 'opus',
   effort: 'high',
-  permissionMode: 'default',
+  permissionMode: 'dontAsk',
   state: 'idle',
   pinned: false,
   runId: null,
@@ -124,6 +124,9 @@ describe('migration 0050_assistant_is_a_main_thread', () => {
         title: 'Assistant',
         projectId: null,
         providerSessionId: 'session-of-the-assistant',
+        // Asks, as a new thread on Claude Code does, instead of denying what it was not given.
+        permissionMode: 'default',
+        cwd: '/home/me/.wow/assistant',
       },
     ]);
     expect(db.select().from(threadItems).all()).toMatchObject([

@@ -59,7 +59,8 @@ export const ProviderCommand = z.discriminatedUnion('type', [
     instructions: z.string().min(1).optional(),
     // What the agent is told after the provider's own instructions (orchestrator threads spec 25):
     // `chat.instructions` in every main thread. Never with `toolset`. Read when the session
-    // starts, so a change starts a new session that resumes the same conversation.
+    // starts: on Claude Code a change starts a new session that resumes the same conversation; on
+    // Codex it applies once the thread is loaded again (after wow or the instance restarts).
     appendInstructions: z.string().min(1).optional(),
     // Images of the message, as files wow stored (agent workbench spec 53, 55): Claude Code gets
     // them as image blocks, Codex as `localImage` inputs.

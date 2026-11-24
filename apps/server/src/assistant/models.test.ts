@@ -403,7 +403,7 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
         what: 'Workflow Older review, step check-work',
         reason:
           'Step check-work has no model, which Codex needs; choose one in the workflow, or the step fails when it starts.',
-        place: { label: 'Workflows → Older review', path: '/workflows/old' },
+        place: { label: 'Settings → Workflows → Older review', path: '/settings/workflows' },
       },
     ]);
   });

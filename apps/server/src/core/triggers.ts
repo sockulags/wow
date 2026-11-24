@@ -665,4 +665,5 @@ function requireEventTrigger(read: ReadModel, id: string): EventTrigger {
   return trigger;
 }
 
-export const triggersPath = '/workflows/triggers';
+// Triggers are cards on the calendar (orchestrator threads spec 27, 34).
+export const triggersPath = '/calendar';

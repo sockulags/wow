@@ -173,7 +173,8 @@ export class DesktopController {
         this.open('/chat');
         return;
       case 'openAssistant':
-        this.open('/assistant');
+        // The Assistant thread (orchestrator threads spec 25).
+        this.open('/chat/assistant');
         return;
       case 'openCalendar':
         this.open('/calendar');

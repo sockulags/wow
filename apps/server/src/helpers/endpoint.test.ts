@@ -904,6 +904,10 @@ describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => 
       depth: 2,
       parentTitle: 'Plan the deploy',
     });
+    // The main thread is told chat.instructions; a helper is told its brief, not those.
+    expect(startTurnsOf('t1')[0]?.appendInstructions).toBeDefined();
+    expect(startTurnsOf(firstId)[0]?.appendInstructions).toBeUndefined();
+    expect(startTurnsOf(deepId)[0]?.appendInstructions).toBeUndefined();
     // The main thread waits for the user while a helper two levels down does; helpers are no
     // rows of the list.
     expect(listRows().find((row) => row.id === 't1')?.listStatus).toBe('waits_for_you');

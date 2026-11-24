@@ -226,7 +226,7 @@ describe('Drive threads (chief of staff spec 11, 12, 13)', () => {
     });
   });
 
-  it('gives the assistant a turn to follow its thread, up to assistant.followTurns', async () => {
+  it('gives the Assistant thread no turn to follow a thread, which it has no tool to read', async () => {
     allow(permission({}));
     await server.providerService.test('claude-work');
     asUser({ type: 'thread.openAssistant', fallbackModel: 'mock-model', fallbackEffort: 'high' });
@@ -240,8 +240,8 @@ describe('Drive threads (chief of staff spec 11, 12, 13)', () => {
         item.kind === 'user' &&
         String((item.payload as { text?: string }).text).startsWith('From wow:'),
     );
-    expect(notes).toHaveLength(1);
-    expect(threads().find((thread) => thread.id === threadId)?.followTurns).toBe(1);
+    expect(notes).toHaveLength(0);
+    expect(threads().find((thread) => thread.id === threadId)?.followTurns ?? 0).toBe(0);
   });
 
   it('refuses the delegation commands from anyone but the assistant', () => {

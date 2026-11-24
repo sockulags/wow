@@ -243,7 +243,7 @@ function proposalRows(db: Db): Row[] {
       at: proposal.at,
       title: proposal.title,
       where: 'The assistant',
-      path: '/assistant',
+      path: '/chat/assistant',
       proposalId: proposal.id,
       fixed: proposal.lines.map((line) =>
         [

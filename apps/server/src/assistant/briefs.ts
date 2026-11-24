@@ -19,11 +19,18 @@ import { settingValue, today } from './permissions.js';
 
 const briefed = new Set(['approval', 'question', 'gate', 'limit', 'failedRun']);
 
+// False since the Assistant thread became a main thread: wow no longer asks it for briefs,
+// briefing summaries or follow-up turns, which needed the assistant's own tools.
+export const assistantAsked = false as boolean;
+
 export function decideBriefRequest(
   command: Extract<ServerCommand, { type: 'assistant.requestBrief' }>,
   read: ReadModel,
   context: DecideContext,
 ): DomainEvent[] {
+  // The Assistant thread is a main thread without wow's assistant tools (orchestrator threads
+  // spec 25), so it is not asked for what only those tools could write; this goes with them.
+  if (!assistantAsked) return [];
   if (read.decisionBrief(command.decisionId)) return [];
   if (!read.thread(assistantThreadId)) return [];
   const limit = settingValue('assistant.briefsPerDay', read, context);

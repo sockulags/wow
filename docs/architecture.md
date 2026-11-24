@@ -2091,21 +2091,6 @@ answered). A plan with a live plan run counts as followed here until that plan r
 `waiting` from its pull requests, see "Hosts". `followed` is the plan's Follow switch; it is kept
 when the files are read again and goes with the row when the intent folder does.
 
-**View** (`apps/web/src/plans`, section "Plans" after Workflows, `keybindings.goPlans`). `/plans`
-lists every project with its intents: title, status and revision, spec and plan presence, "stale"
-and the number of problems. `/plans/$projectId/$intentId` shows the three files with a stale
-badge that names both revisions, the problems as `plan.md line 11: …`, and the units with key,
-title, dependencies, blocked note and status; the reason units share shows once above the list.
-`?unit=<key>` opens that unit's contract, rendered with the shared markdown renderer. The header
-has the Follow switch (`plan.follow`); a followed plan shows "Last fetched <time> from <host>",
-the host's error when the last read failed (with a link to the setting it names) and its own
-"Refresh now" (`hosts.refresh {planId}`). A unit with a pull request links to it on the host and
-shows its state (Open, Draft, Merged, Closed) and checks; a waiting unit shows what it waits for,
-which names the stale file when that is the reason. "Refresh now" in the list reads the files and
-then asks the hosts about everything followed. Palette: "Plans: Refresh now", every intent (when
-searching), and for the open plan "Plan: follow" / "Plan: stop following", "Plan: refresh pull
-requests now", each unit and each unit's pull request.
-
 **Plan files and a unit's thread** (agent workbench spec 84). A file the plan has is a button:
 Enter or a click opens it rendered in a file tab of the panel, read with the `{projectId}` file
 scope from `<intents folder>/<intent>/<file>` (`planFilePath`; the folder is the project's own
@@ -2384,13 +2369,17 @@ thread (`kind` `chat`, no project) with the fixed id `assistantThreadId` and the
 "Assistant", listed in the thread list. `assistantThreadEvents` makes it when it is missing, on
 the instance, model, effort and permission mode a new thread gets (`newThreadSettings` in
 `core/card-threads.ts`: `chat.defaultInstance` and `chat.defaultModel`, then the instance's
-own), in `<wow home>/threads/assistant`; once it exists it is left as it is. `thread.greetAssistant`
+own), in `<wow home>/threads/assistant` (the thread migrated from before keeps
+`<wow home>/assistant`). Its instance does not hold it (`instanceUsage` leaves it out): when the
+instance is removed, its next message moves it to where a new thread would start, with a new
+provider session. `thread.greetAssistant`
 makes it and greets it (see "The greeting"); `thread.create` refuses its id. Its turns are chat
 turns like any main thread's, with the helper tools and the app tools on `/threads/mcp`. Only
 the notes differ: a message or an answer to it starts with what the user answered to proposals
 and undid since its last turn, and a setup file applied since (`assistantNotes` in
 `core/threads.ts`). Migration `0050_assistant_is_a_main_thread` turned the stored assistant
-thread into this one, keeping its items and provider session, and the projector reads an old
+thread into this one, keeping its items and provider session (and setting Claude Code's
+`dontAsk` of the tools-only turns to `default`), and the projector reads an old
 `thread.created` of kind `assistant` as `chat`, so a replay cannot bring the old kind back.
 
 **Instructions for every main thread** (`chat.instructions`, `defaultChatInstructions` in
@@ -2399,7 +2388,14 @@ thread into this one, keeping its items and provider session, and the projector 
 `systemPrompt: { type: 'preset', preset: 'claude_code', append }`, after its own instructions,
 and a changed text opens a new session on the same conversation (it is part of the session key
 with the helper tools); Codex gets it as `developerInstructions` on `thread/start` and
-`thread/resume`, read when the thread starts. Migration 0050 moved the stored value
+`thread/resume`, read when the thread loads.
+
+**What wow no longer asks of it.** Briefs of decisions, briefing summaries and follow-up turns on
+threads the assistant started needed the assistant's own tools (`write_brief`,
+`write_briefing_summary`, `read_thread`), which a main thread does not have. `assistantAsked` in
+`assistant/briefs.ts` is false, so `decideBriefRequest`, `decideBriefing` and `decideFollow` send
+it nothing; a briefing keeps wow's own lines. They go with the rest of the assistant's own
+machinery in U8's second part. Migration 0050 moved the stored value
 of the assistant's old instructions setting here.
 
 **Tools-only turns in the adapters.** A `startTurn` with a `toolset` is handled inside each
@@ -2663,11 +2659,8 @@ internal `assistant.requestBrief` for each new gate, limit, approval, question o
 within `assistant.briefsPerDay` since midnight in the calendar's zone it marks the brief asked
 and sends the assistant a "From wow: …" message naming the decision. The assistant writes it with
 `write_brief` (`assistant.writeBrief`), which is refused for a decision wow did not ask about and
-for one already written. The web app shows the queue beside the assistant's conversation
-(`assistant/queue.tsx`) with the answers of the views it comes from and the keys
-`keybindings.gateApprove`, `keybindings.approvalAllowOnce` and `keybindings.approvalDeny` on the
-focused row; "Next that needs you" follows the queue's order; the tray lists its first three
-rows and opens the Assistant.
+for one already written. No page shows the queue any more (orchestrator threads spec 34); the
+tray lists its first three rows and opens the Assistant thread.
 
 **The assistant's rhythm** (`assistant/chief.ts`, chief of staff spec 20 to 27). `Chief.tick`
 runs on every scheduler tick (`Scheduler.onTick`, also while the scheduler is paused) once the
@@ -4267,8 +4260,8 @@ nothing. `path` is `/chat/<threadId>`. The web toaster and the desktop skip a ro
   browser's own `title`, for a place that is itself a button). The builder's step summary, the
   run view's step rows and the Assistant header use it; the conversation's settings dividers use
   `modelLabel`.
-- **Keys** (spec 92). The section keys follow the order of `sections`: Ctrl+4 is Plans
-  (`keybindings.goPlans`) and Ctrl+5 Backlog (`keybindings.goBacklog`).
+- **Keys** (spec 92). The section keys follow the order of `sections`; Ctrl+5 is Backlog
+  (`keybindings.goBacklog`).
 - **Palette** (spec 93). The palette (and the sessions dialog) sit at 12 % of the window's
   height instead of its middle, so the input stays put as the results change.
 - **Wording** (spec 98). A run or card waiting at a gate reads "Waiting for you" (the Path tab's

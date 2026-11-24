@@ -123,7 +123,7 @@ afterEach(async () => {
 });
 
 describe('briefings (chief of staff spec 20 to 23)', () => {
-  it('briefs once when work hours start, with wow’s lines, and asks the assistant to sum up', () => {
+  it('briefs once when work hours start, with wow’s lines, and asks the Assistant thread for nothing', () => {
     server.scheduler.tick();
     expect(briefings()).toEqual([]);
     at('2026-11-10T08:00:00.000Z');
@@ -134,36 +134,15 @@ describe('briefings (chief of staff spec 20 to 23)', () => {
     expect(morning).toMatchObject({
       id: 'morning:2026-11-10',
       moment: 'morning',
-      summaryPending: true,
+      // The Assistant thread has no tool to write a summary with (orchestrator threads spec 25).
+      summaryPending: false,
     });
     expect(morning?.lines.map((line) => line.text)).toContain('Nothing waits for you.');
     const asked = rows<ThreadItem>('threadItems', assistantThreadId).filter((item) =>
       String((item.payload as { text?: string }).text).includes('briefing morning:2026-11-10'),
     );
-    expect(asked).toHaveLength(1);
+    expect(asked).toHaveLength(0);
     expect(notifications()).toMatchObject([{ kind: 'briefing', title: 'Good morning' }]);
-  });
-
-  it('keeps the summary the assistant writes, and asks for none past the daily limit', async () => {
-    at('2026-11-10T08:00:00.000Z');
-    server.scheduler.tick();
-    const written = await server.assistant.tools.call('write_briefing_summary', {
-      briefingId: 'morning:2026-11-10',
-      text: 'A quiet start; nothing waits.',
-    });
-    expect(written.isError).toBe(false);
-    expect(briefings()[0]).toMatchObject({
-      summary: 'A quiet start; nothing waits.',
-      summaryPending: false,
-    });
-
-    asUser({ type: 'setting.set', key: 'assistant.briefingsPerDay', scope: 'global', value: 1 });
-    at('2026-11-10T17:00:00.000Z');
-    server.scheduler.tick();
-    expect(briefings().find((entry) => entry.moment === 'evening')).toMatchObject({
-      summaryPending: false,
-      summary: null,
-    });
   });
 
   it('briefs when the user comes back after a while away', async () => {

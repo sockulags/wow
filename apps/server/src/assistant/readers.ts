@@ -203,7 +203,7 @@ export const readers = {
             ...step,
             skillInstalled: skillInstalled(step.skillName, names),
           })),
-          path: `/workflows/${encodeURIComponent(workflow.id)}`,
+          path: '/settings/workflows',
         }));
     },
   }),

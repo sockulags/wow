@@ -223,7 +223,7 @@ export function assistantAnswersNote(read: ReadModel, context: DecideContext): s
     ...undone.map((change) => `- Undid "${change.what}" (${change.place.label}).`),
   ];
   return hideSecrets(
-    `[From wow, not typed by the user] Since your last turn the user answered:\n${lines.join('\n')}`,
+    `[From wow, not typed by the user] Since your last turn the user answered:\n${lines.join('\n')}\nTake it into account; the person did not type this.`,
     patterns,
   );
 }
@@ -234,6 +234,9 @@ export const storedGreeting = (read: ReadModel, context: DecideContext): string 
   const fallback = context.registry['assistant.greeting']?.default;
   return value || (typeof fallback === 'string' ? fallback : 'Hello');
 };
+
+const walkTheList =
+  'Go through the "To fill in" list in order, one thing per answer: a secret through show_secret_field, anything else by asking and then making the change. Move on when the person has answered or says to skip it.';
 
 const trackerKinds = ['github', 'gitlab', 'jira', 'confluence'] as const;
 
@@ -280,13 +283,15 @@ export function setupAppliedNote(read: ReadModel, context: DecideContext): strin
     `[From wow, not typed by the user] The user applied the setup file ${application.name} in Settings.`,
     `To fill in after the setup file ${application.name}:`,
     ...fillInLines(application, read, context),
+    walkTheList,
   ];
   return hideSecrets(lines.join('\n'), storedPatterns(read, context));
 }
 
 // What the greeting turn tells the agent besides the user's line (spec 24, 26): what is set up,
 // what a first run still needs, and, after a setup file, what it left to fill in and what only
-// this person can say. Facts only; what to do with them is in `chat.instructions`.
+// this person can say, with what to do with them: `chat.instructions` goes to every main thread,
+// so what only this thread is told travels with the note.
 export function firstStartNote(
   read: ReadModel,
   context: DecideContext,
@@ -327,6 +332,8 @@ export function firstStartNote(
     'Still needed for a first run:',
     ...(needed.length === 0 ? ['- Nothing.'] : needed),
     ...(application ? [`To fill in after the setup file ${application.name}:`, ...fillIn] : []),
+    'Greet the person: say what is set up and what a first run still needs, from these lists.',
+    ...(application ? [walkTheList] : []),
   ];
   return hideSecrets(lines.join('\n'), storedPatterns(read, context));
 }

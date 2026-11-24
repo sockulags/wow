@@ -238,7 +238,7 @@ describe('the diagnosis (spec 19, 20)', () => {
         what: 'Workflow Steep, step wait',
         reason:
           'It runs the skill wait-patiently, which is not installed on this machine. Install the skill or pick another one for the step.',
-        place: { label: 'Workflows → Steep', path: '/workflows/steep' },
+        place: { label: 'Settings → Workflows → Steep', path: '/settings/workflows' },
       },
     ]);
   });

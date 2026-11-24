@@ -1,3 +1,4 @@
+import { assistantAsked } from './briefs.js';
 import {
   assistantPermissionLabels,
   assistantThreadId,
@@ -254,6 +255,9 @@ export function decideFollow(
   read: ReadModel,
   context: DecideContext,
 ): DomainEvent[] {
+  // The Assistant thread is a main thread without wow's assistant tools (orchestrator threads
+  // spec 25), so it is not asked for what only those tools could write; this goes with them.
+  if (!assistantAsked) return [];
   const thread = read.thread(command.threadId);
   if (!thread || thread.startedBy !== 'assistant') return [];
   if (!read.thread(assistantThreadId)) return [];

@@ -1,9 +1,7 @@
 import {
-  assistantThreadId,
   type Decision,
   type ServerCommand,
   type SubscriptionTopic,
-  type ThreadItem,
   type WorkflowRun,
   type WorkflowStep,
 } from '@wow/contracts';
@@ -180,33 +178,6 @@ describe('briefs (chief of staff spec 18)', () => {
   beforeEach(async () => {
     await server.providerService.test('claude-work');
     asUser({ type: 'thread.openAssistant', fallbackModel: 'mock-model', fallbackEffort: 'high' });
-  });
-
-  it('asks the assistant once for the brief of a new decision, and keeps what it writes', async () => {
-    runAtGate();
-    await server.briefs.settled();
-    const asked = rows<ThreadItem>('threadItems', assistantThreadId).filter(
-      (item) =>
-        item.kind === 'user' &&
-        String((item.payload as { text?: string }).text).includes('decision gate:run-1:s1'),
-    );
-    expect(asked).toHaveLength(1);
-    expect(decisions()[0]).toMatchObject({ briefPending: true, brief: null });
-
-    const written = await call('write_brief', {
-      decisionId: 'gate:run-1:s1',
-      text: 'The spec is written and checked.',
-      recommendation: 'Approve it.',
-    });
-    expect(written.content['outcome']).toBe('written');
-    expect(decisions()[0]?.brief).toMatchObject({
-      text: 'The spec is written and checked.',
-      recommendation: 'Approve it.',
-    });
-    expect(
-      (await call('write_brief', { decisionId: 'gate:run-1:s1', text: 'x', recommendation: 'y' }))
-        .isError,
-    ).toBe(true);
   });
 
   it('writes no brief it was not asked for, and asks for none past the daily limit', async () => {
