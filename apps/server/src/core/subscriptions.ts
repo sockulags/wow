@@ -30,32 +30,42 @@ function threadRows(db: Db) {
   });
 }
 
-// The threads that hold a gate card whose approval or question nobody answered yet (spec 14).
+// The threads that hold a gate card whose approval or question still waits (spec 14): nobody
+// answered it, and the turn that asked still runs. A turn that ends leaves its request unanswered,
+// as the gate card says, but nobody can answer it any more.
 function openGates(db: Db): Set<string> {
-  const cards = db
+  const running = new Set(
+    db
+      .select({ threadId: t.turns.threadId })
+      .from(t.turns)
+      .where(eq(t.turns.state, 'running'))
+      .all()
+      .map((row) => row.threadId),
+  );
+  if (running.size === 0) return new Set();
+  const waiting = (rows: readonly { id: string; threadId: string }[]) =>
+    new Set(rows.filter((row) => running.has(row.threadId)).map((row) => row.id));
+  const approvals = waiting(
+    db
+      .select({ id: t.approvals.id, threadId: t.approvals.threadId })
+      .from(t.approvals)
+      .where(isNull(t.approvals.decision))
+      .all(),
+  );
+  const questions = waiting(
+    db
+      .select({ id: t.questions.id, threadId: t.questions.threadId })
+      .from(t.questions)
+      .where(isNull(t.questions.answer))
+      .all(),
+  );
+  if (approvals.size === 0 && questions.size === 0) return new Set();
+  const open = new Set<string>();
+  for (const { threadId, payload } of db
     .select({ threadId: t.threadItems.threadId, payload: t.threadItems.payload })
     .from(t.threadItems)
     .where(eq(t.threadItems.kind, 'gate_card'))
-    .all();
-  if (cards.length === 0) return new Set();
-  const approvals = new Set(
-    db
-      .select({ id: t.approvals.id })
-      .from(t.approvals)
-      .where(isNull(t.approvals.decision))
-      .all()
-      .map((row) => row.id),
-  );
-  const questions = new Set(
-    db
-      .select({ id: t.questions.id })
-      .from(t.questions)
-      .where(isNull(t.questions.answer))
-      .all()
-      .map((row) => row.id),
-  );
-  const open = new Set<string>();
-  for (const { threadId, payload } of cards) {
+    .all()) {
     const card = payload as { kind?: unknown; requestId?: unknown } | null;
     if (typeof card?.requestId !== 'string') continue;
     const waits =

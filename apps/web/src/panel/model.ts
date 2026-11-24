@@ -145,9 +145,8 @@ export const clampPanelWidth = (width: number): number =>
 const gateRoomRem = 16;
 
 // The widest a panel laid over the view may be. The panel is measured against the whole window,
-// the run view against what is left of the sidebar (below the narrow breakpoint at most its 3rem
-// rail) and the workflows list (16rem), so over a run view the panel leaves those and the gate's
-// room. It never goes under the panel's minimum: in a window too small for that the gate bar
+// the run view against what is left of the thread list (16rem) and the workflows list (16rem), so
+// over a run view the panel leaves those and the gate's room. It never goes under the panel's minimum: in a window too small for that the gate bar
 // keeps what is left beside it.
 export const overlayCap = (
   view: PanelSelection['view'],
@@ -156,7 +155,7 @@ export const overlayCap = (
 ): number =>
   Math.max(
     contextPanelWidthBounds.min,
-    Math.floor(windowWidth - (view === 'run' ? 3 + 16 + gateRoomRem : 3) * remPx),
+    Math.floor(windowWidth - (view === 'run' ? 16 + 16 + gateRoomRem : 16) * remPx),
   );
 
 // The width the panel takes: the drag preview while the edge moves, else the stored width, and

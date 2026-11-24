@@ -838,6 +838,34 @@ const gateCards = (threadId = 't1') =>
     .filter((item) => item.kind === 'gate_card');
 
 describe('gates in the main thread (orchestrator threads spec 14 to 17)', () => {
+  it('lists the main thread as waiting no longer once Stop ends the helper turn that asked (spec 31)', async () => {
+    const client = await mainThread();
+    const first = await call(client, 'start_helper', {
+      brief: 'Plan the deploy',
+      instance: 'Codex at work',
+    });
+    const firstId = String(first.value['id']);
+    await helperStarted(firstId);
+    const tools = startTurnsOf(firstId)[0]?.helperTools;
+    if (!tools) throw new Error('the helper has no helper tools');
+    const helperClient = await connect(tools);
+    const deep = await call(helperClient, 'start_helper', {
+      brief: 'Approve the release',
+      instance: 'claude-work',
+    });
+    const deepId = String(deep.value['id']);
+    await until(() => gateCards().length === 1);
+    await server.helperFollower.settled();
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).toBe('waits_for_you');
+    // Stop ends the turn that asked; its approval stays unanswered, and nobody can answer it.
+    dispatch({ type: 'thread.interrupt', threadId: deepId });
+    await server.providerService.idle();
+    await until(() => listRows().find((row) => row.id === 't1')?.listStatus !== 'waits_for_you');
+    expect(listRows().find((row) => row.id === 't1')?.listStatus).not.toBe('waits_for_you');
+    await helperClient.close();
+    await client.close();
+  });
+
   it("draws a depth 2 helper's approval in the main thread, and answering it lets the helper go on", async () => {
     const client = await mainThread();
     const first = await call(client, 'start_helper', {

@@ -144,11 +144,11 @@ describe('clampPanelWidth', () => {
 });
 
 describe('overlayCap', () => {
-  it('leaves the rail, the workflows list and the gate room over a run view', () => {
-    expect(overlayCap('run', 1024, 16)).toBe(464);
-    expect(overlayCap('calendar', 1024, 16)).toBe(976);
-    expect(effectivePanelWidth(720, undefined, overlayCap('run', 1024, 16))).toBe(464);
-    expect(effectivePanelWidth(380, 900, overlayCap('run', 1024, 16))).toBe(464);
+  it('leaves the thread list, the workflows list and the gate room over a run view', () => {
+    expect(overlayCap('run', 1280, 16)).toBe(512);
+    expect(overlayCap('calendar', 1024, 16)).toBe(768);
+    expect(effectivePanelWidth(720, undefined, overlayCap('run', 1280, 16))).toBe(512);
+    expect(effectivePanelWidth(380, 900, overlayCap('run', 1280, 16))).toBe(512);
   });
 
   it('never goes under the panel minimum in a small window', () => {

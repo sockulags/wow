@@ -318,16 +318,31 @@ describe('main threads by status (orchestrator threads spec 30, 31)', () => {
     expect(statuses()).toEqual(['Waits for you', 'Working', 'Working', 'Unread', 'Done', 'Done']);
   });
 
-  it('keeps a pinned thread on top whatever its status', async () => {
+  it('puts a pinned thread first within its status, never above another status', async () => {
     const { runtime } = fake({
       projects: [],
       threads: [
-        thread('t1', 'Waits', { listStatus: 'waits_for_you' }),
-        thread('t2', 'Pinned and done', { listStatus: 'done', pinned: true }),
+        thread('t1', 'Done later', { listStatus: 'done', updatedAt: at(12) }),
+        thread('t2', 'Pinned and done', { listStatus: 'done', pinned: true, updatedAt: at(8) }),
+        thread('t3', 'Waits', { listStatus: 'waits_for_you', updatedAt: at(7) }),
       ],
     });
     await renderApp('/chat', runtime);
-    expect(await listed()).toEqual(['Pinned and done', 'Waits']);
+    expect(await listed()).toEqual(['Waits', 'Pinned and done', 'Done later']);
+  });
+
+  it('reads the open thread while the list is hidden', async () => {
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const { runtime, next } = fake({
+      projects: [],
+      threads: [thread('t1', 'Kettle timer', { seen: false, listStatus: 'unread' })],
+    });
+    act(() => runtime.layout.setState({ sidebarOpen: false }));
+    const read = next('thread.markSeen');
+    await renderApp('/chat/t1', runtime);
+    expect(screen.queryByRole('navigation', { name: 'Threads' })).toBeNull();
+    expect(await read).toEqual({ type: 'thread.markSeen', threadId: 't1' });
+    hasFocus.mockRestore();
   });
 });
 

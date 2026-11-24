@@ -4305,14 +4305,14 @@ is no row. A row has the title, the project's name or "No project" under it
 (`chat/thread-row.ts`), and a status mark. The status is `Thread.listStatus`
 (`ThreadListStatus`), which the server adds to each main thread when it sends the `threads`
 topic (`core/thread-list.ts`, read in `core/subscriptions.ts`): `waits_for_you` when the
-thread needs the user itself or holds a gate card whose approval or question is still open (every
-request for the user from any depth is drawn there), `working` when it or any helper under it
+thread needs the user itself or holds a gate card whose approval or question is still open: unanswered, and
+the turn that asked still running (every request for the user from any depth is drawn there), `working` when it or any helper under it
 works, `unread` when `seen` is false, else `done`. A change to approvals or questions sends
 the `threads` topic again, since answering a gate card changes no thread row by itself. The
 mark for "Waits for you" is an exclamation mark in a ring of `--state-needs-you`; Working is a
 pulsing dot of `--state-working`, Unread a dot of `--primary`, Done a hollow dot.
-`chat/thread-sections.ts` orders the rows: pinned threads first, then Waits for you, Working,
-Unread, Done, the newest `updatedAt` first within each. "Next unread thread" walks the same
+`chat/thread-sections.ts` orders the rows by status, Waits for you, Working, Unread, Done, and
+within a status pinned threads first, then the newest `updatedAt`. "Next unread thread" walks the same
 order. There are no groups; migration `0049_retire_thread_list_groups` deletes the stored
 values of the settings the groups and the second line had. On every scheduler tick
 `core/archive-by-age.ts` archives, with the ordinary `thread.setArchived`, each chat thread that

@@ -1,8 +1,8 @@
 import type { Thread, ThreadListStatus } from '@wow/contracts';
 
-// The thread list (orchestrator threads spec 30 to 32): main threads only, pinned threads first,
-// then by status in the order Waits for you, Working, Unread, Done, the newest activity first
-// within each. The status is the server's, read from the thread's whole tree; a row without one
+// The thread list (orchestrator threads spec 30 to 32): main threads only, by status in the order
+// Waits for you, Working, Unread, Done, pinned threads first within a status, then the newest
+// activity. The status is the server's, read from the thread's whole tree; a row without one
 // (a server from before) falls back to the thread's own state.
 
 export const listStatusOrder: readonly ThreadListStatus[] = [
@@ -36,7 +36,7 @@ export const threadListOrder = (threads: readonly Thread[]): Thread[] =>
     .filter(isMainThread)
     .toSorted(
       (a, b) =>
-        Number(b.pinned) - Number(a.pinned) ||
         rank(a) - rank(b) ||
+        Number(b.pinned) - Number(a.pinned) ||
         b.updatedAt.localeCompare(a.updatedAt),
     );

@@ -27,6 +27,7 @@ import { UpdateBanner } from './update-banner';
 import { ShellToolbarSlot } from './shell-toolbar';
 import { useCommands, useGlobalKeybindings } from './use-commands';
 import { publishPaletteCommands } from '@/chat/slash-commands';
+import { useMarkSeen } from '@/chat/thread-list';
 
 function useApplyTheme() {
   const theme = useSetting('appearance.theme');
@@ -61,6 +62,7 @@ export function Shell() {
   useGlobalKeybindings(commands, context);
   usePresence();
   useEscapeToThread();
+  useMarkSeen();
   // The composer's `/` list runs the palette's commands (agent workbench spec 58).
   useLayoutEffect(() => publishPaletteCommands(commands, context), [commands, context]);
   useApplyTheme();

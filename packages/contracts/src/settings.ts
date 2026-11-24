@@ -17,8 +17,6 @@ import {
   type WorkflowTemplateStep,
 } from './workflow.js';
 
-// The parts of a thread row's second line (chat overview spec 6, 7), in the order shown.
-
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
 

@@ -38,7 +38,9 @@ import { listTitle } from './view-model';
 // thread that already needs you turns it unread without moving `updatedAt`, so turning unread on
 // screen counts as well. "Mark unread" leaves the thread, and leaving forgets what was handled, so
 // opening it again reads it.
-function useMarkSeen(threads: readonly Thread[] | undefined) {
+// The shell calls it, so it reads the thread whether or not the list is shown.
+export function useMarkSeen(): void {
+  const threads = useTopic('threads');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const send = useDispatch();
   const [focused, setFocused] = useState(() => document.hasFocus());
@@ -131,7 +133,6 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
   const filterField = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const { hits, error: searchError } = useThreadSearch(filter);
-  useMarkSeen(threads);
   useEffect(() => {
     if (focusRequest === 0) return;
     filterField.current?.focus();
