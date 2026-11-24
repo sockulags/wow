@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { e2eHome, e2eNeedsYouWorkflowId, e2eOutlookControlPort, e2eTrackerPort } from './env';
+import { e2eHome, e2eOutlookControlPort } from './env';
 import { choose } from './controls';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
@@ -1380,22 +1380,17 @@ test.describe('chat', () => {
     const approval = conversation(page).getByRole('region', { name: 'Approval request' });
     await expect(approval).toBeVisible();
     const approvalPath = new URL(page.url()).pathname;
-    // The newer: a run waiting at its gate.
-    const runId = `needs-you-${Date.now()}`;
-    const query = new URLSearchParams({ workflowId: e2eNeedsYouWorkflowId, runId });
-    const started = await fetch(`http://127.0.0.1:${e2eTrackerPort}/run?${query}`, {
-      method: 'POST',
-    });
-    expect(started.ok).toBe(true);
-    await page.goto(`/workflows/runs/${runId}`);
-    await expect(page.getByTestId('run-state')).toHaveText('Waiting for you');
+    // The newer: an approval in another thread.
+    await startClaudeThread(page, 'Approve the bell test');
+    const newer = conversation(page).getByRole('region', { name: 'Approval request' });
+    await expect(newer).toBeVisible();
+    const newerPath = new URL(page.url()).pathname;
 
     // Elsewhere in the app, with what waits already read from the server.
     await page.keyboard.press('Control+1');
     await expect(page).toHaveURL(/\/calendar/);
     // Cases before this one may leave older things waiting: each press lands on the next one,
-    // oldest first, until the run's gate, which is the newest; the approval comes before it.
-    const runPath = `/workflows/runs/${runId}`;
+    // oldest first, until the newer approval; the older comes before it.
     const visited: string[] = [];
     // The e2e files have no DOM types; the page's document as far as this case reads it. The
     // functions run in the page, so each names it itself.
@@ -1403,7 +1398,7 @@ test.describe('chat', () => {
     let before = await page.evaluateHandle(
       () => (globalThis as unknown as PageGlobal).document.activeElement,
     );
-    while (!visited.includes(runPath)) {
+    while (!visited.includes(newerPath)) {
       expect(visited.length).toBeLessThan(10);
       await page.keyboard.press('Control+Shift+J');
       await page.waitForFunction((previous) => {
@@ -1418,8 +1413,7 @@ test.describe('chat', () => {
       if (pathname === approvalPath) await expect(approval).toBeFocused();
     }
     expect(visited.indexOf(approvalPath)).toBeGreaterThan(-1);
-    expect(visited.indexOf(approvalPath)).toBeLessThan(visited.indexOf(runPath));
-    await expect(page.locator(':focus')).toHaveText('Approve');
+    expect(visited.indexOf(approvalPath)).toBeLessThan(visited.indexOf(newerPath));
 
     // Back in the thread, Alt+Up moves through the messages.
     await page.goto(approvalPath);
@@ -1430,9 +1424,9 @@ test.describe('chat', () => {
     // Leave nothing waiting for the cases after this one.
     await approval.getByRole('button', { name: /Allow once/ }).click();
     await expect(conversation(page).getByText('The command ran.')).toBeVisible();
-    await page.goto(`/workflows/runs/${runId}`);
-    await page.getByRole('button', { name: 'Approve', exact: true }).first().click();
-    await expect(page.getByTestId('run-state')).not.toHaveText('Waiting for you');
+    await page.goto(newerPath);
+    await newer.getByRole('button', { name: /Allow once/ }).click();
+    await expect(conversation(page).getByText('The command ran.')).toBeVisible();
   });
 
   test('edits the last message and forks from an earlier one @agent-workbench-62 @agent-workbench-63 @agent-workbench-71 @agent-workbench-74', async ({

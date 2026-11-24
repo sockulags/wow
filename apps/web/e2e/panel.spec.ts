@@ -42,7 +42,10 @@ const calendar = (page: Page) => page.getByRole('region', { name: 'Calendar' });
 test.describe('context panel', () => {
   test('a selected meeting shows its details with Join and Open in Outlook', async ({ page }) => {
     await page.goto(`/calendar?view=day&date=${localDay()}`);
-    // The panel stayed open from the last test: it is a setting on the server.
+    // The panel opens with its key; that it is open is a setting on the server, so it stays so
+    // for the tests after this one.
+    await calendar(page).waitFor();
+    await page.keyboard.press('Control+j');
     await expect(panel(page)).toBeVisible();
     await calendar(page)
       .getByRole('button', { name: 'Lunch with Eli, 12:00–13:00, read-only' })

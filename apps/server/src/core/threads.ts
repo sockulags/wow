@@ -507,7 +507,10 @@ function messageTurn(
   images: readonly SentImage[] = [],
 ): DomainEvent[] {
   checkMessage(stored, text, picked, images);
-  const thread = stored;
+  // The Assistant thread goes on where a new thread would start when its instance was removed.
+  const assistant =
+    stored.id === assistantThreadId ? assistantThreadEvents(read, context) : undefined;
+  const thread = assistant?.thread ?? stored;
   const notes = assistantNotes(read, context, thread);
   const note = notes.length === 0 ? null : notes.join('\n\n');
   const withSkills =
@@ -515,6 +518,7 @@ function messageTurn(
       ? messageWithSkills(read, context, thread, picked, text)
       : { prompt: text, skills: undefined };
   return [
+    ...(assistant?.events ?? []),
     turnStarted(read, thread, context.now, {
       text,
       prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,

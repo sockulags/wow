@@ -16,7 +16,7 @@ import { CommandRejected, type DecideContext, type ReadModel } from '../core/orc
 import { readModel } from '../core/projector.js';
 import type { Db } from '../db/database.js';
 import { resolveStored } from '../settings/service.js';
-import { newThreadSettings } from '../core/card-threads.js';
+import { newThreadChoice, newThreadSettings } from '../core/card-threads.js';
 import { threadFolderOf } from '../core/thread-folder.js';
 
 // The Assistant thread (orchestrator threads spec 25): an ordinary main thread without a project,
@@ -49,22 +49,21 @@ const stored = (key: string, read: ReadModel, context: DecideContext): string =>
   return typeof value === 'string' ? value.trim() : '';
 };
 
-// Who would run the Assistant thread: the thread's own instance once it exists, else what a new
+// Who would run the Assistant thread: the thread's own instance while it exists, else what a new
 // thread gets (spec 2).
 export function resolveAssistant(read: ReadModel, context: DecideContext): Resolved {
   const current = read.thread(assistantThreadId);
-  if (current) {
-    const instance = read.providerInstance(current.providerInstanceId);
-    if (!instance) return { problem: 'The provider instance of the Assistant thread is gone.' };
+  const instance = current && read.providerInstance(current.providerInstanceId);
+  if (current && instance) {
     return { problem: null, instance, model: current.model, effort: current.effort };
   }
   try {
-    const settings = newThreadSettings({ projectId: null, workflowId: null }, read, context);
+    const choice = newThreadChoice({ projectId: null, workflowId: null }, read, context);
     return {
       problem: null,
-      instance: settings.instance,
-      model: settings.model,
-      effort: settings.effort,
+      instance: choice.instance,
+      model: choice.model,
+      effort: choice.effort,
     };
   } catch (error) {
     if (error instanceof CommandRejected) return { problem: error.message };
@@ -72,23 +71,61 @@ export function resolveAssistant(read: ReadModel, context: DecideContext): Resol
   }
 }
 
-// The events that make the Assistant thread when it is missing, and the thread. Rejects with the
-// reason when no instance can run it.
+// The events that make the Assistant thread when it is missing, or move it when its instance was
+// removed, and the thread as it is after them. Rejects with the reason when no instance can run
+// it.
 export function assistantThreadEvents(
   read: ReadModel,
   context: DecideContext,
   fallback: AssistantFallback = {},
 ): { events: DomainEvent[]; thread: Thread } {
   const current = read.thread(assistantThreadId);
-  if (current) return { events: [], thread: current };
+  if (current && read.providerInstance(current.providerInstanceId)) {
+    return { events: [], thread: current };
+  }
+  if (current) {
+    // Its instance was removed: it goes on where a new thread would start. The conversation the
+    // provider kept stays with the removed instance, so the session starts anew; wow's record of
+    // it stays.
+    const settings = newThreadSettings(
+      { projectId: null, workflowId: null },
+      read,
+      context,
+      fallback.model,
+    );
+    const moved = {
+      providerInstanceId: settings.instance.id,
+      providerSessionId: null,
+      model: settings.model,
+      effort: settings.effort,
+      permissionMode: settings.permissionMode,
+      updatedAt: context.now,
+    };
+    return {
+      events: [
+        {
+          kind: 'thread.providerChanged',
+          aggregate: current.id,
+          payload: {
+            threadId: current.id,
+            previousProviderInstanceId: current.providerInstanceId,
+            ...moved,
+          },
+        },
+      ],
+      thread: { ...current, ...moved },
+    };
+  }
   if (context.home === undefined) {
     throw new CommandRejected('rejected', 'This server has no folder of its own for the thread');
   }
-  const settings = newThreadSettings({ projectId: null, workflowId: null }, read, context);
-  const model = settings.model || fallback.model;
-  if (!model) {
-    throw new CommandRejected('rejected', `${settings.instance.name} has no default model.`);
-  }
+  const settings = newThreadSettings(
+    { projectId: null, workflowId: null },
+    read,
+    context,
+    fallback.model,
+  );
+  const model = settings.model;
   const now = context.now;
   const thread: Thread = {
     id: assistantThreadId,

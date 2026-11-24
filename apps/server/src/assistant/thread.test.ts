@@ -171,6 +171,25 @@ describe('the Assistant thread (orchestrator threads spec 25)', () => {
     expect(start?.appendInstructions).toBe(settingsRegistry['chat.instructions'].default);
   });
 
+  it('does not hold its instance: removing it is allowed, and the next message goes on where a new thread starts', async () => {
+    await instance('claude-work', 'claude', 'Claude at work');
+    await greet();
+    await instance('claude-home', 'claude', 'Claude at home');
+    expect(
+      refusal(() =>
+        dispatch({ type: 'providerInstance.delete', providerInstanceId: 'claude-work' }),
+      ),
+    ).toBeUndefined();
+    await say(assistantThreadId, 'Still there?');
+    expect(listed(assistantThreadId)).toMatchObject({
+      providerInstanceId: 'claude-home',
+      title: 'Assistant',
+    });
+    expect(startTurns('claude-home').map((command) => command.prompt)).toEqual(['Still there?']);
+    // The conversation the removed instance kept is not resumed on another.
+    expect(startTurns('claude-home')[0]?.resumeId).toBeUndefined();
+  });
+
   it('keeps its id for wow alone', () => {
     expect(
       refusal(() =>

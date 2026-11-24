@@ -15,6 +15,7 @@ import {
   type ProviderUpdateRun,
   type Skill,
   type SubscriptionTopic,
+  assistantThreadId,
 } from '@wow/contracts';
 import {
   and,
@@ -1007,12 +1008,13 @@ export function readModel(tx: DbOrTx): ReadModel {
       tx.select().from(providerLimits).where(eq(providerLimits.providerInstanceId, id)).get()
         ?.limits ?? [],
     instanceUsage: (id) => ({
-      // The assistant thread does not hold an instance: it moves to another one (spec 27).
+      // The Assistant thread does not hold an instance: it moves to another one (app assistant
+      // spec 27; orchestrator threads spec 25).
       threads:
         tx
           .select({ n: count() })
           .from(threads)
-          .where(and(eq(threads.providerInstanceId, id), ne(threads.kind, 'assistant')))
+          .where(and(eq(threads.providerInstanceId, id), ne(threads.id, assistantThreadId)))
           .get()?.n ?? 0,
       runningTurns:
         tx

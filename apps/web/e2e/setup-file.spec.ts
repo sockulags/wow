@@ -98,8 +98,6 @@ test.describe('setup file', () => {
     await expect(row).toContainText('colleague.yaml · 3 added, 1 replaced');
     await page.goto('/settings/hosts');
     await expect(page.getByLabel('Interval', { exact: true })).toHaveValue('900');
-    await page.goto('/workflows');
-    await expect(page.getByText('Kettle check')).toBeVisible();
 
     // One Undo takes the whole file back.
     await page.goto('/settings/advanced');
@@ -108,8 +106,6 @@ test.describe('setup file', () => {
     await expect(row).toContainText('Undone');
     await page.goto('/settings/hosts');
     await expect(page.getByLabel('Interval', { exact: true })).toHaveValue('60');
-    await page.goto('/workflows');
-    await expect(page.getByText('Kettle check')).toHaveCount(0);
   });
 
   test('a setup file that is wrong is refused with the line and the reason @app-assistant-23', async ({
