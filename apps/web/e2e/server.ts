@@ -2622,6 +2622,22 @@ datagrams.on('message', () => {
   received.push({ path: '/leak/datagram', authorization: undefined, body: undefined });
 });
 await new Promise<void>((resolve) => datagrams.bind(trackerPort, '127.0.0.1', resolve));
+// The workflows seeded above as the files a card starts (orchestrator threads spec 19, 27): the
+// one-time export ran at start, before they were seeded. A file already there is kept.
+{
+  const folder = path.join(home, 'workflows');
+  await mkdir(folder, { recursive: true });
+  for (const workflow of snapshot(server.database.db, { topic: 'workflows' }) as {
+    name: string;
+    steps: { skillName: string }[];
+  }[]) {
+    const file = path.join(folder, `${workflow.name}.md`);
+    if (existsSync(file)) continue;
+    const steps = workflow.steps.map((step) => `## ${step.skillName}`).join('\n\n');
+    await writeFile(file, `---\nname: ${JSON.stringify(workflow.name)}\n---\n\n${steps}\n`);
+  }
+  await server.skills.refresh();
+}
 // Seeding again after a restart repeats the same command ids, which the server answers as
 // duplicates. The trigger tests wait for this line.
 process.stdout.write('wow e2e server ready\n');

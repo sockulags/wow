@@ -141,7 +141,7 @@ describe('projects', () => {
     });
   });
 
-  it('removes a project: threads keep their folder, cards lose the project and the trigger', () => {
+  it('removes a project: threads keep their folder, cards lose the project and keep their trigger', () => {
     run({
       type: 'thread.create',
       threadId: 't1',
@@ -179,7 +179,8 @@ describe('projects', () => {
     expect(cards()).toEqual([
       expect.objectContaining({ id: 'card-1', projectId: null, workflowId: 'w1' }),
     ]);
-    expect(triggers()).toEqual([expect.objectContaining({ state: 'cancelled' })]);
+    // A card starts its thread without a project too (orchestrator threads spec 27).
+    expect(triggers()).toEqual([expect.objectContaining({ state: 'scheduled' })]);
     expect(snapshot(database.db, { topic: 'settings' })).toEqual([]);
   });
 

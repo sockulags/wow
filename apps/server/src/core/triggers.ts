@@ -15,6 +15,7 @@ import {
 import { missedTriggerOutcome } from '@wow/workflow-engine';
 import { startingBetween, type Occurrence } from '../scheduler/occurrences.js';
 import { isDeepStrictEqual } from 'node:util';
+import { backlogFollowsCard } from './backlog.js';
 import {
   busyThreadOf,
   cardFollowsThread,
@@ -297,6 +298,7 @@ const threadStarted = (
   context: DecideContext,
 ): DomainEvent[] => [
   ...cardState(card, 'running', card.runId, context, threadId),
+  ...backlogFollowsCard(card, 'running', read),
   ...notification(read, context, {
     id: `${card.id}:${date ?? card.start}:${threadId}:started`,
     at: context.now,

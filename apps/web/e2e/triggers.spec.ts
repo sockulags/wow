@@ -173,7 +173,7 @@ test.afterAll(async () => {
 });
 
 test.describe('triggers', () => {
-  test('a trigger a few seconds ahead starts the run and the card waits for you', async ({
+  test('a card a few seconds ahead starts a main thread and follows it to done (orchestrator threads spec 27, 28)', async ({
     page,
   }) => {
     const start = await createCard('Fix login', 8);
@@ -181,39 +181,22 @@ test.describe('triggers', () => {
     const card = cardBlock(page, 'Fix login');
     await expect(card.getByTestId('card-state')).toHaveText('Scheduled');
 
-    // The mock provider finishes step 1 at once, so the run goes straight to its gate.
-    await expect(card.getByTestId('card-state')).toHaveText('Waiting for you', { timeout: 15_000 });
+    // The mock provider ends the thread's turn at once.
+    await expect(card.getByTestId('card-state')).toHaveText('Done', { timeout: 15_000 });
     await expect(
-      page.getByRole('region', { name: /^Notifications/ }).getByText('Waiting for you'),
+      page.getByRole('region', { name: /^Notifications/ }).getByText('Scheduled thread started'),
     ).toBeVisible();
 
-    await page
-      .getByRole('navigation', { name: 'Sections' })
-      .getByRole('link', { name: 'Chat' })
-      .click();
-    await expect(
-      // A run's thread is listed by its step, with the workflow on the second line. Nobody has
-      // opened it yet, so it carries the unread mark between the two.
-      page
-        .getByRole('region', { name: 'Needs you' })
-        .getByRole('link', { name: /^deliver-work (Unread )?Bug e2e · / }),
-    ).toBeVisible();
-
-    // Deleting the card asks whether to stop the run; the thread stays.
-    await page.goBack();
-    await cardBlock(page, 'Fix login').click();
+    // The card links its thread; deleting the card leaves the thread.
+    await card.click();
     const dialog = page.getByRole('dialog', { name: 'Edit card' });
-    await expect(dialog.getByText('The workflow run is waiting for you.')).toBeVisible();
-    const runHref = await dialog.getByRole('link', { name: 'Open run' }).getAttribute('href');
+    await expect(dialog.getByText('Its thread is done.')).toBeVisible();
+    const threadHref = await dialog.getByRole('link', { name: 'Open thread' }).getAttribute('href');
+    expect(threadHref).toMatch(/^\/chat\//);
     await dialog.getByRole('button', { name: 'Delete card' }).click();
-    await dialog
-      .getByRole('alertdialog', { name: 'Stop the run?' })
-      .getByRole('button', { name: 'Stop run and delete' })
-      .click();
     await expect(cardBlock(page, 'Fix login')).toHaveCount(0);
-    await page.goto(runHref ?? '/workflows');
-    await expect(page.getByTestId('run-state')).toHaveText('Stopped');
-    await expect(page.getByRole('link', { name: 'Open thread' })).toBeVisible();
+    await page.goto(threadHref ?? '/chat');
+    await expect(page.getByRole('heading', { name: 'Fix login' }).first()).toBeVisible();
   });
 
   const policies: readonly [MissedTriggerPolicy, string][] = [
@@ -230,12 +213,12 @@ test.describe('triggers', () => {
       const card = cardBlock(page, title);
       const runNow = card.getByRole('button', { name: `Run now: ${title}` });
       if (policy === 'run') {
-        await expect(card.getByTestId('card-state')).toHaveText('Waiting for you');
+        await expect(card.getByTestId('card-state')).toHaveText('Done');
         await expect(runNow).toHaveCount(0);
       } else if (policy === 'mark') {
         await expect(card.getByTestId('card-state')).toHaveText('Missed');
         await runNow.click();
-        await expect(card.getByTestId('card-state')).toHaveText('Waiting for you');
+        await expect(card.getByTestId('card-state')).toHaveText('Done');
       } else {
         await expect(card.getByTestId('card-state')).toHaveText('Missed');
         await expect(runNow).toHaveCount(0);

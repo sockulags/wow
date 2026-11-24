@@ -8,6 +8,7 @@ import {
 } from '@wow/contracts';
 import path from 'node:path';
 import { settingValue } from '../assistant/permissions.js';
+import { backlogFollowsCard } from './backlog.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
 // Scheduled jobs as main threads (orchestrator threads spec 27, 28): a card's occurrence starts a
@@ -114,7 +115,9 @@ export function cardThreadStart(
       `No workflow named ${name} in wow's or the project's workflows`,
     );
   }
-  const text = card.body?.trim() || card.title;
+  // The card's notes, else its title, and the backlog item it was planned from, as a run had it.
+  const item = card.backlogItemId === null ? undefined : read.backlogItem(card.backlogItemId);
+  const text = [card.body?.trim() || card.title, item?.body.trim()].filter(Boolean).join('\n\n');
   const skills = [
     {
       name,
@@ -177,6 +180,7 @@ export function cardFollowsThread(
   const state = cardStateOfThread(card.threadId, read);
   if (state === undefined || state === card.state) return [];
   return [
+    ...backlogFollowsCard(card, state, read),
     {
       kind: 'card.stateChanged',
       aggregate: card.id,

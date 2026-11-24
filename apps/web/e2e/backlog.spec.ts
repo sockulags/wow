@@ -132,24 +132,17 @@ test.describe('backlog', () => {
 
     await fire(itemId);
     await expect(page.getByTestId('backlog-state')).toHaveText('Done');
-    await expect(page.getByTestId('backlog-run')).toContainText('Backlog e2e (done)');
-    await expect(page.getByTestId('backlog-run-problem')).toHaveCount(0);
+    await expect(card.getByRole('link', { name: 'Open its thread' })).toBeVisible();
   });
 
-  test('goes back to planned and shows the failure when the run fails', async ({ page }) => {
+  test('goes back to planned when its thread fails, and the thread shows why', async ({ page }) => {
     const itemId = await addItem(page, 'Risky change e2e', 'Please break the build.');
     await plan(page, '2027-03-03');
     await fire(itemId);
-    await expect(page.getByTestId('backlog-run')).toContainText('Backlog e2e (failed)');
     await expect(page.getByTestId('backlog-state')).toHaveText('Planned');
-    await expect(page.getByTestId('backlog-run-problem')).toContainText('The build broke');
-
-    // The run view marks the failed step and keeps its thread (behavior 26).
-    await page.getByTestId('backlog-run').getByRole('link').click();
-    await expect(page.getByTestId('run-state')).toHaveText('Failed');
-    const step = page.getByRole('list', { name: 'Run steps' }).getByTestId('run-step');
-    await expect(step.getByTestId('step-state')).toHaveText('Failed');
-    await expect(step.getByRole('link', { name: 'Open thread' })).toBeVisible();
+    await page.getByTestId('backlog-card').getByRole('link', { name: 'Open its thread' }).click();
+    await expect(page).toHaveURL(/\/chat\//);
+    await expect(page.getByText('The build broke').first()).toBeVisible();
   });
 
   test('publishes to Jira after a preview and offers the existing issue next time', async ({
