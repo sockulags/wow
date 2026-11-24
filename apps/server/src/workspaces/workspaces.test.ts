@@ -17,7 +17,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { workingCopyPath } from '../core/workflows.js';
-import { notifications, providerInstances, threads, workflowRuns } from '../db/schema.js';
+import { notifications, providerInstances, threads } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 

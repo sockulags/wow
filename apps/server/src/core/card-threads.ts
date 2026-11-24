@@ -236,7 +236,6 @@ export function cardFollowsThread(
       payload: {
         cardId: card.id,
         state,
-        runId: card.runId,
         threadId: card.threadId,
         updatedAt: context.now,
       },

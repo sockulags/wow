@@ -23,9 +23,6 @@
       "path": "../../packages/agent-os"
     },
     {
-      "path": "../../packages/workflow-engine"
-    },
-    {
       "path": "../../packages/provider-claude"
     },
     {

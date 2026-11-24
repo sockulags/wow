@@ -35,7 +35,6 @@ import {
 } from './hooks/index.js';
 import { ImageStore } from './files/images.js';
 import { HostLookup } from './hosts/lookup.js';
-import { HostPoller } from './hosts/poller.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
 import { discoverProjects } from './projects/discover.js';
@@ -52,15 +51,9 @@ import { closeConnection, createHandlers, type Connection } from './rpc/handlers
 import { route } from './rpc/router.js';
 import { Scheduler, type SchedulerTimers } from './scheduler/service.js';
 import { SettingsService } from './settings/service.js';
-import { PlansService } from './plans/service.js';
-import { readIntentTexts } from './hosts/intent-texts.js';
-import { PlanRuns } from './plans/plan-runs.js';
-import type { PlansWatchFactory } from './plans/watch.js';
 import { SkillsService } from './skills/service.js';
 import { TrackerService } from './trackers/service.js';
-import { detectArtifacts, type ArtifactDetector } from './workflows/artifacts.js';
 import { changesOptions, readRunBase, snapshotChanges } from './workflows/changes.js';
-import { WorkflowRunner } from './workflows/runner.js';
 import { Workspaces } from './workspaces/service.js';
 
 export const serverInfoFileName = 'server.json';
@@ -95,16 +88,11 @@ export interface StartOptions {
   readonly userHome?: string;
   // Replaces the chokidar watcher on the skill folders, for tests.
   readonly watchSkills?: WatchFactory;
-  // Replaces the chokidar watcher on the projects' intents folders, for tests.
-  readonly watchPlans?: PlansWatchFactory;
-  readonly detectArtifacts?: ArtifactDetector;
   // The time the engine stamps and the scheduler compares triggers with, for tests.
   readonly clock?: () => Date;
   // Replaces the scheduler's timer, for tests that call `scheduler.tick()` themselves.
   readonly schedulerTimers?: SchedulerTimers;
-  // Replaces the host poller's timer, for tests that call `hosts.poll()` themselves.
-  readonly hostTimers?: SchedulerTimers;
-  // Replaces the global fetch the tracker clients and the host poller use, for tests.
+  // Replaces the global fetch the tracker clients and the host lookup use, for tests.
   readonly fetch?: typeof fetch;
   // Runs npm for "Update Codex" (`provider.update`); tests and the e2e server pass a fake one.
   readonly runNpm?: RunNpm;
@@ -124,8 +112,6 @@ export interface RunningServer {
   readonly secrets: SecretStore;
   readonly providers: ProviderAdapters;
   readonly skills: SkillsService;
-  readonly plans: PlansService;
-  readonly workflows: WorkflowRunner;
   readonly follower: DelegationFollower;
   // Tells a main thread when its helper ends a turn or asks (agent orchestration spec 3).
   readonly helperFollower: HelperFollower;
@@ -139,7 +125,6 @@ export interface RunningServer {
   readonly providerUpdates: ProviderUpdates;
   readonly scheduler: Scheduler;
   readonly trackers: TrackerService;
-  readonly hosts: HostPoller;
   // Reads the items chat threads link to, when asked (agent workbench spec 22).
   readonly hostLookup: HostLookup;
   // Where the assistant's tools are reached and the token that opens them (see "Assistant").
@@ -247,7 +232,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
           .where(eq(threads.id, id))
           .get()?.parent;
       const row = database.db.select().from(threads).where(eq(threads.id, threadId)).get();
-      if (!row || row.kind !== 'chat' || row.runId !== null) return false;
+      if (!row || row.kind !== 'chat') return false;
       return helperDepth(threadId, parentOf) < settings.get('chat.helperDepth');
     },
     provider: {
@@ -291,14 +276,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   const cardFollower = new CardFollower({ db: database.db, engine, logger });
   // Asks the assistant for the brief of each new decision (chief of staff spec 18).
   const briefs = new BriefRequester({ db: database.db, engine, logger });
-  const workflows = new WorkflowRunner({
-    db: database.db,
-    engine,
-    detectArtifacts: options.detectArtifacts ?? detectArtifacts,
-    changes: folderChanges,
-    prepare: (runId) => workspaces.prepare(runId),
-    logger,
-  });
   const providerUpdates = new ProviderUpdates({
     db: database.db,
     engine,
@@ -309,16 +286,14 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     runNpm: options.runNpm ?? createNpmRunner({ platform: options.platform ?? process.platform }),
   });
   providerUpdates.recover();
-  // The runner listens first, so a step whose turn recovery fails also fails its run.
   providerService.recover();
   // Set once the Outlook hook has started, which happens after the socket listens.
   let outlook: OutlookService | undefined;
-  // First, so a run whose working copy was being made fails with that reason.
+  workspaces.recover();
   workspaces.recover();
   void snapshots
     .expire()
     .catch((error: unknown) => logger.warn('old snapshots were not dropped', error));
-  workflows.recover();
   // The workflows stored before are written out as files once, before the skills scan reads
   // them (orchestrator threads spec 22).
   await exportStoredWorkflows({ db: database.db, home, logger }).catch((error: unknown) =>
@@ -333,13 +308,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     wowHome: home,
     ...(options.watchSkills ? { watch: options.watchSkills } : {}),
   });
-  const plans = new PlansService({
-    db: database.db,
-    engine,
-    settings,
-    logger,
-    ...(options.watchPlans ? { watch: options.watchPlans } : {}),
-  });
   const trackers = new TrackerService({
     db: database.db,
     engine,
@@ -349,30 +317,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
   codeHost = (projectId) => trackers.codeHost(projectId);
-  const hosts = new HostPoller({
-    db: database.db,
-    engine,
-    settings,
-    logger,
-    resolve: (projectId) => trackers.githubHost(projectId),
-    resolveGitLab: (projectId) => trackers.gitlabHost(projectId),
-    resolveJira: (projectId) => trackers.jiraHost(projectId),
-    resolveConfluence: (projectId) => trackers.confluenceHost(projectId),
-    intentTexts: async (projectId, intentId) => {
-      const project = database.db.select().from(projects).where(eq(projects.id, projectId)).get();
-      if (!project) return [];
-      const setting = settings.get('plans.intentsDirectory', { projectId });
-      return readIntentTexts(project, setting, intentId);
-    },
-    workingCopyBranch: (folder) =>
-      readCurrentBranch(folder, {
-        timeoutMs: settings.get('trackers.gitTimeoutMs'),
-        stopWaitMs: settings.get('advanced.gitStopWaitMs'),
-      }),
-    ...(options.clock ? { clock: options.clock } : {}),
-    ...(options.hostTimers ? { timers: options.hostTimers } : {}),
-    ...(options.fetch ? { fetch: options.fetch } : {}),
-  });
   const hostLookup = new HostLookup({
     db: database.db,
     engine,
@@ -381,12 +325,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     linkHosts: (projectId, tokens) => trackers.linkHosts(projectId, tokens),
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
-  });
-  const planRuns = new PlanRuns({
-    db: database.db,
-    engine,
-    logger,
-    readPlan: (planId) => hosts.readPlan(planId),
   });
   const images = new ImageStore({
     db: database.db,
@@ -426,13 +364,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     db: database.db,
     skills,
-    plans,
-    workflows,
     workspaces,
     providers: providerService,
     providerUpdates,
     trackers,
-    hosts,
     hostLookup,
     images,
     snapshots,
@@ -530,7 +465,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     helperFollower.stop();
     cardFollower.stop();
     briefs.stop();
-    await workflows.stop();
     await workspaces.stop();
     await providerService.stop();
     database.close();
@@ -608,7 +542,7 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       clock: options.clock ?? (() => new Date()),
     }),
   );
-  const services: BackgroundService[] = [workspaces, workflows];
+  const services: BackgroundService[] = [workspaces];
   const stopServices = async () => {
     for (const service of services.splice(0).toReversed()) {
       try {
@@ -622,20 +556,12 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     services.push(skills);
     // A folder that cannot be read must not keep the server from starting.
     await skills.start().catch((error: unknown) => logger.error('skill scan failed', error));
-    services.push(plans);
-    await plans.start().catch((error: unknown) => logger.error('plan read failed', error));
-    // After the plans are read and the runs recovered, so a plan run sees both as they are now.
-    services.push(planRuns);
-    planRuns.recover();
     const mode = outlookMode(options.platform ?? process.platform, env);
     if (options.hooks?.outlook) {
       outlook = await options.hooks.outlook(mode, context);
       services.push(outlook);
     }
     for (const start of options.hooks?.services ?? []) services.push(await start(context));
-    // The host poller runs beside the scheduler and stops right after it.
-    services.push(hosts);
-    hosts.start();
     // Last, so it stops first: no trigger fires into services that are already gone.
     services.push(scheduler);
     scheduler.start();
@@ -690,8 +616,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     providers,
     skills,
-    plans,
-    workflows,
     follower,
     helperFollower,
     cardFollower,
@@ -703,7 +627,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     providerUpdates,
     scheduler,
     trackers,
-    hosts,
     hostLookup,
     assistant: { ...assistantAccess, tools: assistantTools },
     logger,

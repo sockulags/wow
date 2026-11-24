@@ -1,5 +1,4 @@
 import {
-  isLiveRunState,
   type BacklogChanges,
   type BacklogItem,
   type BacklogState,
@@ -7,7 +6,6 @@ import {
   type CardState,
   type DomainEvent,
   type ServerCommand,
-  type WorkflowRun,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { decideCalendar } from './calendar.js';
@@ -59,7 +57,6 @@ export function decideBacklog(
             body: command.body,
             tags: normalizeTags(command.tags),
             state: 'idea',
-            runId: null,
             remote: null,
             createdAt: context.now,
           },
@@ -80,9 +77,6 @@ export function decideBacklog(
     }
     case 'backlog.delete': {
       const item = requireItem(read, command.backlogItemId);
-      if (read.backlogItemHasLiveRun(item.id)) {
-        throw new CommandRejected('conflict', `${item.title} has a run in progress; stop it first`);
-      }
       return [{ kind: 'backlog.deleted', aggregate: item.id, payload: { backlogItemId: item.id } }];
     }
     case 'backlog.restore': {
@@ -94,9 +88,6 @@ export function decideBacklog(
     }
     case 'backlog.plan': {
       const item = requireItem(read, command.backlogItemId);
-      if (read.backlogItemHasLiveRun(item.id)) {
-        throw new CommandRejected('conflict', `${item.title} has a run in progress`);
-      }
       // The card goes through the calendar's own checks: id, time range, project and workflow.
       const card = decideCalendar(
         {
@@ -135,27 +126,8 @@ export function decideBacklog(
   }
 }
 
-// What a run means for its backlog item: running while the run is live, done when it finished,
-// and back to planned when it failed or was stopped; the item keeps the run, so the failure can
-// be shown (behavior 29).
-function stateForRun(run: WorkflowRun): BacklogState {
-  if (isLiveRunState(run.state)) return 'running';
-  return run.state === 'done' ? 'done' : 'planned';
-}
-
-export function backlogFollowsRun(run: WorkflowRun, read: ReadModel): DomainEvent[] {
-  if (run.backlogItemId === null) return [];
-  const item = read.backlogItem(run.backlogItemId);
-  if (!item) return [];
-  const changes: BacklogChanges = {};
-  const state = stateForRun(run);
-  if (item.state !== state) changes.state = state;
-  if (item.runId !== run.id) changes.runId = run.id;
-  return updated(item.id, changes);
-}
-
-// A backlog item planned on a card follows the main thread the card started, as it followed the
-// card's run (orchestrator threads spec 28): working or waiting is `running`, done is `done`,
+// A backlog item planned on a card follows the main thread the card started (orchestrator
+// threads spec 28): working or waiting is `running`, done is `done`,
 // anything else leaves it planned.
 export function backlogFollowsCard(
   card: Pick<CalendarItem, 'backlogItemId'>,

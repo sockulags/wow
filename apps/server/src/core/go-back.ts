@@ -24,7 +24,7 @@ const userItemId = (turn: Turn) => `${turn.id}:user`;
 
 // Only a chat thread on a provider that can go back offers Edit and Fork.
 function checkGoesBack(read: ReadModel, thread: Thread, action: 'edited' | 'forked'): void {
-  if (thread.kind === 'assistant' || thread.runId !== null) {
+  if (thread.kind === 'assistant') {
     throw new CommandRejected('rejected', `Only a chat thread's messages can be ${action}.`);
   }
   const kind = read.providerInstance(thread.providerInstanceId)?.kind;
@@ -174,8 +174,6 @@ export function forkEvents(
         permissionMode: origin.permissionMode,
         state: 'idle',
         pinned: false,
-        runId: null,
-        stepId: null,
         goBack: { resumeId: point.sessionId, at: point.at, fork: true },
         forkedFrom: { threadId: origin.id, turnId: target.id },
         createdAt: now,

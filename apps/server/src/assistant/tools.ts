@@ -87,7 +87,7 @@ export const changeTools = {
   update_card: {
     type: 'card.update',
     description:
-      'Moves, renames or relinks a card, or changes how it repeats. Give only what changes; null takes a link away, and repeat: null makes a repeating card happen once. On a repeating card a change applies to every occurrence that has not started; the ones that ran keep their runs.',
+      'Moves, renames or relinks a card, or changes how it repeats. Give only what changes; null takes a link away, and repeat: null makes a repeating card happen once. On a repeating card a change applies to every occurrence that has not started; the ones that started keep their threads.',
   },
   skip_card_occurrence: {
     type: 'card.skipOccurrence',
@@ -96,13 +96,12 @@ export const changeTools = {
   },
   delete_card: {
     type: 'card.delete',
-    withheld: ['stopRun'],
     description:
-      'Removes a card; a repeating card goes with its whole series. To leave out one occurrence, use skip_card_occurrence. Refused while its run is live.',
+      'Removes a card; a repeating card goes with its whole series. To leave out one occurrence, use skip_card_occurrence.',
   },
   start_card_run: {
     type: 'card.runNow',
-    newId: 'runId',
+    newId: 'threadId',
     description: `Starts a card's workflow now. ${waitsUnlessPermitted}`,
   },
   create_workflow: {
@@ -118,12 +117,7 @@ export const changeTools = {
   },
   delete_workflow: {
     type: 'workflow.delete',
-    description: 'Deletes a workflow. Refused while a run of it is live.',
-  },
-  start_run: {
-    type: 'workflowRun.start',
-    newId: 'runId',
-    description: `Starts a workflow in a project now. ${waitsUnlessPermitted}`,
+    description: 'Deletes a workflow.',
   },
   create_backlog_item: {
     type: 'backlog.create',
@@ -136,7 +130,7 @@ export const changeTools = {
   },
   delete_backlog_item: {
     type: 'backlog.delete',
-    description: 'Deletes a backlog item. Refused while a run of it is live.',
+    description: 'Deletes a backlog item.',
   },
   plan_backlog_item: {
     type: 'backlog.plan',
@@ -144,26 +138,6 @@ export const changeTools = {
     description:
       'Plans a backlog item on the calendar: a card with a workflow, a project and a time, and the item becomes planned.',
   },
-  follow_plan: {
-    type: 'plan.follow',
-    description:
-      'Follows or stops following a plan (planId is "<projectId>:<intentId>"), so its pull requests are read from the host.',
-  },
-  start_plan_run: {
-    type: 'planRun.start',
-    newId: 'planRunId',
-    description: `Runs the ready units of a plan with a workflow marked "for units". ${waits}`,
-  },
-  create_trigger: {
-    type: 'trigger.create',
-    newId: 'triggerId',
-    description: `Makes an event trigger: a workflow starts when a pull request in the project is merged, its checks fail or a review comment arrives. ${waits}`,
-  },
-  set_trigger_enabled: {
-    type: 'trigger.setEnabled',
-    description: 'Turns an event trigger on or off. Turning one on becomes a proposal.',
-  },
-  delete_trigger: { type: 'trigger.delete', description: 'Deletes an event trigger.' },
   create_skill: {
     type: 'skill.create',
     description: `Writes one of your own skills: skill is {name, description, text}. The name has lower case letters, digits and single hyphens, does not start with wow- and is not taken by another wow skill; description says when to use it; text is what the agent is told. ${waits}`,

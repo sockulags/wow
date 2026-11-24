@@ -86,9 +86,6 @@ importers:
       '@wow/skills':
         specifier: workspace:*
         version: link:../../packages/skills
-      '@wow/workflow-engine':
-        specifier: workspace:*
-        version: link:../../packages/workflow-engine
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -323,12 +320,6 @@ importers:
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
-
-  packages/workflow-engine:
-    dependencies:
-      '@wow/contracts':
-        specifier: workspace:*
-        version: link:../contracts
 
 packages:
 

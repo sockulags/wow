@@ -20,7 +20,6 @@
     "@wow/provider-codex": "workspace:*",
     "@wow/secrets": "workspace:*",
     "@wow/skills": "workspace:*",
-    "@wow/workflow-engine": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
     "drizzle-orm": "^0.45.4",

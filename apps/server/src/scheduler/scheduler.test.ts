@@ -23,7 +23,6 @@ import {
   threadItems,
   threads,
   triggers,
-  workflowRuns,
 } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';

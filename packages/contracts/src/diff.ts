@@ -1,15 +1,6 @@
 import { z } from 'zod';
 
-// What a run changed in its working folder since its base commit (review loop spec 11 to 13).
-// Without `path` the answer lists the changed files; with it, the answer holds that one file and
-// its unified diff, so a long list never carries every file's content.
-export const RunDiffParams = z.object({
-  runId: z.string().min(1),
-  path: z.string().min(1).optional(),
-});
-export type RunDiffParams = z.infer<typeof RunDiffParams>;
-
-// `noBase`: the run has no base commit (it started before bases were recorded, or in a
+// `noBase`: the thread has no base commit (it started before bases were recorded, or in a
 // repository without commits). `baseMissing`: the base commit is no longer in the repository.
 export const RunDiffStatus = z.enum([
   'ok',
@@ -41,8 +32,6 @@ export const RunDiffFile = z.object({
   removed: z.number().int().nonnegative().nullable(),
   // The file's size in the folder, or in the base for a deleted file; null when unknown.
   size: z.number().int().nonnegative().nullable(),
-  // The steps whose hashes say they changed this file, in run order.
-  changedBy: z.array(z.string().min(1)),
 });
 export type RunDiffFile = z.infer<typeof RunDiffFile>;
 

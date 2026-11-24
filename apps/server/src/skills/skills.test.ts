@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
 import { createHandlers, type Connection } from '../rpc/handlers.js';
 import { route } from '../rpc/router.js';
-import { providerInstances, threadItems, workflowRuns } from '../db/schema.js';
+import { providerInstances, threadItems } from '../db/schema.js';
 import { MockProviderAdapter, type MockScript } from '../hooks/index.js';
 import { startServer, type RunningServer } from '../server.js';
 

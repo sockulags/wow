@@ -29,7 +29,6 @@ import {
   outlookStatus,
   projects,
   settings as settingsTable,
-  workflowRuns,
 } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import {
@@ -580,15 +579,9 @@ export class TrackerService {
       .orderBy(desc(calendarItems.updatedAt))
       .all()
       .flatMap((row) => (row.projectId ? [{ projectId: row.projectId }] : []));
-    const runs = db
-      .select({ projectId: workflowRuns.projectId })
-      .from(workflowRuns)
-      .where(eq(workflowRuns.backlogItemId, item.id))
-      .orderBy(desc(workflowRuns.startedAt))
-      .all();
     const { project, needsProject } = publishTarget({
       requested,
-      links: { cards, runs },
+      cards,
       projects: db.select({ id: projects.id, name: projects.name }).from(projects).all(),
     });
     return { project, needsProject, values: await this.#context(project?.id ?? null) };

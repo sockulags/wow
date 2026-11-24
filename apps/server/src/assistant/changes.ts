@@ -13,8 +13,6 @@ import {
   settingGroupTitles,
   settingValueWords,
   settingsRegistry,
-  TriggerEvent,
-  triggerEventLabel,
   type AssistantChangeRecord,
   type AssistantPlace,
   type AssistantProposalRecord,
@@ -26,7 +24,7 @@ import {
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
-import { codeHostOf, type DecideContext, type ReadModel } from '../core/orchestrator.js';
+import { type DecideContext, type ReadModel } from '../core/orchestrator.js';
 import { triggersPath } from '../core/triggers.js';
 import { resolveStored } from '../settings/service.js';
 
@@ -36,14 +34,6 @@ import { resolveStored } from '../settings/service.js';
 // and the projections.
 
 type Row = Record<string, unknown>;
-
-// An event's label in the words of the project's code host.
-const eventLabel = (
-  event: TriggerEvent,
-  projectId: string,
-  read: ReadModel,
-  context: DecideContext,
-): string => triggerEventLabel(event, codeHostOf(read, context, projectId));
 
 // A row's own bookkeeping, which says nothing about what the user or the assistant changed.
 // A card's next fire time follows its trigger, and its past series follow its changes.
@@ -96,11 +86,6 @@ export function targetOf(command: Command): AssistantTarget | undefined {
     case 'workflow.update':
     case 'workflow.delete':
       return { kind: 'workflow', id: command.workflowId };
-    case 'plan.follow':
-      return { kind: 'plan', id: command.planId };
-    case 'trigger.setEnabled':
-    case 'trigger.delete':
-      return { kind: 'trigger', id: command.triggerId };
     case 'skill.create':
     case 'skill.update':
       return { kind: 'skill', id: command.skill.name };
@@ -128,12 +113,6 @@ export function snapshot(target: AssistantTarget, read: ReadModel): Row | null {
         return read.backlogItem(target.id);
       case 'workflow':
         return read.workflow(target.id);
-      case 'plan': {
-        const plan = read.planIntents().find((intent) => intent.id === target.id);
-        return plan && { followed: plan.followed, title: plan.title };
-      }
-      case 'trigger':
-        return read.trigger(target.id);
       case 'skill':
         return ownSkillRow(read, target.id);
     }
@@ -323,8 +302,6 @@ const identity: Readonly<Record<AssistantTarget['kind'], readonly string[]>> = {
   card: ['title', 'start', 'end', 'projectId', 'workflowId', 'repeat'],
   backlogItem: ['title'],
   workflow: ['name', 'steps'],
-  plan: ['followed'],
-  trigger: ['event', 'workflowId', 'projectId'],
   skill: ['description', 'text'],
 };
 
@@ -353,13 +330,6 @@ function nameOf(
       return `Backlog item "${text('title')}"`;
     case 'workflow':
       return `Workflow "${text('name')}"`;
-    case 'plan':
-      return `Plan "${text('title')}"`;
-    case 'trigger': {
-      const event = TriggerEvent.safeParse(row['event']);
-      const projectId = String(row['projectId'] ?? '');
-      return `Trigger "${event.success ? eventLabel(event.data, projectId, read, context) : target.id}"`;
-    }
     case 'skill':
       return `Skill "${target.id}"`;
   }
@@ -416,14 +386,6 @@ function placeOf(
       };
     case 'workflow':
       return workflowPlace(target.id, after ? String(after['name']) : undefined, after !== null);
-    case 'plan': {
-      const at = target.id.indexOf(':');
-      const projectId = encodeURIComponent(target.id.slice(0, at));
-      const intentId = encodeURIComponent(target.id.slice(at + 1));
-      return { label: 'Plans', path: `/plans/${projectId}/${intentId}` };
-    }
-    case 'trigger':
-      return { label: 'Calendar', path: triggersPath };
     case 'skill':
       return skillsPlace;
   }
@@ -585,29 +547,6 @@ function inverseOf(command: Command, before: Row | null, changed: readonly strin
               ]
             : []),
         ];
-      case 'plan.follow':
-        return [{ type: 'plan.follow', planId: command.planId, followed: before?.['followed'] }];
-      case 'trigger.setEnabled':
-        return [
-          {
-            type: 'trigger.setEnabled',
-            triggerId: command.triggerId,
-            enabled: before?.['enabled'],
-          },
-        ];
-      case 'trigger.delete':
-        return [
-          {
-            type: 'trigger.create',
-            triggerId: command.triggerId,
-            projectId: before?.['projectId'],
-            event: before?.['event'],
-            workflowId: before?.['workflowId'],
-          },
-          ...(before?.['enabled'] === false
-            ? [{ type: 'trigger.setEnabled', triggerId: command.triggerId, enabled: false }]
-            : []),
-        ];
       case 'skill.create':
         return [{ type: 'skill.delete', name: command.skill.name }];
       // The whole skill as it was: the file itself when it is known, else every field of it.
@@ -645,8 +584,7 @@ export function changeOf(
   const changed = before && after ? changedKeys(before, after) : [];
   if (before && after && changed.length === 0) return undefined;
   const name = nameOf(target, after ?? before ?? {}, read, context);
-  const one = changed.length === 1 && target.kind !== 'setting' && target.kind !== 'plan';
-  const followed = (row: Row) => (row['followed'] ? 'followed' : 'not followed');
+  const one = changed.length === 1 && target.kind !== 'setting';
   const settingValue = (row: Row | null): string => {
     const { key } = settingOf(target.id);
     if (row) return showSetting(key, row['value'], read, context);
@@ -657,9 +595,6 @@ export function changeOf(
   };
   const words = ((): { from: string | null; to: string | null } => {
     if (target.kind === 'setting') return { from: settingValue(before), to: settingValue(after) };
-    if (target.kind === 'plan') {
-      return { from: before && followed(before), to: after && followed(after) };
-    }
     if (before && after) {
       return {
         from: fields(before, changed, read, context),
@@ -857,13 +792,6 @@ export function basisOf(command: Command, read: ReadModel): Row {
       }
       case 'workflow.update':
         return { workflow: workflow(command.workflowId) };
-      case 'workflowRun.start':
-        return {
-          workflow: workflow(command.workflowId),
-          project: project(command.projectId),
-          'backlog item':
-            (command.backlogItemId ? read.backlogItem(command.backlogItemId)?.title : null) ?? null,
-        };
       case 'card.runNow': {
         const card = read.calendarItem(command.cardId);
         return {
@@ -872,14 +800,6 @@ export function basisOf(command: Command, read: ReadModel): Row {
             : null,
           workflow: workflow(card?.workflowId),
           project: project(card?.projectId),
-        };
-      }
-      case 'planRun.start': {
-        const plan = read.planIntents().find((intent) => intent.id === command.planId);
-        return {
-          plan: plan ? { title: plan.title, projectId: plan.projectId } : null,
-          workflow: workflow(command.workflowId),
-          project: project(plan?.projectId),
         };
       }
       // The yes is for this project as it is: its folder is where agents work.
@@ -919,21 +839,6 @@ export function basisOf(command: Command, read: ReadModel): Row {
             : null,
           workflow: workflow(workflowId),
           project: project(projectId),
-        };
-      }
-      case 'trigger.create':
-        return {
-          workflow: read.workflow(command.workflowId)?.name ?? null,
-          project: project(command.projectId),
-        };
-      case 'trigger.setEnabled': {
-        const trigger = read.trigger(command.triggerId);
-        return {
-          trigger: trigger
-            ? pick({ ...trigger }, ['event', 'workflowId', 'projectId', 'enabled'])
-            : null,
-          workflow: (trigger?.workflowId ? read.workflow(trigger.workflowId)?.name : null) ?? null,
-          project: project(trigger?.projectId),
         };
       }
       // The yes is for the skill as it is: one written since by hand or in Settings asks again.
@@ -1122,63 +1027,12 @@ export function proposalOf(
           place: workflowPlace(command.workflowId, workflow?.name, true),
         };
       }
-      case 'workflowRun.start': {
-        const item = command.backlogItemId ? read.backlogItem(command.backlogItemId) : undefined;
-        return {
-          title: `Start ${workflowName(command.workflowId)} in ${projectName(command.projectId)}`,
-          lines: item ? [{ what: 'Backlog item', from: null, to: item.title }] : [],
-          place: workflowPlace(command.workflowId, workflowName(command.workflowId), true),
-        };
-      }
       case 'card.runNow': {
         const item = read.calendarItem(command.cardId);
         return {
           title: `Start ${workflowName(item?.workflowId ?? '')} in ${projectName(item?.projectId ?? '')}`,
           lines: [{ what: 'Card', from: null, to: item?.title ?? command.cardId }],
           place: cardPlace(command.cardId, true),
-        };
-      }
-      case 'planRun.start': {
-        const plan = read.planIntents().find((intent) => intent.id === command.planId);
-        return {
-          title: `Run the ready units of "${plan?.title ?? command.planId}" with ${workflowName(command.workflowId)}`,
-          lines: [
-            {
-              what: 'Project',
-              from: null,
-              to: plan ? projectName(plan.projectId) : command.planId,
-            },
-          ],
-          place: placeOf(command, { kind: 'plan', id: command.planId }, {}, context),
-        };
-      }
-      case 'trigger.create':
-        return {
-          title: `New event trigger in ${projectName(command.projectId)}`,
-          lines: [
-            {
-              what: `When "${eventLabel(command.event, command.projectId, read, context)}"`,
-              from: null,
-              to: `start ${workflowName(command.workflowId)}`,
-            },
-          ],
-          place: { label: 'Calendar', path: triggersPath },
-        };
-      case 'trigger.setEnabled': {
-        const trigger = read.trigger(command.triggerId);
-        const event = trigger?.event
-          ? eventLabel(trigger.event, trigger.projectId ?? '', read, context)
-          : command.triggerId;
-        return {
-          title: `Turn on the trigger "${event}"`,
-          lines: [
-            {
-              what: `Start ${workflowName(trigger?.workflowId ?? '')} in ${projectName(trigger?.projectId ?? '')}`,
-              from: onOff(trigger?.enabled ?? false),
-              to: onOff(command.enabled),
-            },
-          ],
-          place: { label: 'Calendar', path: triggersPath },
         };
       }
       case 'project.update': {

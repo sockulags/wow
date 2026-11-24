@@ -110,8 +110,6 @@ function wanted(command: ServerCommand, read: ReadModel): Wanted | undefined {
         workflowId: command.workflowId,
         span: { start: command.start, end: command.end },
       };
-    case 'workflowRun.start':
-      return { kind: 'startRuns', projectId: command.projectId, workflowId: command.workflowId };
     case 'card.runNow': {
       const card = read.calendarItem(command.cardId);
       return card?.workflowId && card.projectId

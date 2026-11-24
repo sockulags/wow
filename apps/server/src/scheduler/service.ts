@@ -1,4 +1,4 @@
-import { isCardTrigger, type CardTrigger, type ServerCommand } from '@wow/contracts';
+import type { ServerCommand, Trigger } from '@wow/contracts';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Engine } from '../core/engine.js';
@@ -83,12 +83,12 @@ export class Scheduler implements BackgroundService {
     for (const listener of this.#tickers) listener();
     if (this.#paused) return;
     for (const trigger of this.#due()) {
-      const runId = randomUUID();
-      this.#dispatch(`scheduler:fire:${trigger.id}:${runId}`, {
+      const threadId = randomUUID();
+      this.#dispatch(`scheduler:fire:${trigger.id}:${threadId}`, {
         type: 'trigger.fire',
         triggerId: trigger.id,
         runAt: trigger.runAt,
-        runId,
+        threadId,
       });
     }
   }
@@ -97,13 +97,13 @@ export class Scheduler implements BackgroundService {
   applyMissed(): void {
     const policy = this.#deps.settings.get('scheduler.missedPolicy');
     for (const trigger of this.#due()) {
-      const runId = randomUUID();
-      this.#dispatch(`scheduler:missed:${trigger.id}:${runId}`, {
+      const threadId = randomUUID();
+      this.#dispatch(`scheduler:missed:${trigger.id}:${threadId}`, {
         type: 'trigger.applyMissed',
         triggerId: trigger.id,
         runAt: trigger.runAt,
         policy,
-        runId,
+        threadId,
       });
     }
   }
@@ -116,15 +116,13 @@ export class Scheduler implements BackgroundService {
     return Promise.resolve();
   }
 
-  // Card triggers only: an event trigger has no time and is fired by what the hosts show.
-  #due(): CardTrigger[] {
+  #due(): Trigger[] {
     const now = this.#clock().getTime();
     return this.#deps.db
       .select()
       .from(triggers)
       .where(eq(triggers.state, 'scheduled'))
       .all()
-      .filter(isCardTrigger)
       .filter((trigger) => Date.parse(trigger.runAt) <= now)
       .toSorted((a, b) => Date.parse(a.runAt) - Date.parse(b.runAt));
   }

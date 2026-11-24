@@ -149,41 +149,15 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.backlogItems).orderBy(asc(t.backlogItems.createdAt)).all();
       case 'workflows':
         return db.select().from(t.workflows).orderBy(asc(t.workflows.name)).all();
-      case 'workflowRuns':
-        return db.select().from(t.workflowRuns).orderBy(asc(t.workflowRuns.startedAt)).all();
       case 'triggers':
-        // Card triggers by their time, then event triggers in the order they were made.
-        return db
-          .select()
-          .from(t.triggers)
-          .orderBy(asc(t.triggers.runAt), asc(t.triggers.createdAt), asc(t.triggers.id))
-          .all();
+        // By the time they fire.
+        return db.select().from(t.triggers).orderBy(asc(t.triggers.runAt), asc(t.triggers.id)).all();
       case 'notifications':
         // Newest first.
         return db.select().from(t.notifications).orderBy(desc(t.notifications.at)).all();
       case 'skills':
         // Yours first, then wow's own, then the folders (wow skills spec 1, 7).
         return inListOrder(db.select().from(t.skills).all().map(skillOf));
-      case 'planIntents':
-        return db
-          .select()
-          .from(t.planIntents)
-          .orderBy(asc(t.planIntents.projectId), asc(t.planIntents.intentId))
-          .all();
-      case 'planRuns':
-        return db.select().from(t.planRuns).orderBy(asc(t.planRuns.startedAt)).all();
-      case 'changeRequests':
-        return db
-          .select()
-          .from(t.changeRequests)
-          .orderBy(asc(t.changeRequests.projectId), asc(t.changeRequests.number))
-          .all();
-      case 'hostReads':
-        return db.select().from(t.hostReads).orderBy(asc(t.hostReads.id)).all();
-      case 'ticketReads':
-        return db.select().from(t.ticketReads).orderBy(asc(t.ticketReads.id)).all();
-      case 'pageReads':
-        return db.select().from(t.pageReads).orderBy(asc(t.pageReads.id)).all();
       case 'hostItemReads':
         return db
           .select()

@@ -79,7 +79,6 @@ export function decideLimits(
             : `${instance.name}: ${windowWords(limit)}${used}`,
         body: 'Settings → Providers shows when it resets.',
         path: '/settings/providers',
-        runId: null,
         calendarItemId: null,
         threadId: null,
         approvalId: null,

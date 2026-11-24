@@ -12,8 +12,7 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import type { DecideContext, ReadModel } from '../core/orchestrator.js';
 import { pastSeriesAfter } from '../core/calendar.js';
-import { liveRunOf, nextOccurrence } from '../core/series.js';
-import { runPath } from '../core/workflows.js';
+import { nextOccurrence } from '../core/series.js';
 import { resolveStored } from '../settings/service.js';
 
 // The one table that says what the server does with a command the assistant sends (app
@@ -50,12 +49,6 @@ const providersByHand = refused(
   'Provider instances are connected and changed by the user in Settings → Providers.',
 );
 
-// Only the user answers a gate (spec 11). The reason carries the link to the run.
-const gateAnswer = refused(
-  (command: { runId: string }) =>
-    `Only the user approves, sends back or stops a run. The run is at ${runPath(command.runId)}.`,
-);
-
 const turnedOn = (on: unknown) => (next: unknown, current: unknown) =>
   next === on && current !== on;
 
@@ -76,7 +69,6 @@ const strings = (value: unknown): string[] =>
 const moreOnItsOwn: Readonly<Record<string, (next: unknown, current: unknown) => boolean>> = {
   'scheduler.paused': turnedOn(false),
   'scheduler.missedPolicy': turnedOn('run'),
-  'hosts.polling': turnedOn(true),
   'viewer.htmlScripts': turnedOn(true),
   'workflows.alwaysStopSkills': (next, current) => {
     const kept = new Set(strings(next));
@@ -345,7 +337,6 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'thread.answerQuestions': refused(
     'Only the user answers your questions, on their card. End your turn and wait for the answer.',
   ),
-  'thread.retry': chatOnly,
   'thread.interrupt': chatOnly,
   'thread.stopTask': chatOnly,
   'thread.toBackground': chatOnly,
@@ -408,19 +399,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'card.moveOccurrence': refused(
     'Moving one occurrence is for the calendar; change the time of a repeating card with update_card.',
   ),
-  'card.delete': (command, read) => {
-    const card = read.calendarItem(command.cardId);
-    const run = card ? liveRunOf(card, read) : undefined;
-    if (command.stopRun !== undefined || run) {
-      return {
-        class: 'refused',
-        reason: run
-          ? `The card's run is live and only the user stops a run. The run is at ${runPath(run.id)}.`
-          : 'Only the user decides whether a run stops.',
-      };
-    }
-    return ordinary;
-  },
+  'card.delete': 'ordinary',
   'card.runNow': 'proposal',
   'workflow.create': (command) =>
     command.steps.some(hasAutonomy) || command.ownWorkingCopy || command.forUnits
@@ -440,10 +419,6 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'workflow.restore': refused(
     'A deleted workflow comes back through Undo, which the user presses.',
   ),
-  'workflowRun.start': 'proposal',
-  'workflowRun.continue': gateAnswer,
-  'workflowRun.stop': gateAnswer,
-  'workflowRun.sendBack': gateAnswer,
   'backlog.create': 'ordinary',
   'backlog.update': 'ordinary',
   'backlog.delete': 'ordinary',
@@ -452,12 +427,6 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   ),
   'backlog.plan': (command, read, context) =>
     startsSoon(command.workflowId, command.start, read, context),
-  'plan.follow': 'ordinary',
-  'planRun.start': 'proposal',
-  'planRun.stop': refused('Only the user stops a plan run, on the plan in the Plans view.'),
-  'trigger.create': 'proposal',
-  'trigger.setEnabled': (command) => (command.enabled ? proposal : ordinary),
-  'trigger.delete': 'ordinary',
   'assistant.proposal.accept': usersAnswer,
   'assistant.proposal.decline': usersAnswer,
   'assistant.undo': usersAnswer,
@@ -503,21 +472,7 @@ export const commandClasses: { readonly [T in ServerCommand['type']]: Rule<T> } 
   'skill.update': (command, read) => ownSkillClass(command.skill.name, read),
   'skill.delete': (command, read) => ownSkillClass(command.name, read),
   'skill.restore': refused('Only an Undo puts a skill file back as it was.'),
-  'plans.sync': serverOnly,
-  'hosts.sync': serverOnly,
-  'tickets.sync': serverOnly,
   'hosts.itemRead': serverOnly,
-  'pages.sync': serverOnly,
-  'planRun.advance': serverOnly,
-  'workflowRun.stepCompleted': serverOnly,
-  'workflowRun.checkGate': serverOnly,
-  'workflowRun.baseRecorded': serverOnly,
-  'workflowRun.stepFailed': serverOnly,
-  'workflowRun.sendHeldTurn': serverOnly,
-  'workflowRun.artifactsFound': serverOnly,
-  'workflowRun.workingCopyReady': serverOnly,
-  'workflowRun.workingCopyFailed': serverOnly,
-  'workflowRun.workingCopySettled': serverOnly,
   'thread.workingCopyReady': serverOnly,
   'thread.workingCopyFailed': serverOnly,
   'thread.workingCopyBranching': serverOnly,

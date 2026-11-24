@@ -1,11 +1,9 @@
 import { usageSummary } from '../usage/summary.js';
 import {
   Thread,
-  WorkflowRun,
   confirmedOf,
   fillTemplate,
   inListOrder,
-  runFolder,
   settingsRegistry,
   type Command,
   type DetectedProvider,
@@ -27,7 +25,7 @@ import { readCalendarRange } from '../core/series.js';
 import { searchThreads } from '../core/thread-search.js';
 import type { Push, Subscriptions } from '../core/subscriptions.js';
 import type { Db } from '../db/database.js';
-import { projects, skills, threads, turns, workflowRuns } from '../db/schema.js';
+import { projects, skills, threads, turns } from '../db/schema.js';
 import { ImageRefused, type ImageStore } from '../files/images.js';
 import { RestoreChanged, RestoreRefused, type FolderSnapshots } from '../files/snapshots.js';
 import { listFolderFiles } from '../files/list.js';
@@ -40,19 +38,15 @@ import {
 } from '../files/editor.js';
 import { readViewerFile } from '../files/read.js';
 import type { HostLookup } from '../hosts/lookup.js';
-import type { HostPoller } from '../hosts/poller.js';
 import type { OutlookService } from '../outlook/service.js';
 import type { ProviderService } from '../providers/service.js';
 import type { ProviderUpdates } from '../providers/update.js';
 import type { SettingsService } from '../settings/service.js';
-import type { PlansService } from '../plans/service.js';
 import type { SkillsService } from '../skills/service.js';
 import { TrackerError } from '../trackers/http.js';
 import type { TrackerService } from '../trackers/service.js';
-import { detectArtifacts } from '../workflows/artifacts.js';
 import { workflowFileBase } from '../workflows/files.js';
-import { changesOptions, readRunDiff, readThreadDiff } from '../workflows/changes.js';
-import type { WorkflowRunner } from '../workflows/runner.js';
+import { changesOptions, readThreadDiff } from '../workflows/changes.js';
 import { WorkspaceChanged, WorkspaceRefused, type Workspaces } from '../workspaces/service.js';
 import { ThreadGitRefused, type ThreadGit } from '../workspaces/thread-git.js';
 import { ApplyChanged, ApplyRefused, type ThreadApply } from '../workspaces/apply.js';
@@ -73,13 +67,10 @@ export interface HandlerDeps {
   readonly secrets: SecretStore;
   readonly db: Db;
   readonly skills: SkillsService;
-  readonly plans: PlansService;
-  readonly workflows: WorkflowRunner;
   readonly workspaces: Workspaces;
   readonly providers: ProviderService;
   readonly providerUpdates: ProviderUpdates;
   readonly trackers: TrackerService;
-  readonly hosts: HostPoller;
   readonly hostLookup: HostLookup;
   readonly images: ImageStore;
   readonly snapshots: FolderSnapshots;
@@ -102,7 +93,7 @@ export interface HandlerDeps {
   };
 }
 
-// The folders a file of a run, thread or project may come from, first folder first, and how a
+// The folders a file of a thread or project may come from, first folder first, and how a
 // refusal names them (agent workbench Interface). The assistant's thread has none: its folder is
 // wow's own, and its view takes no files.
 function fileScope(
@@ -114,16 +105,6 @@ function fileScope(
     if (!project) throw new RpcFault('not_found', `No project ${projectId}`);
     return project.cwd;
   };
-  if ('runId' in scope) {
-    const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, scope.runId)).get();
-    if (!run) throw new RpcFault('not_found', `No run ${scope.runId}`);
-    const cwd = projectFolder(run.projectId);
-    // A run with its own working copy reads from there first; the project folder stays allowed.
-    return {
-      roots: run.workingCopy ? [run.workingCopy.path, cwd] : [cwd],
-      place: "the run's working folder and the project folder",
-    };
-  }
   if ('threadId' in scope) {
     const thread = deps.db.select().from(threads).where(eq(threads.id, scope.threadId)).get();
     if (!thread) throw new RpcFault('not_found', `No thread ${scope.threadId}`);
@@ -334,8 +315,6 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       names: await deps.secrets.names(),
     }),
     'skills.refresh': async () => ({ skills: inListOrder(await deps.skills.refresh()) }),
-    'plans.refresh': async () => ({ intents: await deps.plans.refresh() }),
-    'hosts.refresh': async (params) => ({ reads: await deps.hosts.refresh(params) }),
     'hosts.lookup': (params) => deps.hostLookup.lookup(params),
     'projects.git': async () => ({ projects: await deps.trackers.projectsGit() }),
     'trackers.project': ({ projectId }) => deps.trackers.projectTrackers(projectId),
@@ -350,11 +329,6 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
         if (error instanceof TrackerError) throw new RpcFault('rejected', error.message);
         throw error;
       }
-    },
-    'workflows.matchArtifacts': async ({ projectId, globs }) => {
-      const project = deps.db.select().from(projects).where(eq(projects.id, projectId)).get();
-      if (!project) throw new RpcFault('not_found', `No project ${projectId}`);
-      return { files: await detectArtifacts(project.cwd, globs) };
     },
     'files.read': async (params) => {
       const scope = fileScope(deps, params);
@@ -448,26 +422,14 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       }
       return { path: asked };
     },
-    'workflowRuns.diff': async ({ runId, path: asked }) => {
-      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
-      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
-      const project = deps.db.select().from(projects).where(eq(projects.id, run.projectId)).get();
-      if (!project) throw new RpcFault('not_found', `No project ${run.projectId}`);
-      return readRunDiff({
-        folder: runFolder(run, project.cwd),
-        run,
-        path: asked,
-        options: changesOptions(deps.settings),
-      });
-    },
     'threads.refreshTools': async ({ threadId }) => ({
       outcome: await deps.providers.refreshTools(threadId),
     }),
     'threads.diff': async ({ threadId, path: asked, turnId }) => {
       const thread = deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
       if (!thread) throw new RpcFault('not_found', `No thread ${threadId}`);
-      if (thread.runId !== null || thread.kind !== 'chat') {
-        throw new RpcFault('rejected', "A step's changes are its run's Changes tab.");
+      if (thread.kind !== 'chat') {
+        throw new RpcFault('rejected', 'Only a chat thread has changes.');
       }
       const last = deps.db
         .select({ id: turns.id, fileMark: turns.fileMark })
@@ -525,20 +487,6 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       if (!thread) throw new RpcFault('not_found', `No thread ${threadId}`);
       return Thread.parse(thread);
     },
-    'workflowRuns.removeWorkingCopy': async ({ runId }) => {
-      if (!deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get()) {
-        throw new RpcFault('not_found', `No run ${runId}`);
-      }
-      try {
-        await deps.workspaces.remove(runId);
-      } catch (error) {
-        if (error instanceof WorkspaceRefused) throw new RpcFault('rejected', error.message);
-        throw error;
-      }
-      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
-      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
-      return WorkflowRun.parse(run);
-    },
     'setup.save': () =>
       writeSetup(readModel(deps.db), {
         now: deps.clock().toISOString(),
@@ -556,12 +504,6 @@ export function createHandlers(deps: HandlerDeps): Handlers<Connection> {
       return plan.outcome === 'ready'
         ? { outcome: 'ready', preview: plan.preview }
         : { outcome: 'refused', problems: [...plan.problems] };
-    },
-    'workflowRuns.detectArtifacts': async ({ runId }) => {
-      await deps.workflows.detectArtifacts(runId);
-      const run = deps.db.select().from(workflowRuns).where(eq(workflowRuns.id, runId)).get();
-      if (!run) throw new RpcFault('not_found', `No run ${runId}`);
-      return WorkflowRun.parse(run);
     },
   };
 }

@@ -32,8 +32,6 @@ export const AssistantTargetKind = z.enum([
   'card',
   'backlogItem',
   'workflow',
-  'plan',
-  'trigger',
   // An own skill, by its name (wow skills spec 8, 22).
   'skill',
 ]);
@@ -461,10 +459,7 @@ export const assistantDiagnosisTool = 'diagnose_setup';
 export const DiagnosisKind = z.enum([
   'provider',
   'connection',
-  'hostRead',
   'skill',
-  'trigger',
-  'run',
   'card',
   // A workflow step without a model its provider needs (questions and models spec 19).
   'model',
@@ -594,10 +589,8 @@ export type AssistantPermissionUse = z.infer<typeof AssistantPermissionUse>;
 export const DecisionKind = z.enum([
   'approval',
   'question',
-  'gate',
   'limit',
   'proposal',
-  'failedRun',
   'missedCard',
 ]);
 export type DecisionKind = z.infer<typeof DecisionKind>;
@@ -621,7 +614,6 @@ export const Decision = z.object({
   // Where the app shows it.
   path: z.string().min(1),
   threadId: Id.nullable(),
-  runId: Id.nullable(),
   proposalId: Id.nullable(),
   approvalId: Id.nullable(),
   questionId: Id.nullable(),

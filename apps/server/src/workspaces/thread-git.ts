@@ -193,15 +193,12 @@ export class ThreadGit {
     };
   }
 
-  // A chat thread of the user's: never a workflow step's thread (whose copy may be at a fork's
-  // head) and never the assistant's (thread work Security).
+  // A chat thread of the user's, never the assistant's (thread work Security).
   #thread(threadId: string): ThreadRow {
     const thread = this.#deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
     if (!thread) throw commitRefused(`No thread ${threadId}`);
-    if (thread.kind !== 'chat' || thread.runId !== null) {
-      throw commitRefused(
-        "Only a chat thread commits from its Changes; a step's work is its run's.",
-      );
+    if (thread.kind !== 'chat') {
+      throw commitRefused('Only a chat thread commits from its Changes.');
     }
     return thread;
   }

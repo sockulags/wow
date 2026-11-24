@@ -109,7 +109,7 @@ const notification = (
 ): DomainEvent => ({
   kind: 'notification.sent',
   aggregate: id,
-  payload: { id, at, kind, title, body, path, runId: null, calendarItemId: null },
+  payload: { id, at, kind, title, body, path, calendarItemId: null },
 });
 
 export function decideBriefingNotified(
@@ -368,18 +368,6 @@ export class Chief {
   // What wow says itself since `since` (spec 21), and whether anything happened.
   #lines(since: string): { lines: BriefingLine[]; happened: boolean } {
     const { db } = this.#deps;
-    const runs = db.select().from(t.workflowRuns).all();
-    const workflows = new Map(
-      db
-        .select()
-        .from(t.workflows)
-        .all()
-        .map((row) => [row.id, row.name]),
-    );
-    const name = (run: (typeof runs)[number]) => workflows.get(run.workflowId) ?? 'A run';
-    const started = runs.filter((run) => run.startedAt >= since);
-    const done = runs.filter((run) => run.state === 'done' && (run.endedAt ?? '') >= since);
-    const failed = runs.filter((run) => run.state === 'failed' && (run.endedAt ?? '') >= since);
     const uses = db
       .select()
       .from(t.assistantPermissionUses)
@@ -387,16 +375,6 @@ export class Chief {
       .all();
     const decisions = decisionRowsWithoutBriefs(db);
     const lines: BriefingLine[] = [];
-    if (started.length > 0) {
-      lines.push({
-        text: `${started.length} run${started.length === 1 ? '' : 's'} started.`,
-        path: '/workflows',
-      });
-    }
-    for (const run of done)
-      lines.push({ text: `${name(run)} finished.`, path: `/workflows/runs/${run.id}` });
-    for (const run of failed)
-      lines.push({ text: `${name(run)} failed.`, path: `/workflows/runs/${run.id}` });
     for (const use of uses)
       lines.push({ text: `The assistant: ${use.what}.`, path: use.place.path });
     lines.push({
@@ -410,7 +388,7 @@ export class Chief {
       path: '/chat/assistant',
     });
     const happened =
-      started.length + done.length + failed.length + uses.length > 0 || decisions.length > 0;
+uses.length > 0 || decisions.length > 0;
     return { lines: [...lines, ...this.#rest()], happened };
   }
 

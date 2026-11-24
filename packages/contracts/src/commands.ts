@@ -25,8 +25,6 @@ import {
   GoBack,
   OutlookItemState,
   OutlookProfile,
-  PlanIntent,
-  PlanRun,
   Project,
   ProviderInstance,
   ProviderInstanceStatus,
@@ -38,24 +36,16 @@ import {
   ThreadItem,
   ThreadKind,
   Trigger,
-  TriggerEvent,
   Turn,
   TurnState,
   Usage,
   Workflow,
-  WorkflowRun,
 } from './projections.js';
 import { HostItemData, HostItemRead, HostItemRef } from './host-links.js';
 import {
   ChangeRequest,
   HostError,
   HostKind,
-  HostRead,
-  HostReadOutcome,
-  PageRead,
-  PageReadOutcome,
-  TicketRead,
-  TicketReadOutcome,
 } from './hosts.js';
 import {
   ApprovalDecision,
@@ -83,7 +73,7 @@ import {
 import { ChangeRequestOpenedItemPayload, CommittedItemPayload } from './thread-git.js';
 import { ApplyConfirmed, ChangesAppliedItemPayload } from './apply.js';
 import { HelperIsolation } from './helpers.js';
-import { FileHash, RunEffect, UnpushedWork, WorkflowStep, WorkingCopy } from './workflow.js';
+import { FileHash, UnpushedWork, WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Commands are what clients ask for; events are what the server decided happened. Later units
 // add their own members to both unions.
@@ -299,10 +289,6 @@ export const Command = z.discriminatedUnion('type', [
     itemId: Id,
     replies: z.array(QuestionReply).min(1),
   }),
-  // Retry in a workflow step's thread: the last message the thread was sent goes again as it
-  // was sent (its prompt, text and skills), as a step sends its turn. A chat's Retry sends the
-  // message again with `thread.sendMessage` instead.
-  z.object({ type: z.literal('thread.retry'), threadId: Id }),
   // Stops the running turn; what it produced so far stays (spec 23).
   z.object({ type: z.literal('thread.interrupt'), threadId: Id }),
   // Stops a task the agent runs in the background (agent workbench spec 90), by its id in the
@@ -417,11 +403,10 @@ export const Command = z.discriminatedUnion('type', [
     start: Timestamp,
     end: Timestamp,
   }),
-  // A card whose run is running or waiting needs `stopRun`: the app asks whether to stop the run
-  // first (spec 13). The run's threads are kept either way.
-  z.object({ type: z.literal('card.delete'), cardId: Id, stopRun: z.boolean().optional() }),
-  // Starts the card's workflow now, for a missed card's "Run now" (spec 12).
-  z.object({ type: z.literal('card.runNow'), cardId: Id, runId: Id }),
+  z.object({ type: z.literal('card.delete'), cardId: Id }),
+  // Starts the card's workflow now, for a missed card's "Run now" (spec 12), in a new thread with
+  // the id `threadId` or in the card's one thread.
+  z.object({ type: z.literal('card.runNow'), cardId: Id, threadId: Id }),
   z.object({
     type: z.literal('workflow.create'),
     workflowId: Id,
@@ -454,21 +439,6 @@ export const Command = z.discriminatedUnion('type', [
   z.object({ type: z.literal('skill.update'), skill: OwnSkill }),
   z.object({ type: z.literal('skill.delete'), name: z.string().min(1) }),
   z.object({ type: z.literal('skill.restore'), folder: z.string().min(1), file: z.string() }),
-  z.object({
-    type: z.literal('workflowRun.start'),
-    runId: Id,
-    workflowId: Id,
-    projectId: Id,
-    calendarItemId: Id.optional(),
-    backlogItemId: Id.optional(),
-  }),
-  // The user's answer at a gate (behaviors 9 to 11).
-  z.object({ type: z.literal('workflowRun.continue'), runId: Id }),
-  z.object({ type: z.literal('workflowRun.stop'), runId: Id }),
-  // The other answer at a gate (review loop spec 16 to 18): the reviewed step runs again in its
-  // thread with the note. The server refuses an empty note with a reason, so it is not a schema
-  // error.
-  z.object({ type: z.literal('workflowRun.sendBack'), runId: Id, note: z.string() }),
   // Backlog items stay in wow until the user publishes one (behavior 28).
   z.object({
     type: z.literal('backlog.create'),
@@ -502,26 +472,6 @@ export const Command = z.discriminatedUnion('type', [
     end: Timestamp,
     zone: z.string().min(1),
   }),
-  // Follow or stop following a plan (`<projectId>:<intentId>`). A followed plan's pull requests
-  // are read from the project's host; unfollowing forgets what was read for it.
-  z.object({ type: z.literal('plan.follow'), planId: Id, followed: z.boolean() }),
-  // "Run ready units": works through the plan's ready units with a workflow marked "For units",
-  // one run per unit, up to `workflows.planRunParallel` at once (review loop spec 40 to 47).
-  z.object({ type: z.literal('planRun.start'), planRunId: Id, planId: Id, workflowId: Id }),
-  // Stops every live unit run and starts no further unit (spec 45).
-  z.object({ type: z.literal('planRun.stop'), planRunId: Id }),
-  // An event trigger (review loop spec 48): runs of the workflow start when polling first sees
-  // the event on a pull request wow follows in the project. New triggers are on.
-  z.object({
-    type: z.literal('trigger.create'),
-    triggerId: Id,
-    projectId: Id,
-    event: TriggerEvent,
-    workflowId: Id,
-  }),
-  z.object({ type: z.literal('trigger.setEnabled'), triggerId: Id, enabled: z.boolean() }),
-  // Event triggers only; a card's trigger goes with its card.
-  z.object({ type: z.literal('trigger.delete'), triggerId: Id }),
   // The user's Yes to a proposal of the assistant (app assistant spec 9, 10): the command the
   // proposal holds is applied. Refused from the assistant's own origin.
   z.object({ type: z.literal('assistant.proposal.accept'), proposalId: Id }),
@@ -883,38 +833,6 @@ export const InternalCommand = z.discriminatedUnion('type', [
     threadId: Id,
     request: ChangeRequestOpenedItemPayload,
   }),
-  // Replaces the plans projection with a fresh read of every project's intents folder; the
-  // server's plans service sends it.
-  z.object({ type: z.literal('plans.sync'), intents: z.array(PlanIntent) }),
-  // What the host poller read for one project: every scope it asked about (a followed plan or a
-  // run) with its outcome, and the change requests it read. The orchestrator stores what
-  // changed and works out the unit statuses of the project's followed plans again.
-  z.object({
-    type: z.literal('hosts.sync'),
-    projectId: Id,
-    at: Timestamp,
-    host: HostKind,
-    hostName: z.string(),
-    reads: z.array(HostReadOutcome),
-    changeRequests: z.array(ChangeRequest),
-  }),
-  // What the host poller read about the tickets of one project's runs (review loop spec 33).
-  z.object({
-    type: z.literal('tickets.sync'),
-    projectId: Id,
-    at: Timestamp,
-    hostName: z.string(),
-    reads: z.array(TicketReadOutcome),
-  }),
-  // What the host poller read about the pages the texts of one project's runs link to (review
-  // loop spec 35).
-  z.object({
-    type: z.literal('pages.sync'),
-    projectId: Id,
-    at: Timestamp,
-    hostName: z.string(),
-    reads: z.array(PageReadOutcome),
-  }),
   // What the host lookup read about one item a chat thread links to (agent workbench spec 22).
   z.object({
     type: z.literal('hosts.itemRead'),
@@ -926,67 +844,6 @@ export const InternalCommand = z.discriminatedUnion('type', [
       z.object({ ok: z.literal(true), data: HostItemData }),
       z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
     ]),
-  }),
-  // Something a plan run depends on changed (its unit's run ended, or the plan's unit statuses
-  // did): decide again what it does next. The plan runs service sends it.
-  z.object({ type: z.literal('planRun.advance'), planRunId: Id }),
-  // What the workflow runner reports after a step's turn ended.
-  z.object({
-    type: z.literal('workflowRun.stepCompleted'),
-    runId: Id,
-    stepId: Id,
-    finalMessage: z.string(),
-    artifactsFound: z.array(z.string()),
-    // The step's expected artifact globs that matched no file.
-    artifactsMissing: z.array(z.string()).optional(),
-    fileHashes: z.array(FileHash).optional(),
-    // The commit the run's folder is on, for a gate that waits for that commit's checks.
-    headSha: z.string().optional(),
-  }),
-  // Look again at a gate that waits for its pull request's checks: the host poller sends it when
-  // `workflows.gateChecksTimeoutMinutes` has passed since the step ended.
-  z.object({ type: z.literal('workflowRun.checkGate'), runId: Id, stepId: Id }),
-  // The commit the run's folder was on when its first step began, and what already differed.
-  z.object({
-    type: z.literal('workflowRun.baseRecorded'),
-    runId: Id,
-    baseSha: z.string().min(1),
-    files: z.array(FileHash),
-  }),
-  z.object({
-    type: z.literal('workflowRun.stepFailed'),
-    runId: Id,
-    stepId: Id,
-    error: z.string(),
-    // The user interrupted the step's turn. Such a step follows no rule.
-    stopped: z.boolean().optional(),
-  }),
-  // A turn ended in the thread of a step whose own turn was held for it: send the held one.
-  z.object({ type: z.literal('workflowRun.sendHeldTurn'), runId: Id, stepId: Id }),
-  z.object({
-    type: z.literal('workflowRun.artifactsFound'),
-    runId: Id,
-    found: z.array(z.object({ stepId: Id, paths: z.array(z.string()) })),
-  }),
-  // The run's working copy exists: the commit it was made at, the default branch that commit
-  // was read from, and a note when that is not the fetched tip.
-  z.object({
-    type: z.literal('workflowRun.workingCopyReady'),
-    runId: Id,
-    startSha: z.string().min(1),
-    defaultBranch: z.string().nullable(),
-    note: z.string().nullable(),
-  }),
-  // The working copy could not be made. The run fails before its first step (review loop
-  // spec 38).
-  z.object({ type: z.literal('workflowRun.workingCopyFailed'), runId: Id, error: z.string() }),
-  // What became of the working copy after the run ended, or after "Remove working copy".
-  z.object({
-    type: z.literal('workflowRun.workingCopySettled'),
-    runId: Id,
-    state: z.enum(['kept', 'removed']),
-    unpushed: UnpushedWork.nullable(),
-    error: z.string().nullable(),
   }),
   // A chat thread's own working copy (thread work spec 11 to 16), as for a run: it exists now
   // (made, or made again on its branch), it could not be made (the turn that needed it fails),
@@ -1015,15 +872,15 @@ export const InternalCommand = z.discriminatedUnion('type', [
     error: z.string().nullable(),
   }),
   // The scheduler's tick found the trigger due (spec 8). `runAt` is the time it saw, so a card
-  // moved in the meantime does not fire.
-  z.object({ type: z.literal('trigger.fire'), triggerId: Id, runAt: Timestamp, runId: Id }),
+  // moved in the meantime does not fire. `threadId` is the id a new thread gets.
+  z.object({ type: z.literal('trigger.fire'), triggerId: Id, runAt: Timestamp, threadId: Id }),
   // A trigger whose time passed while the server was down or the scheduler paused (spec 12).
   z.object({
     type: z.literal('trigger.applyMissed'),
     triggerId: Id,
     runAt: Timestamp,
     policy: MissedTriggerPolicy,
-    runId: Id,
+    threadId: Id,
   }),
   // Something changed in the main thread a card started: the card's state follows it
   // (orchestrator threads spec 28).
@@ -1089,7 +946,7 @@ export const BacklogChanges = BacklogItem.pick({
   body: true,
   tags: true,
   state: true,
-  runId: true,
+
 }).partial();
 export type BacklogChanges = z.infer<typeof BacklogChanges>;
 
@@ -1187,52 +1044,11 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: z.literal('skills'),
     payload: z.object({ upserted: z.array(Skill), removed: z.array(Id) }),
   }),
-  z.object({
-    kind: z.literal('plans.synced'),
-    aggregate: z.literal('plans'),
-    payload: z.object({ upserted: z.array(PlanIntent), removed: z.array(Id) }),
-  }),
-  // Host rows as they now are, and the ones that went (an unfollowed plan, a change request no
-  // read names any more).
-  z.object({
-    kind: z.literal('hosts.synced'),
-    aggregate: Id,
-    payload: z.object({
-      projectId: Id,
-      reads: z.array(HostRead),
-      removedReads: z.array(Id),
-      changeRequests: z.array(ChangeRequest),
-      removedChangeRequests: z.array(Id),
-    }),
-  }),
   // A chat thread's read of one linked item as it now is.
   z.object({
     kind: z.literal('hosts.itemRead'),
     aggregate: Id,
     payload: z.object({ read: HostItemRead }),
-  }),
-  // Ticket reads as they now are.
-  z.object({
-    kind: z.literal('tickets.synced'),
-    aggregate: Id,
-    payload: z.object({ projectId: Id, reads: z.array(TicketRead) }),
-  }),
-  // Page reads as they now are. `fetched` names the reads whose host answered the same as last
-  // time: only their times move (touchPageRead), so unchanged page bodies are not written into
-  // the history again every round. Absent on events from before.
-  z.object({
-    kind: z.literal('pages.synced'),
-    aggregate: Id,
-    payload: z.object({
-      projectId: Id,
-      reads: z.array(PageRead),
-      fetched: z.object({ at: Timestamp, ids: z.array(Id).min(1) }).optional(),
-    }),
-  }),
-  z.object({
-    kind: z.literal('planRun.changed'),
-    aggregate: Id,
-    payload: z.object({ cause: z.string().min(1), planRun: PlanRun }),
   }),
   z.object({ kind: z.literal('workflow.created'), aggregate: Id, payload: Workflow }),
   z.object({
@@ -1244,13 +1060,6 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('workflow.deleted'),
     aggregate: Id,
     payload: z.object({ workflowId: Id }),
-  }),
-  // One per run transition: the run as it now is, what caused it, and the effects the server
-  // performs after commit.
-  z.object({
-    kind: z.literal('workflowRun.changed'),
-    aggregate: Id,
-    payload: z.object({ cause: z.string().min(1), run: WorkflowRun, effects: z.array(RunEffect) }),
   }),
   z.object({ kind: z.literal('thread.created'), aggregate: Id, payload: Thread }),
   z.object({
@@ -1573,14 +1382,13 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     aggregate: Id,
     payload: z.object({ cardId: Id, occurrence: CardOccurrence }),
   }),
-  // The card follows its trigger and its run.
+  // The card follows its trigger and its thread.
   z.object({
     kind: z.literal('card.stateChanged'),
     aggregate: Id,
     payload: z.object({
       cardId: Id,
       state: CardState,
-      runId: Id.nullable(),
       // The main thread the card follows now (orchestrator threads spec 28).
       threadId: Id.nullable().optional(),
       updatedAt: Timestamp,
@@ -1592,13 +1400,6 @@ export const DomainEvent = z.discriminatedUnion('kind', [
     kind: z.literal('trigger.deleted'),
     aggregate: Id,
     payload: z.object({ triggerId: Id }),
-  }),
-  // An event trigger saw its event. Stored so the same event never fires the trigger again;
-  // `runId` is null when the run could not start.
-  z.object({
-    kind: z.literal('trigger.eventSeen'),
-    aggregate: Id,
-    payload: z.object({ triggerId: Id, eventId: Id, runId: Id.nullable(), at: Timestamp }),
   }),
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.

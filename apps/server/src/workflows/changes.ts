@@ -1,11 +1,4 @@
-import type {
-  FileHash,
-  RunDiff,
-  RunDiffFile,
-  RunDiffStatus,
-  ThreadDiff,
-  WorkflowRun,
-} from '@wow/contracts';
+import type { FileHash, RunDiff, RunDiffFile, RunDiffStatus, ThreadDiff } from '@wow/contracts';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, readFile, readlink } from 'node:fs/promises';
@@ -21,10 +14,10 @@ import {
   type GitRunOptions,
 } from '../projects/git.js';
 
-// What a run changed in its working folder (review loop spec 10 to 13). The diff is the folder
-// as it is now against the commit it was on when the run's first step began. Which step changed
-// a file comes from content hashes taken when each step ended, because wow makes no commits of
-// its own. Nothing here writes to the folder or to the repository.
+// What a chat thread changed in its folder (agent workbench spec 34, 35). The diff is the folder
+// as it is now against the commit it was on at the thread's first turn; what changed in the last
+// turn comes from content hashes taken as it began, because wow makes no commits of its own.
+// Nothing here writes to the folder or to the repository.
 
 export interface ChangesOptions {
   readonly git: GitRunOptions;
@@ -108,11 +101,20 @@ export async function snapshotChanges(
 
 export interface RunBase {
   readonly baseSha: string;
-  // What already differed from the base commit before the first step did anything.
+  // What already differed from the base commit before the first turn did anything.
   readonly files: FileHash[];
 }
 
-// The commit the folder is on, for a run about to begin its first step. Undefined when the
+// How the provider service reads a thread's folder as a turn begins: its base commit at the first
+// turn, the commit it is on, and the hashes of what differs from the base.
+export interface FolderChanges {
+  base(folder: string): Promise<RunBase | undefined>;
+  // The commit the folder is on, or undefined when it has none or git cannot say.
+  head?(folder: string): Promise<string | undefined>;
+  snapshot(folder: string, baseSha: string): Promise<FileHash[] | undefined>;
+}
+
+// The commit the folder is on, for a thread about to begin its first turn. Undefined when the
 // folder is not a repository, has no commit yet, or git is not installed.
 export async function readRunBase(
   folder: string,
@@ -121,42 +123,6 @@ export async function readRunBase(
   const head = await readHeadCommit(folder, options.git);
   if (head.status !== 'ok') return undefined;
   return { baseSha: head.sha, files: (await snapshotChanges(folder, head.sha, options)) ?? [] };
-}
-
-type RunHashes = Pick<WorkflowRun, 'baseFiles' | 'steps' | 'path'>;
-
-// The steps with their hashes in the order they last ended. That is the order of the list
-// unless a rule sent the run back (workflow branches spec 19): a step keeps only the hashes of
-// its latest attempt, so it is compared with whichever step ended before that attempt.
-function inOrderEnded(run: RunHashes): WorkflowRun['steps'] {
-  const visits = run.path ?? [];
-  const lastEnded = (stepId: string) =>
-    visits.findLastIndex((visit) => visit.stepId === stepId && visit.ended === 'done');
-  return run.steps
-    .map((step, index) => ({ step, index, ended: lastEnded(step.stepId) }))
-    .toSorted((a, b) => a.ended - b.ended || a.index - b.index)
-    .map(({ step }) => step);
-}
-
-// The steps that changed the file, in the order they last ended: a step changed it when the
-// file's hash at the step's end is not the hash it had when the step that ended before it ended
-// (or when the run began, for the first of them). A path missing from a list was the same as in
-// the base commit then. A step that kept what it began from (`fileHashesBefore`) is compared
-// with that instead, so after a loop every step is marked with what its latest attempt changed.
-export function stepsThatChanged(run: RunHashes, relative: string): string[] {
-  const hashAt = (files: readonly FileHash[]) =>
-    files.find((entry) => entry.path === relative)?.hash;
-  let before = hashAt(run.baseFiles ?? []);
-  const steps: string[] = [];
-  for (const step of inOrderEnded(run)) {
-    if (!step.fileHashes) continue;
-    const after = hashAt(step.fileHashes);
-    // What the step began from, when it was kept: the chain loses it after a loop.
-    if (step.fileHashesBefore) before = hashAt(step.fileHashesBefore);
-    if (after !== before) steps.push(step.stepId);
-    before = after;
-  }
-  return steps;
 }
 
 // The same test git uses: a NUL byte near the start means the file is not text.
@@ -188,7 +154,6 @@ interface Described {
 async function describe(
   folder: string,
   entry: ChangedPath,
-  run: RunHashes,
   baseSizes: ReadonlyMap<string, number>,
   maxFileBytes: number,
 ): Promise<Described> {
@@ -201,7 +166,6 @@ async function describe(
     oldPath: entry.oldPath,
     status: entry.status,
     size,
-    changedBy: stepsThatChanged(run, entry.path),
   };
   const withoutLines = (content: 'binary' | 'tooLarge'): Described => ({
     file: { ...shown, content, added: null, removed: null },
@@ -221,21 +185,20 @@ async function describe(
   return { file: { ...shown, content: 'text', added: lineCount(text), removed: 0 }, text };
 }
 
-export interface RunDiffRequest {
+interface RunDiffRequest {
   readonly folder: string;
-  readonly run: Pick<WorkflowRun, 'baseSha' | 'baseFiles' | 'steps'>;
+  readonly baseSha: string | null;
   // One file to answer with its diff; without it the answer is the list.
   readonly path?: string | undefined;
   readonly options: ChangesOptions;
 }
 
-export async function readRunDiff({
+async function readRunDiff({
   folder,
-  run,
+  baseSha,
   path: asked,
   options,
 }: RunDiffRequest): Promise<RunDiff> {
-  const baseSha = run.baseSha ?? null;
   const nothing = (status: RunDiffStatus, message: string | null = null): RunDiff => ({
     status,
     message,
@@ -244,7 +207,7 @@ export async function readRunDiff({
     omitted: 0,
     patch: null,
   });
-  // The folder is asked first, so a folder that is not a repository says so even for a run
+  // The folder is asked first, so a folder that is not a repository says so even for a thread
   // that has no base either.
   const head = await readHeadCommit(folder, options.git);
   if (
@@ -267,7 +230,7 @@ export async function readRunDiff({
   const baseSizes = await readBaseSizes(folder, baseSha, deleted, options.git);
   const described: Described[] = [];
   for (const entry of entries) {
-    described.push(await describe(folder, entry, run, baseSizes, options.maxFileBytes));
+    described.push(await describe(folder, entry, baseSizes, options.maxFileBytes));
   }
   const files = described.map((entry) => entry.file);
   const answer = { status: 'ok' as const, message: null, baseSha, files, omitted };
@@ -296,8 +259,8 @@ export interface ThreadDiffRequest {
   readonly options: ChangesOptions;
 }
 
-// A chat thread's changes (agent workbench spec 34, 35) with the run's diff code: the folder
-// against the commit of its first turn, without what already differed then and is unchanged
+// A chat thread's changes (agent workbench spec 34, 35): the folder against the commit of its
+// first turn, without what already differed then and is unchanged
 // since. "This turn only" compares each listed file's content now with its hash when the last
 // turn began; a file the mark does not list was as in the base then. A file that differed before
 // the thread and changed again shows its whole diff against the commit.
@@ -309,12 +272,7 @@ export async function readThreadDiff({
   path: asked,
   options,
 }: ThreadDiffRequest): Promise<ThreadDiff> {
-  const diff = await readRunDiff({
-    folder,
-    run: { baseSha, baseFiles: baseFiles ? [...baseFiles] : null, steps: [] },
-    path: asked,
-    options,
-  });
+  const diff = await readRunDiff({ folder, baseSha, path: asked, options });
   if (diff.status !== 'ok' || baseSha === null) return { ...diff, turnPaths: null };
   // A file that already differed from the commit when the thread began, and is as it was then,
   // is not the thread's change.

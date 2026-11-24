@@ -24,7 +24,7 @@ export function archiveDoneByAge(deps: ArchiveByAgeDeps): void {
   if (days === 0) return;
   const before = deps.clock().getTime() - days * oneDay;
   const old = deps.db
-    .select({ id: threads.id, updatedAt: threads.updatedAt, runId: threads.runId })
+    .select({ id: threads.id, updatedAt: threads.updatedAt })
     .from(threads)
     .where(
       and(
@@ -35,7 +35,7 @@ export function archiveDoneByAge(deps: ArchiveByAgeDeps): void {
       ),
     )
     .all()
-    .filter((thread) => thread.runId === null && Date.parse(thread.updatedAt) < before);
+    .filter((thread) => Date.parse(thread.updatedAt) < before);
   for (const thread of old) {
     try {
       deps.engine.dispatch(`archive-by-age:${thread.id}:${thread.updatedAt}`, {

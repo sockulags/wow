@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { CommandRejected } from '../core/orchestrator.js';
 import { snapshot } from '../core/subscriptions.js';
-import { commandReceipts, events, hostReads } from '../db/schema.js';
+import { commandReceipts, events } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
 import { commandClasses } from './classes.js';
 import { builtTools, changeTools } from './tools.js';

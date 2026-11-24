@@ -89,18 +89,10 @@ export function decideProject(
         },
       ];
     }
-    // A live run would start its next step in a folder that no longer has a project, so removal
-    // waits for it. Cards lose the project through the calendar's own update, which cancels their
-    // pending triggers; threads keep their folder and lose only the link (see the projector).
-    // Finished runs keep the id as history.
+    // Cards lose the project through the calendar's own update, which cancels their pending
+    // triggers; threads keep their folder and lose only the link (see the projector).
     case 'project.delete': {
       const project = requireProject(read, command.projectId);
-      if (read.projectHasLiveRun(project.id)) {
-        throw new CommandRejected(
-          'conflict',
-          `${project.name} has a workflow run in progress; stop it or let it finish first`,
-        );
-      }
       const cards = read
         .projectCards(project.id)
         .flatMap((card) =>

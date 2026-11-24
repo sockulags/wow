@@ -1,6 +1,5 @@
 import { decideLimits, isLimitsCommand } from './provider-limits.js';
 import {
-  projectCodeHost,
   SecretRef,
   type Approval,
   type Briefing,
@@ -9,17 +8,12 @@ import {
   type CommandOrigin,
   type CalendarItem,
   type CardOccurrence,
-  type ChangeRequest,
   type HostKind,
-  type HostRead,
-  type TicketRead,
   type HostItemRead,
   type ThreadTools,
-  type PageRead,
   type OutlookStatus,
   type BacklogItem,
   type DomainEvent,
-  type EventTrigger,
   type Project,
   type ProviderInstance,
   type ReportedLimit,
@@ -32,23 +26,17 @@ import {
   type SettingDefinition,
   type SetupApplicationRecord,
   type SettingScopeRef,
-  type PlanIntent,
-  type PlanRun,
   type Skill,
   type Thread,
   type ThreadItem,
   type Trigger,
   type Turn,
   type Workflow,
-  type WorkflowRun,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { decideBacklog, isBacklogCommand } from './backlog.js';
 import { decideCalendar, isCalendarCommand } from './calendar.js';
-import { decideTickets } from './tickets.js';
-import { decidePages } from './pages.js';
-import { decideHostItemRead, decideHosts, decidePlansSync, isHostCommand } from './hosts.js';
-import { decidePlanRun, isPlanRunCommand } from './plan-runs.js';
+import { decideHostItemRead } from './hosts.js';
 import { decideProject, isProjectCommand } from './projects.js';
 import { decideProviderInstance, isProviderInstanceCommand } from './provider-instances.js';
 import { decideSkill, isSkillCommand } from './skills.js';
@@ -62,9 +50,8 @@ import { decideWorkflow, isWorkflowCommand } from './workflows.js';
 export interface ReadModel {
   project(id: string): Project | undefined;
   projects(): Project[];
-  // Local cards linked to the project, and whether one of its runs is running or waiting.
+  // Local cards linked to the project.
   projectCards(id: string): CalendarItem[];
-  projectHasLiveRun(id: string): boolean;
   providerInstanceExists(id: string): boolean;
   providerInstance(id: string): ProviderInstance | undefined;
   // Every instance, in the order they were made.
@@ -128,35 +115,15 @@ export interface ReadModel {
   outlookCalendarItems(): CalendarItem[];
   outlookStatus(): OutlookStatus | undefined;
   skills(): Skill[];
-  planIntents(): PlanIntent[];
-  planRun(id: string): PlanRun | undefined;
-  // The plan run that is running or waiting on this plan (`<projectId>:<intentId>`), if any.
-  livePlanRun(planId: string): PlanRun | undefined;
-  // What was last read from the project's host, and the change requests those reads name.
-  hostReads(projectId: string): HostRead[];
-  changeRequests(projectId: string): ChangeRequest[];
-  // What was last read about the tickets of the project's runs.
-  ticketReads(projectId: string): TicketRead[];
   // What was last read about one item a chat thread links to.
   hostItemRead(id: string): HostItemRead | undefined;
   // What the chat thread's session last reported it can use.
   threadTools(threadId: string): ThreadTools | undefined;
-  // What was last read about the pages the texts of the project's runs link to.
-  pageReads(projectId: string): PageRead[];
   workflow(id: string): Workflow | undefined;
   // Every workflow, in the order they were made.
   workflows(): Workflow[];
-  run(id: string): WorkflowRun | undefined;
-  // True while a run of this workflow is running or waiting at a gate.
-  hasLiveRun(workflowId: string): boolean;
   backlogItem(id: string): BacklogItem | undefined;
   trigger(id: string): Trigger | undefined;
-  // The project's event triggers, oldest first.
-  eventTriggers(projectId: string): EventTrigger[];
-  // Whether the trigger has already seen this event (and started its run, or failed to).
-  triggerEventSeen(triggerId: string, eventId: string): boolean;
-  // True while a run started for this backlog item is running or waiting at a gate.
-  backlogItemHasLiveRun(id: string): boolean;
   assistantChange(id: string): AssistantChangeRecord | undefined;
   // How many times the assistant acted under this permission at or after `since`.
   permissionUses(permissionId: string, since: string): number;
@@ -197,8 +164,8 @@ export interface DecideContext {
   // An undo stores the steps exactly as they were stored: a step without a model gets no
   // default written in, so it goes on following the instance's default (spec 19).
   readonly putBackSteps?: boolean | undefined;
-  // The code host a project's git data names (TrackerService caches it), so a GitLab project is
-  // worded as one before its first host read; undefined while not read.
+  // The code host a project's git data names (TrackerService caches it); undefined while not
+  // read.
   readonly codeHost?: ((projectId: string) => HostKind | undefined) | undefined;
   // A model's label as its provider last listed it (ProviderService caches each list), so a
   // change row names a model as the bar does; undefined while no list names it.
@@ -208,10 +175,9 @@ export interface DecideContext {
   readonly platform?: NodeJS.Platform | undefined;
 }
 
-// The code host to word a project's change requests and events in: its newest host read, else
-// its git data, else GitHub.
-export const codeHostOf = (read: ReadModel, context: DecideContext, projectId: string): HostKind =>
-  projectCodeHost(read.hostReads(projectId), projectId, context.codeHost?.(projectId));
+// The code host to word a project's change requests in: the one its git data names, else GitHub.
+export const codeHostOf = (context: DecideContext, projectId: string): HostKind =>
+  context.codeHost?.(projectId) ?? 'github';
 
 type AssistantCommand = Extract<ServerCommand, { type: `assistant.${string}` }>;
 
@@ -253,12 +219,8 @@ export function decide(
   if (isCalendarCommand(command)) return decideCalendar(command, read, context);
   if (isWorkflowCommand(command)) return decideWorkflow(command, read, context);
   if (isBacklogCommand(command)) return decideBacklog(command, read, context);
-  if (isHostCommand(command)) return decideHosts(command, read, context);
   if (isSkillCommand(command)) return decideSkill(command, read, context);
-  if (command.type === 'tickets.sync') return decideTickets(command, read);
   if (command.type === 'hosts.itemRead') return decideHostItemRead(command, read);
-  if (command.type === 'pages.sync') return decidePages(command, read);
-  if (isPlanRunCommand(command)) return decidePlanRun(command, read, context);
   if (isAssistantCommand(command) || isSetupCommand(command) || isHelperCommand(command)) {
     // They apply other commands step by step, each on what the one before left behind.
     throw new Error(`${command.type} is decided in steps; dispatch it through the engine`);
@@ -339,8 +301,6 @@ export function decide(
       if (upserted.length === 0 && removed.length === 0) return [];
       return [{ kind: 'skills.synced', aggregate: 'skills', payload: { upserted, removed } }];
     }
-    case 'plans.sync':
-      return decidePlansSync(command.intents, read);
   }
 }
 
