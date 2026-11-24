@@ -1,3 +1,4 @@
+import { assistantThreadId } from '@wow/contracts';
 import type {
   ProviderAdapter,
   ProviderCommand,
@@ -353,7 +354,12 @@ export class AssistantMockAgent implements ProviderAdapter {
   }
 
   send(command: ProviderCommand): Promise<unknown> {
-    if (command.type === 'startTurn' && command.toolset) {
+    // The Assistant thread is a main thread now (orchestrator threads spec 25); its turns are
+    // still this agent's.
+    if (
+      command.type === 'startTurn' &&
+      (command.toolset || command.threadId === assistantThreadId)
+    ) {
       // Answered after send resolves, the way a provider streams after accepting a turn.
       setImmediate(() => void this.#turn(command.threadId, command.prompt));
       return Promise.resolve({ ok: true });

@@ -66,7 +66,7 @@ const colleague = [
 ].join('\n');
 
 test.describe('first start', () => {
-  test('first start connects an agent and opens the assistant @app-assistant-25 @app-assistant-26', async ({
+  test('first start connects an agent and opens the Assistant thread @app-assistant-25 @app-assistant-26', async ({
     page,
   }) => {
     await page.goto('/calendar');
@@ -86,13 +86,14 @@ test.describe('first start', () => {
     await expect(codex.getByRole('alert')).toHaveText(e2eFirstStartCodexError);
     await expect(codex.getByTestId('provider-status')).toHaveText('Error');
     // The gate stays up in this window; after a reload an install with an instance is not gated
-    // (an existing install is never locked out), and Assistant shows the same step.
+    // (an existing install is never locked out).
     await expect(step(page).getByRole('heading', { name: 'Connect an agent' })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Threads' })).toHaveCount(0);
 
-    // One that passes opens the assistant, which greets with what is set up and what is missing.
+    // One that passes opens the Assistant thread (orchestrator threads spec 25), which greets with
+    // what is set up and what is missing.
     await claude.getByRole('button', { name: 'Test' }).click();
-    await expect(page).toHaveURL(/\/assistant$/);
+    await expect(page).toHaveURL(/\/chat\/assistant$/);
     await expect(page.getByRole('navigation', { name: 'Threads' })).toBeVisible();
     await expect(conversation(page).getByTestId('item-user').first()).toContainText(greeting);
     const answer = lastAnswer(page);
@@ -104,14 +105,10 @@ test.describe('first start', () => {
     await expect(answer).not.toContainText('fill in');
   });
 
-  test('the assistant shows the step again when its provider is removed @app-assistant-27', async ({
+  test('the app stays usable when the provider is removed later @app-assistant-27', async ({
     page,
   }) => {
     await removeInstance(page, 'Claude');
-    await page.goto('/assistant');
-    await expect(page.getByTestId('assistant-problem')).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Connect an agent' })).toBeVisible();
-    // The rest of the app stays usable.
     await page.goto('/calendar');
     await expect(page.getByRole('region', { name: 'Calendar' })).toBeVisible();
     await expect(step(page)).toHaveCount(0);
@@ -147,7 +144,7 @@ test.describe('first start', () => {
       .getByRole('region', { name: 'Claude Code' })
       .getByRole('button', { name: 'Test' })
       .click();
-    await expect(page).toHaveURL(/\/assistant$/);
+    await expect(page).toHaveURL(/\/chat\/assistant$/);
     const answer = lastAnswer(page);
     await expect(answer).toContainText(`Trackers: GitLab URL ${gitLabUrl}, token not set`);
     // One thing at a time: first the token, through its field.

@@ -76,16 +76,16 @@ picked project or row shows the whole list again. When the window cannot
 reach the wow server, a bar under the header says so and offers **Retry now**; lists keep what they last showed, dimmed,
 until the connection is back. Everything you can do is in
 the command palette: press **Ctrl+K** and type. The palette searches threads, cards, backlog items,
-workflows, runs, settings pages and actions together; arrow keys and Enter pick.
+workflows, settings pages and actions together; arrow keys and Enter pick.
 
 Default keys (all changeable in Settings → Keybindings):
 
 | Key              | Does                                                         |
 | ---------------- | ------------------------------------------------------------ |
 | Ctrl+K           | Command palette                                              |
-| Ctrl+1 … 5       | Calendar, Chat, Workflows, Plans, Backlog                    |
+| Ctrl+1, 2, 3, 5  | Calendar, Chat, Settings › Workflows, Backlog                |
 | Ctrl+,           | Settings                                                     |
-| Ctrl+B           | Show or hide the sidebar                                     |
+| Ctrl+B           | Show or hide the thread list                                 |
 | Ctrl+J           | Show or hide the context panel                               |
 | F6               | Move the focus into the panel and back                       |
 | Ctrl+Shift+L     | Dark or light theme                                          |
@@ -463,15 +463,6 @@ per window when it crosses the warning and again when it is reached (as `chat.no
 says). Settings → Providers lists every window with when it was reported. Only what the provider
 reports shows: an API key reports no plan limits, and this version shows none for Codex.
 
-### Usage
-
-**Usage** at the foot of the thread list (or "Show usage" in the palette) shows the tokens and
-cost of your turns per day for Today, 7 days, 30 days or This month, with totals per project,
-provider instance and model, and every plan limit on top. Click a total to see only its days,
-and again to see all. A cost the provider did not report shows as "—" (or "+ 2 unknown") and is
-not counted as nothing; turns without any usage reported are counted apart. Usage only shows: it
-sets no budget and stops nothing.
-
 ### Model, effort and mode
 
 The bar at the bottom of the composer, left of Send, reads the thread's model, effort and
@@ -694,8 +685,7 @@ how much of the context window the thread uses, with a Compact action for Claude
   when its turn ended or was stopped says "Not answered" and takes no answer any more; an answered
   one keeps showing what you answered.
 
-Either way, the thread's row in the list shows **Waits for you** until you answer. When the thread is a
-workflow step, its run says "Waiting for an answer" in the lists of runs, the run view and the context panel.
+Either way, the thread's row in the list shows **Waits for you** until you answer.
 
 While a turn runs, the thread shows how long it has been working. You can write the next message
 meanwhile: Enter queues it with the server, and the conversation shows it as "Queued · sent when
@@ -836,13 +826,10 @@ Ctrl+click rows (or press Space on them), or Shift+click and Shift+Up/Down to pi
 a bar over the list says how many are picked and offers Pin, Unpin, Mark done, Reopen, Archive
 and Unarchive. Each applies to the picked threads that allow it and says which it skipped and
 why, such as "Skipped 1 is working." Archiving several offers **Undo**. Escape clears the
-pick. A thread whose turn failed says **Failed** on its row. A thread started
-by a workflow is titled by its step, with the workflow on the second line.
+pick. A thread whose turn failed says **Failed** on its row.
 
 The thread header shows the project (hover it for the folder) and the provider instance; the
-model, effort and mode are in the composer bar. When a workflow run waits at a gate after the thread's step,
-the thread shows the gate with **Approve** (**Ctrl+Enter**), **Send back** (**Ctrl+Shift+Enter**)
-and **Stop**, the same as the run view.
+model, effort and mode are in the composer bar.
 
 **Finding threads**: **Ctrl+Shift+F**, or **/** while the list has the keyboard, puts the cursor
 in the filter above the list. It matches a thread's title, its project's name and words said in
@@ -904,7 +891,7 @@ model and effort the step names, and asks you before the next step where a step 
 Your workflows are files in `~/.wow/workflows`; a project's are in its `.wow/workflows`, and one
 there replaces yours of the same name in that project's threads. Settings → Workflows lists them,
 opens one in your editor and makes a new one from `workflows.newTemplate`. The workflows you had
-in the builder were written out there once when you updated.
+in the old builder were written out there once when you updated.
 
 ### Helper threads
 
@@ -924,8 +911,7 @@ the agent goes on with it; a helper's question comes back the same way, and the 
 when what it knows settles it. The agent can also read how a helper stands, write to it and stop
 it. In the main thread each helper is a row where it was started, such as "Helper · Codex at work
 · Review the timer change", with what it runs now, what it waits for or the last thing it said;
-click it to open the helper in the side panel, or use **Open thread** and **Stop**. In the thread
-list and Threads at work a helper sits under its main thread. A helper can start helpers of its
+click it to open the helper in the side panel, or use **Open thread** and **Stop**. The thread list shows main threads only; a helper is reached from its row in the conversation. A helper can start helpers of its
 own, down to `chat.helperDepth` levels (2: the main thread's helpers and theirs); a helper at the
 deepest level has no helper tools. Its answer and its questions go to the thread that started it.
 Stopping a thread stops every helper under it, and it cannot be marked done or archived while
@@ -947,23 +933,6 @@ helper it is. Answer it there as you would in the helper's own thread; only that
 and you can keep writing to the main agent meanwhile. Once answered, here or in the helper's own
 thread, its place in the conversation says "Answered in <helper>". An approval is always yours:
 no agent is asked to give it.
-
-### Threads at work
-
-**At work** at the top of the thread list (**Ctrl+Shift+O**, `keybindings.threadsAtWork`, or
-"Show threads at work") lists every thread that waits for you, works, or finished a turn you have
-not read, in that order, each group oldest first. Each row has the title, the project and branch
-(or folder) and one line: what the thread waits for ("Wants to run rm -rf build"), what it runs
-now ("Running pnpm test · 2:10 · 14 tool calls"), or the last line it wrote and when. Archived
-threads and the Assistant are not in it; a workflow step's thread is. The arrow keys move,
-**Enter** opens the thread, and **P** (`keybindings.threadToPanel`) opens it in the side panel.
-`chat.activityTextMaxLength` sets how much of the last line shows.
-
-**A thread beside another**: **Open thread in panel…** (**Ctrl+Alt+O**,
-`keybindings.openThreadInPanel`) opens the palette on your threads ("In panel: …"); the pick opens
-in a tab of the side panel next to the view you are in, with its conversation, its approval,
-question and gate cards and its composer. The tab has the thread's title and **Open thread**.
-Find, export, restore, fork and edit are in the main view only.
 
 ### Reading a long thread
 
@@ -1054,8 +1023,7 @@ Find, export, restore, fork and edit are in the main view only.
   ends. A match inside a closed row, group of tool calls, reasoning, subagent or the earlier lines
   of an output opens it, and it stays open after the bar closes. While a turn streams the count
   follows it and the current match stays where it was. **Escape** closes the bar and puts the
-  keyboard back where it was. Find is in the chat view only, not in the Assistant view or a step's
-  thread in the side panel.
+  keyboard back where it was. Find is in the chat view only, not in a thread in the side panel.
 - **Copy or save the conversation**: **Copy conversation as Markdown** and **Save conversation…**
   (the palette, and the **⋯** menu in the thread's header) give the thread as Markdown: its
   title, a line with the provider, model, project, folder and branch, the time, then "You · 20:41"
@@ -1090,182 +1058,13 @@ everything: threads, cards, workflows, runs, backlog items, settings pages and a
 matches in the title ranked first. The right side of each row says what it is ("Run · Waiting for
 you · 14:39").
 
-## Workflows
-
-A workflow is an ordered list of skills. Each step runs as its own agent thread, and a gate is a
-stop where nothing continues until you say so.
-
-### Building one
-
-Workflows → New workflow (or "New workflow from template" in the palette). Give it a name and start
-from **Blank** or a template, then add steps. Each step is one line (number, skill, provider,
-model); open it to edit:
-
-- a skill from the list (Refresh skills re-reads the skill folders); each choice says its group:
-  Yours, wow, Project, User or Plugins,
-- **Also follow**: more skills the step's agent follows after its own skill, in the order listed
-  (see "Skills of a step" below),
-- a provider instance, model, effort and permission mode,
-- an optional extra prompt,
-- optional expected artifacts: paths or globs, one per line, such as `intents/*/spec.md`. With a
-  project chosen to run in, the help line says how many files match there now.
-
-The model and effort lists are what the step's provider instance offers, read from the installed
-provider; the instance's default model and effort are marked "(default)". Codex needs a model on
-every step. A Codex step without one takes the instance's default model; when the instance has
-none, the step says so in words ("Step check-work runs on Codex (…), which needs a model on every
-step …"), and wow refuses to save it until you pick one. A workflow saved before wow had this
-rule still loads and runs as it did; its builder marks such a step ("was saved without a model
-…"), Save stores the model shown, and the assistant's "Why does this not work" names it. A setup
-file with such a step is applied with the step marked. Claude Code steps may leave the model to
-Claude Code, as before.
-
-Between steps (and before the first and after the last) the builder shows where the run waits:
-**Waits for you** marks a gate; **Add a gate** adds one there. Reorder steps by dragging the handle
-or with the move buttons. **Create workflow** stays disabled, with the reason in its tooltip, until
-the workflow has a name and a step.
-
-Templates are offered only for a new workflow. An existing one says which template it was based on;
-**Replace steps with template…** swaps its steps after you confirm, and nothing changes until you
-save. **Save as template…** stores the steps' skills, gates, expected artifacts and rules as a
-template under the name you give (a template with that name is replaced), so new workflows can
-start from it; Settings → Workflows still has the full template list. **Delete** removes the workflow at once
-and offers **Undo**. The templates (editable in
-`workflows.templates`):
-
-- **Bug**: deliver-work → check-work
-- **Feature**: capture-intent (gate after) → plan-work (gate after) → deliver-work → check-work
-- **Initiative**: capture-intent (gate after) → plan-work (gate after) → shape-work (gate after) →
-  deliver-work → check-work
-
-In all three, check-work has the rule "when the verdict is changes requested, go to deliver-work"
-(see "Rules, the limit and the path" below). Templates you changed yourself are left as they are;
-add the rule in Settings → Workflows or in a workflow's builder if you want it.
-
-Skills come from the folders in `skills.directories` (`~/.claude/skills`, `~/.codex/skills` and
-each project's `.claude/skills` and `.agents/skills` by default) and, with
-`skills.includeClaudePlugins`, from installed Claude plugins. Skills marked
-`disable-model-invocation: true` are offered too, because wow invokes them explicitly. A
-project's skill folder that does not exist yet is not watched, so the first skill you write into it
-by hand is listed after the next agent turn ends or when you press **Refresh skills**.
-
-### Skills of a step
-
-Settings → Skills has **Your skills**: skills you write in wow. **New skill** asks for a name (lower
-case letters, digits and hyphens, not starting with `wow-`), when to use it, and the text the agent
-is told. **Edit** changes the description and the text; **Delete** removes the skill at once. Each
-of the three offers **Undo**. A name that is not allowed or already taken is refused with the
-reason, and nothing is saved. wow keeps each skill as a `SKILL.md` file under its home folder
-(`~/.wow/skills/<name>/SKILL.md`); a file you put there by hand is listed after **Refresh skills**.
-Editing such a file changes only its name, description and text and keeps every other line of its
-frontmatter, and **Undo** of an edit or a delete puts the file back exactly as it was. When two
-folders name a skill the same, both are listed with their folder beside the name, and wow sends,
-runs, edits and deletes neither until you rename one in its `SKILL.md`; it says which folders.
-Your skills come first in every skill list. The palette has **New skill**, and **Edit skill** and
-**Delete skill** for each of yours.
-
-Below them are the skills wow ships: `wow-verdict` (end with exactly one verdict line),
-`wow-artifacts` (write each expected artifact where the step expects it), `wow-pull-request` (put
-the `Intent-Unit` line in the pull request) and `wow-handover` (end with what was done, what is left
-and what the next step needs). They are read-only; **Show the text** shows what they say, and the
-parts in braces are filled in from your settings and the run when they are sent. List one in
-`skills.builtInOff` to switch it off.
-
-A wow skill (yours or built in) is sent to the agent as its text, the same way on Claude Code and on
-Codex. A skill from a folder is invoked as before (`/name` or `$name`).
-
-In the builder, **Also follow** under a step's skill adds any other skill, from every group, as a
-chip; the cross on a chip removes it. Below it, **Attached automatically** lists the built-in skills
-wow gives the step by itself and why: `wow-verdict` when the gate after the step or one of its
-rules reads the verdict, `wow-artifacts` when the step expects artifacts, and `wow-pull-request`
-when a plan run delivers a unit with the workflow. **Leave out** keeps one away from that step
-(**Attach again** undoes it). `workflows.attachBuiltInSkills` turns automatic attaching off. The
-palette has the same actions for the step you are editing: "Also follow <skill> in step N", "Stop
-following <skill> in step N" and "Leave <skill> out of step N".
-
-### Running one
-
-Open a workflow, pick the project next to **Run now** and press it (save changes first), or put it
-on a card. The run view's header names the workflow, the project and when the run started, and
-links to its card and backlog item. Each step shows not started, running, done or failed, how
-long it took, a link to its thread and links to the expected artifacts that exist in the project.
-
-When a run reaches a gate it waits: the run, its card and the step's thread show "waiting for
-you", the step reads Done followed by a "Waiting for you" marker, and a desktop notification is
-sent (`scheduler.notifications`). The gate shows what to review: the step's last message (folded)
-and the artifacts it produced. In a wide window the side panel opens with the step's conversation
-and the gate, and the run view's tabs (**Changes**, **Artifacts**, **Pull request**, **Ticket**,
-**Pages**) show what to look at; a tab with nothing to show says so. Press **Approve**
-(**Ctrl+Enter**, `keybindings.gateApprove`) in the panel, the run view or the step's thread to
-start the next step. Press **Send back** (**Ctrl+Shift+Enter**, `keybindings.gateSendBack`) to
-write what is wrong; **Send it back** (or the same key again) runs the step again in the same
-thread with your note (`workflows.sendBackTemplate`; a template without `{{note}}` gets your note
-after its text), the step shows "Attempt 2", and the run waits at the same gate with the new
-result. A note is needed. A note you leave unsent belongs to that gate and is not offered at the
-next one. A message you type in the thread
-instead is a side conversation and leaves the run waiting. **Stop** ends the run; Stop asks
-first, because a stopped run cannot be continued. The next step's prompt is its skill invocation, its extra prompt, and the handover from
-`workflows.handoverTemplate` (by default the previous step's final message and the expected
-artifact paths). Stopping a run keeps all its threads.
-
-A step whose turn ends while a background agent of Claude's still runs is not done yet: it ends
-with the turn Claude starts by itself once that agent ends, and that turn's last message is the
-step's. A step does not wait for a background command such as a dev server or a watcher, which may
-never end. If the agent ends and Claude does not go on, or Claude's session is closed, the step
-ends with its last turn. When
-the background work ends before Claude ends its turn, wow cannot tell that Claude will go on, and
-the step ends with the first turn.
-
-### Reviewing at a gate
-
-When a run waits at a gate, its run view shows the gate bar (**Approve**, **Send back**, **Stop**)
-at its top, whatever the side panel shows, and the review tabs under it; the side panel shows the
-step's conversation with a copy of the gate bar. The note of **Send back** is written in the run
-view's bar. In a window narrower than 1200 px the side panel lies over the view when you open it;
-the gate bar then ends where the panel begins and puts its buttons under its text, so they stay
-in reach. Over a run the panel's edge stops where the gate bar's room begins, and the width you
-drag to there is the width kept; in a very small window the panel stays at its narrowest and the
-gate bar takes what is left beside it. Each tab is also in the palette ("Run: show changes" and so on) and in the address, so
-a reload shows the same tab. Workflows → **Runs** lists every run, the ones waiting for you
-first, then the running ones ("Go to runs" in the palette).
-
-- **Changes** (**Ctrl+Shift+D**, `keybindings.runChanges`; the same key goes back to Steps) lists
-  every file added, changed, renamed or deleted since the run started, committed or not, including
-  new files Git does not ignore, each with its added and removed lines. Pick a file for its diff
-  on the right; drag the edge between the list and the diff (or focus it and use the arrow keys)
-  to make the list wider (`appearance.changesListWidth`). Focus a line of the diff and press **C**
-  (`keybindings.diffComment`), or click beside its line number, to write a comment on it; Enter
-  adds `src/bell.ts:12 – your words` to the send-back note (`src/bell.ts:12 (removed) – your words`
-  for a removed line, whose number is the one it had before), and **Ctrl+Shift+Enter** sends the note
-  back. In a chat thread's Changes the same comment goes into the thread's composer as a reply.
-  **Shift+Enter** (`keybindings.openInEditor`) on a changed file, a diff line, an artifact, a file
-  link in chat or in the file viewer opens the file in your editor at its line; the command is the
-  `viewer.editorCommand` setting (by default `code --goto {path}:{line}`, run by the wow server,
-  not through a shell unless `viewer.editorShell` is on; in a shell line write `{path}` without
-  quotes, since wow quotes it). A file the step under review changed
-  carries a small mark ("This step changed it" on hover); **This step only** (**O**,
-  `keybindings.changesStepOnly`) narrows the list to those. When the first step starts, wow
-  records the commit the folder was on (the run's base); everything is compared with it. A binary
-  file, or one larger than `diff.maxFileBytes`, shows its status and size without lines; past
-  `diff.maxFiles` files the tab says how many it left out. When the folder is not a Git
-  repository or Git is not installed, the tab says so and the rest of the review works.
-- **Artifacts** lists the files the step produced. Opening one shows it in the side panel (see
-  "Files in the side panel").
-- **Pull request**, **Ticket** and **Pages** show what the hosts say about the run (see "Reading
-  from the hosts" under Plans): the pull request on the run's branch with its state, checks, the
-  failing check names and review comments; the Jira ticket with key, summary, status, assignee,
-  type and description; and the Confluence pages the ticket, the pull request or the intent link
-  to. Each has a "Last fetched" line, **Refresh now** and **Open on host**. A tab with nothing to
-  show says why. A page larger than `hosts.pageMaxBytes` (1,000,000 bytes by default) is not kept:
-  its line says so and points to that setting. A page Confluence no longer shows (deleted, moved
-  or restricted) says to check the link.
+## Files and host items
 
 ### Files in the side panel
 
-Opening an artifact, a changed file or a page shows it in the side panel next to the conversation,
-while the main view stays where it is. The panel's header has the path, **Back to conversation**
-(also Escape and the palette) and **Copy path**. "Open artifact: <path>" in the palette opens one
-too.
+Opening a file or a changed file shows it in the side panel next to the conversation, while the
+main view stays where it is. The panel's header has the path, **Back to conversation** (also
+Escape and the palette) and **Copy path**.
 
 - Markdown is rendered like a chat answer.
 - A picture is fitted to the panel; **Full size** and **Fit to panel** switch.
@@ -1274,16 +1073,16 @@ too.
   `viewer.htmlScripts` is on (off by default); scripts in attributes such as `onclick` never run.
 - Any other text shows as code, colored up to `viewer.highlightMaxBytes` and plain beyond.
 
-wow reads only files inside the run's folder and the project folder. A path outside them, a missing
+wow reads only files inside the thread's folder and the project folder. A path outside them, a missing
 file, a binary file that is not a picture, or a file larger than `viewer.maxFileBytes` is not read,
 and the panel says why.
 
-Each file or page opens in a **tab** of the panel. The first tab is the panel's own: in a run
-view the step's **Conversation**, in a chat **Details**. Opening a file that is already open selects
+Each file opens in a **tab** of the panel. The first tab is the panel's own: in a chat
+**Details**. Opening a file that is already open selects
 its tab. With the focus in the panel, Alt+W closes the tab, Ctrl+Tab and Ctrl+Shift+Tab move
 between tabs and Alt+Left goes back to the tab shown before (the "Panel" keys in Settings →
 Keybindings, and "Close panel tab", "Next panel tab", "Previous panel tab" and "Back to the panel
-tab shown before" in the palette). A thread or run keeps its tabs while you look at another one.
+tab shown before" in the palette). A thread keeps its tabs while you look at another one.
 Escape closes the file you opened from the main view, also while the focus is still on its link.
 
 In a chat, a path in an answer (`src/timer.ts` as code, or a link such as `[spec](docs/spec.md)`)
@@ -1317,92 +1116,7 @@ stay plain links. Nothing read from a host is sent to the agent unless you pick 
 the composer shows its chip above the text with "Open in panel". The thread's Details tab lists
 under "Mentioned" every file and host item its messages name.
 
-### Working copies
-
-Turn on **Own working copy** in a workflow's builder (or "Own working copy" in the palette) and
-each run gets its own Git working copy of the project, so your project folder is left alone. When
-the run starts, wow fetches the project's remote (`workspaces.fetchBeforeCreate`, per project) and
-creates the copy at the tip of the default branch, on no branch, under `workspaces.root` (a full
-path, or a folder name inside the wow folder; `workspaces` by default). Every step works there;
-the agent names and creates its own branch when it delivers. When the fetch fails, the copy starts
-from the local tip and the run says so. Fetching, creating or removing a copy may take
-`workspaces.gitTimeoutMs`.
-
-When the run ends and everything in the copy is committed and reachable from a branch on the
-remote, the copy is removed. Otherwise it is kept, and the run header lists what is unpushed
-(uncommitted files, files the repository ignores, commits not on the remote). **Remove working copy** (also in the palette)
-removes it after you confirm. If a copy cannot be created (the project is not a Git repository,
-the disk is full, the path is too long), the run fails before its first step with the reason, and
-nothing runs in the project folder instead. A short `workspaces.root` helps with Windows path
-length.
-
-### Gates that pass by themselves
-
-A gate after a step can pass without you. Open the step in the builder; under the gate,
-**Pass by itself when** has three checkboxes:
-
-- **The final message ends with the approved verdict**: its last non-empty line is
-  `workflows.verdictApprovedLine` (`APPROVED` by default), which is how check-work ends.
-- **Every check of the run's pull request is successful**: read from the host for the commit the
-  step left. While checks still run, the run says "Waiting for checks" and decides when polling
-  shows them finished; after `workflows.gateChecksTimeoutMinutes` it waits for you instead.
-- **Every expected artifact was found**: every path or glob the step expects exists.
-
-When every chosen part holds, the next step starts and the step shows "passed by itself" with the
-parts that held; wow never merges anything. When one does not, the run waits for you as usual and
-the gate bar says which part failed. Steps whose skill is in `workflows.alwaysStopSkills`
-(capture-intent, plan-work, design-work and shape-work, which cannot be removed) always wait for
-you: the builder does not offer the checkboxes for them and the server refuses a condition there.
-
-### Rules, the limit and the path
-
-Without rules a run goes through its steps in order. A rule on a step sends the run somewhere
-else depending on how the step went. In the builder, open a step and look under **After this
-step**: **Add rule** (**Alt+R**, `keybindings.ruleAdd`) adds a row "When _fact_ is _value_, go to
-_step or End_". The facts are:
-
-- **the verdict**: the last line of the step's final message. `APPROVED`, `CHANGES_REQUESTED` and
-  `BLOCKED` are read as approved, changes requested and blocked (the lines are the settings
-  `workflows.verdictApprovedLine`, `workflows.verdictChangesRequestedLine` and
-  `workflows.verdictBlockedLine`); anything else is "not given".
-- **checks**: successful or failed, read from the run's pull request for the commit the step
-  left. While they run, the run waits for them.
-- **artifacts**: found or missing, for a step with expected artifacts.
-- **the step failed**: without such a rule a failed step fails the run.
-
-The rules are tried from the top and the first one that holds decides; move a rule with
-**Alt+Up** and **Alt+Down** (`keybindings.ruleMoveUp`, `keybindings.ruleMoveDown`) or its buttons.
-"Otherwise: the next step" is always last. The **Paths** diagram beside the steps draws every
-path a run can take. A rule that cannot be followed (its step is gone, artifacts on a step that
-expects none, the same condition twice) is marked, and the workflow is not saved until it is
-fixed. wow chooses from these facts itself; no model is asked where to go.
-
-A rule is followed after the step's gate has passed. Going to an earlier step runs it again in
-its own thread, as the next attempt, with a message that says which step sent the work back, why,
-and what that step wrote (`workflows.goBackTemplate`). The steps after it run again too, each in
-its own thread. Going to a later step leaves the steps in between "Skipped" for that pass. Steps
-whose skill is in `workflows.alwaysStopSkills` still always wait for you. When a rule sends the
-run back to a step while you are talking with that step's thread, the step's new attempt waits
-for the answer to your message and then starts in the same thread.
-
-**The limit.** A step starts at most three times in a run (`workflows.maxStepVisits`, per
-project). When a rule or the order of the steps would start it once more, the run waits for you
-before that step: the gate says, for example, "deliver-work has run 3 times: the limit", and the
-step's row says the same. **Run once more** (**Ctrl+Enter**, `keybindings.gateApprove`) lets the
-step start one more time; **Stop** (`keybindings.stopRun`) ends the run. The next step that has
-reached the limit asks again, so a loop never goes on without you.
-
-**The path.** A step has one row under **Steps** however often it ran; the row shows "Attempt 2"
-and so on. The **Path** tab (**Ctrl+Shift+Y**, `keybindings.runPath`; the same key goes back to
-Steps) lists every time a step started, in the order it happened: the step, the attempt, how it
-ended, and why the run went where it went next, for example "verdict changes requested →
-deliver-work", "verdict approved: no rule held → next step" or "limit reached, waited for you".
-**Open thread** on a row opens the step's conversation, which holds all its attempts. In the
-**Changes** tab, **This step only** marks what the latest attempt of the step changed.
-
-A plan run counts a unit's run as one run, however many times its steps repeat.
-
-### Triggers
+### Cards that start threads
 
 A card with a workflow starts its main thread at the card's start time while wow is running, also
 from the tray (see "Cards"), and the card follows the thread.
@@ -1417,104 +1131,6 @@ If wow was not running at that time, `scheduler.missedPolicy` decides at the nex
 paused" until you resume. Triggers that came due while paused get the missed policy on resume.
 
 Deleting a card leaves the threads it started.
-
-### Event triggers
-
-Event triggers start nothing any more. To run a workflow at a time, put a card with that workflow in
-the calendar (see "Cards"): each time it comes due it starts a main thread. Workflows →
-**Triggers** still lists triggers made before; it goes away in a later release.
-
-## Plans
-
-The **Plans** view (**Ctrl+4**, `keybindings.goPlans`) reads the intent, spec and plan files of
-your projects, the format agent-os writes. Each project's `plans.intentsDirectory` (`intents` by
-default) holds one folder per intent with `intent.md`, `spec.md` and `plan.md`. wow only reads
-these files, and reads them again when they change (once a file has stayed the same for
-`plans.writeSettleMs`). A project whose intents folder does not exist yet is not watched, so its
-folder can still be renamed or removed on Windows (one with an intents folder is watched, and
-Windows may then refuse; see "Troubleshooting"); wow looks for the folder again when you open
-Plans or press **Refresh now**, when a project changes and after each agent turn or run step.
-
-On the left are the projects and their intents with title, status and revision, which files exist,
-and a "stale" mark on a spec or plan whose `built_on` revision is older than its source. Pick one
-to see its units on the right: key, title, dependencies, the `blocked:` note and, for a plan with
-`source: files`, the unit's contract (Outcome, Boundaries and the rest). A plan with
-`source: issues` shows key and title only. A plan that cannot be read shows the problem and its
-line, and the other intents still show. The palette finds every intent by its title and each unit
-of the open plan as "Unit <key>: <title>".
-
-Press Enter on `intent.md`, `spec.md` or `plan.md` (or click it) to read it, rendered, in the side
-panel. **Start a thread for this unit** on a unit opens a new chat thread in the project with the
-unit's contract as its first message; nothing is sent until you send it. The palette has "Plan:
-open spec.md" and the like, and "Start a thread for <key>: <title>".
-
-### Unit status
-
-Turn **Follow** on for a plan ("Plan: follow" in the palette) and wow reads its pull requests from the project's host (see
-"Reading from the hosts"). Each unit then shows:
-
-- **Delivered**: a merged pull request carries `Intent-Unit: <intent-id>/<unit-key>`,
-- **Claimed**: an open one does,
-- **Blocked**: its line has a `blocked:` note,
-- **Ready**: every unit it depends on is delivered,
-- **Waiting**: none of the above.
-
-A unit of a stale plan, or of a plan whose spec is stale, is never ready and says which file is
-stale. A unit with a pull request links to it and shows its state, checks and when that was last
-fetched. Without a followed plan, a host, or when the host cannot be reached, units show what the
-files alone say (blocked, or "status unknown") with the reason; nothing is guessed.
-
-### Plan runs
-
-A workflow with **For units** on (in its builder) can work through a plan. **Run ready units** in
-the plan ("Plan: run ready units with <workflow>" in the palette) picks the workflow and starts a plan run: wow takes the first ready
-unit in plan order and starts an ordinary run of the workflow for it, always in its own working
-copy, telling every step the intent, unit key and title (`workflows.unitPromptTemplate`, which
-also asks the agent to put the `Intent-Unit:` line in its pull request). Gates, review and
-notifications work as for any run.
-
-The plan run is shown above the units: its state, what it waits for (for example "U2 waits for
-U1 to merge"), each unit's run with a link, and **Stop**. When a unit run is done the next ready
-unit starts; when units remain but none is ready, the plan run waits and goes on when the host
-shows the change. A unit claimed by a pull request this plan run did not start is skipped. When a
-unit run fails or is stopped, `workflows.planRunOnFailure` decides: `stop` (default) stops the
-plan run, `skip` leaves that unit and goes on with the next ready unit that does not depend on
-it. When every unit is delivered, the plan run is done. Stop ends the live unit runs and starts no
-further unit.
-
-**Units at once** (`workflows.planRunParallel`, per project, default 1) lets a plan run keep more
-than one unit's run going: with 2, two ready units start side by side, each in its own working
-copy, and the next ready unit starts when one ends. The plan run lists each live unit with the
-step its run is at and what that step's thread runs now, and Threads at work names the unit
-beside each step thread. With `stop`, a failure starts nothing more and the plan run ends as
-failed once the other live runs have ended. More at once means more running on the machine, so
-the default stays 1. One plan run per plan at a time; a stale plan or spec, or a plan with
-`source: issues`, cannot be run, and the button says why.
-
-### Reading from the hosts
-
-wow reads GitHub (github.com or Enterprise Server), Jira, GitLab and Confluence to show unit status
-and the run's Pull request, Ticket and Pages tabs. It only reads: it never merges, approves or
-comments. Set them up under Settings → Trackers (and per project, see "Backlog"); GitLab
-(`trackers.gitlab.baseUrl`, `trackers.gitlab.token`, a token with `read_api`) and Confluence
-(`trackers.confluence.baseUrl`, `trackers.confluence.authMode`, `trackers.confluence.email`,
-`trackers.confluence.token`) sit beside Jira and GitHub, each with **Test connection**. A project
-whose remote is on the GitLab site reads merge requests (with pipelines as checks and notes as
-review comments) instead of pull requests. A token only ever goes to the host you stored it for.
-
-Every `hosts.pollSeconds` (60 by default) wow asks the hosts about the pull requests and tickets
-of live runs and followed plans only: one search per followed plan for its `Intent-Unit:` lines,
-never a list of the whole repository. A host without search is asked for its newest
-`hosts.listFallbackCount` pull requests instead. The Ticket tab reads the backlog item's issue (only
-from the project's Jira site; an issue published to another site is not asked for), or else a
-Jira key in the pull request's title or branch; the Pages tab reads only Confluence pages
-the ticket, the pull request or the intent link to. With `hosts.polling` off or the scheduler
-paused nothing is asked on the timer; **Refresh now** in a view still asks once. When a host
-fails, the last data stays with "Last fetched <time>" and the error, and the next interval tries
-again; a token that is wrong or lacks rights names the host that refused and points to its
-setting, and the token is never shown or logged. A host that says its request limit is used up is
-left alone until the limit resets, but never longer than `hosts.longestWaitMinutes` (60 by
-default).
 
 ## Backlog
 
@@ -1611,41 +1227,22 @@ To rename, move or delete a project's folder on disk, Remove is not needed first
 folder with an intents folder, `.claude/skills` or `.agents/skills` inside is watched by wow, and
 Windows may refuse while wow runs. Close wow first if it does.
 
-## Assistant
+## Assistant and wow's tools
 
-The Assistant section (`keybindings.goAssistant`, Ctrl+6, or "Go to Assistant" in the palette) is one
-conversation whose agent can only operate wow itself. Say what you want ("my projects are on our
-GitLab", "move my work hours to end at four") and it asks what it needs, does it through the same
-commands the views use, and says what it did and where that lives. The conversation is kept
-between restarts; there is only one.
+**Assistant** is a main thread like the others, without a project, listed in the thread list. wow
+makes it when the first-start step passes and greets you there with what is set up and what a
+first run still needs. Threads and the Assistant thread made before this version keep their
+conversation; the old assistant's thread is now this one.
 
-### What it runs on and what it can reach
+Every main thread's agent has wow's tools beside its own: the helper tools, and the app tools for
+settings, projects, trackers, workflows, calendar cards, the backlog and the readers of mail and
+calendar. Say what you want ("my projects are on our GitLab", "move my work hours to end at four")
+in any main thread and the agent asks what it needs, does it through the same commands the views
+use, and says what it did and where that lives. A helper does not get the app tools.
 
-It runs on a provider you connected: `assistant.providerInstanceId`, or the first connected
-instance when that is empty, with `assistant.model` and `assistant.effort` (empty means the
-instance's default). The bar at the bottom of its composer shows the instance, the model and the
-effort, and a pick there writes these settings, as Settings → Assistant does; picking another
-instance empties the model and effort, so it starts from that instance's defaults. Its mode
-reads "Read only" and cannot be changed. On Codex it runs only with `assistant.allowCodex` on: wow switches off Codex's command, image,
-image generation, computer and browser use, subagent, goal, app, plugin, skill search, tool
-suggestion, sleep, code mode and question tools and your own Codex hooks for the assistant, but Codex's file edit tool and its MCP
-resource tools have no switch and nobody has yet checked the resulting tool list on a real Codex
-(the sandbox stays read-only, without network, as a second guard); with it off and only Codex
-connected, the assistant says so. Its agent gets wow's own tools and nothing else: no files, no shell, no
-network, in an empty folder of wow's (`~/.wow/assistant`). What it is told to do is the
-`assistant.instructions` text.
-
-It can read settings (secret ones only as "set" or "not set"), projects, providers, workflows,
-templates and skills, calendar cards and meeting times and titles, the backlog, runs, triggers,
-notifications and connection tests, and the free time in your work hours. It can also read what
-agents produced: a run's steps with their final messages, verdicts and checks, the text of the
-artifacts they found and the run's changes with part of the diff, and a thread's latest messages
-and what it waits for. It reads no other file of a project. The conversation says each such read
-in words ("Read what a run's agents produced"). To keep a project out of its reach, add it to
-**Projects the assistant does not read** (`assistant.excludedProjects`); the assistant can ask to
-take one off that list, but only you can say yes. Long texts reach it cut short
-(`assistant.readMaxBytes`, `assistant.readMaxDiffLines`, `assistant.readMaxMessages`). Ask it
-for project work ("fix this test") and it offers to open a new thread in Chat with your text.
+Each main thread's agent is told **Instructions for main threads** (`chat.instructions`, Settings →
+Chat) after its provider's own instructions: how to use wow's tools, and never to ask for a
+secret. A changed text applies from the next start of a thread's session.
 
 ### Permissions
 
@@ -1686,64 +1283,6 @@ permissions on or wider: it can propose those, and only you say yes.
 **Focus** on a card makes it time kept free: it carries no workflow, shows as a dashed block,
 and the assistant plans nothing over it.
 
-### Briefings
-
-Once the assistant's conversation exists, it briefs you at the day's moments (`assistant.briefings`):
-when your work hours start ("Good morning"), after an Outlook meeting of at least
-`assistant.briefAfterMeetingMinutes` (30) in which something happened, when you come back to the
-window after `assistant.briefAfterIdleMinutes` (60) away, and when your work hours end. A briefing
-sits above **Needs you**: what ran, finished and failed since the last one, what the assistant did
-under its permissions, what waits for you, and what is left of today, each line leading to its
-place. Within `assistant.briefingsPerDay` (4) the assistant adds a few sentences of its own on top;
-after that the briefing has wow's lines only and costs nothing.
-
-A briefing and a reminder come as a notification, but not while you are in a meeting, in a focus
-card or outside your work hours; they wait until then. A decision that has waited
-`assistant.remindAfterMinutes` (60) gets one reminder, never a second. Both stay off with
-`scheduler.notifications`.
-
-When an Outlook meeting comes to overlap a card with a workflow that has not started, the
-assistant proposes to move it to the next free slot of the same length after the meeting; with
-**Move cards** it moves it and says so in the briefing.
-
-### Needs you
-
-Beside the assistant's conversation (in a window at least 1000 pixels wide) is **Needs you**:
-everything that waits for you, in one list, wherever it came from. Approvals and questions that
-hold an agent's turn come first, then gates and limits, then the assistant's proposals, then runs
-that failed and cards that did not start; within each, what blocks the soonest card first, then
-the oldest. Each row says what it is and where, with what wow knows of it (the artifacts a step
-found, the choices of a question). When a gate, an approval, a question or a failure starts to
-wait, the assistant reads it and writes a short brief with what it recommends, once; at most
-`assistant.briefsPerDay` (10) a day, after that the row shows wow's own lines. The assistant never
-answers any of them.
-
-Answer from the row: **Approve** (or **Run once more** at a limit), **Allow once** and **Deny**,
-**Yes** and **No**, or **Dismiss** for a failed run or a missed card; **Open** goes to where it
-waits, for a question, a send back with a note or anything else. With a row focused, Enter opens
-it and the gate and approval keys answer it as they do in their own views. **Ctrl+Shift+J**
-("Next that needs you") goes through the same order. The tray menu lists the first three rows
-under "N need you" and opens the Assistant.
-
-### Ask from anywhere
-
-In the installed app, **Ctrl+Alt+Space** (`desktop.quickAskShortcut`, Settings → Desktop) opens a
-small prompt on top of whatever window you are in. Type and press Enter: the message goes to the
-assistant's conversation and its answer appears below as it is written. Escape, or clicking
-elsewhere, hides the prompt; **Open in wow** shows the whole conversation. Leave the setting empty
-to turn the key off. If another program already holds the key, wow says so once; pick another
-there.
-
-### Memory
-
-Tell the assistant how you work ("never plan anything before nine", "Tea is the important project
-this week, until Friday") and it keeps a note: a change row "Memory: …" with Undo. It reads the
-notes at the start of every answer, and a note with an end date stops applying after that day. It
-never keeps a note you did not say or confirm. Settings → Assistant → **Memory** lists every note
-with who wrote it and when (the `assistant.notes` setting); edit one in place, remove it, or add
-your own. On Codex a changed note
-applies from the assistant's next session, as a changed instruction text does.
-
 ### When the assistant asks
 
 When a few answers are likely, the assistant asks with the same question card a chat thread
@@ -1755,18 +1294,6 @@ like a secret is held exactly like a typed message ("Put it in …", "Send anywa
 never asks for a token, password or key on the card: its tool refuses such a question and tells
 it to show the secret's field instead. The words it looks for are `assistant.askRefusedWords`
 (Settings → Assistant).
-
-### When the assistant writes a workflow
-
-Before it writes a workflow, the assistant reads the models and efforts each provider instance
-offers (an instance that is not connected offers none, and it says so) and wow's guidance on
-choosing one per kind of work: planning and specification, building, reviewing and mechanical
-steps. Every step it writes names an instance, a model and an effort from that list; wow refuses
-any other and tells it what is offered. It says what it recommends and why in a sentence, and asks
-you on the question card when two choices differ in a way you would care about, such as cost
-against quality. The change row shows each step with its instance, model and effort. The guidance
-is `assistant.modelGuidance` (Settings → Assistant, "Guidance on choosing a model"); edit it and
-the assistant reads your text the next time it chooses. wow never looks up models on the internet.
 
 ### Changes, proposals and Undo
 
@@ -1839,14 +1366,6 @@ not installed". The row of an applied file under Settings → Advanced keeps tho
 the secrets still to fill in, each with a link to its field, until they are set. A file larger
 than `advanced.setupFileMaxBytes` (1 MB unless you change it) is refused before it is read. After a file is applied here, your next message to the assistant tells it what the file
 left to fill in, and it goes through that list one thing per answer as after a first start.
-
-### When it cannot start
-
-When no provider can run the assistant (none connected, the one it ran on was removed or signed
-out, or only Codex with `assistant.allowCodex` off), Assistant says why and shows the same step
-**Connect an agent** as at first start, with links to Settings → Providers and Settings →
-Assistant. The rest of the app stays usable. Once an agent passes its test the conversation is
-back.
 
 ### Making a host token
 
@@ -1991,9 +1510,9 @@ None are known right now; the rest of this guide describes the intended behavior
 Scroll to the end of the thread; the approval or question row is the last one. If the server was
 restarted mid-turn, the turn is marked failed; send a new message or press Resume.
 
-**Skills are missing in the skill list or the builder**
+**Skills are missing in the skill list**
 
-Check `skills.directories`, then press "Refresh skills" in the builder or the palette. A
+Check `skills.directories`, then press "Refresh skills" in the palette. A
 `SKILL.md` whose frontmatter does not parse is skipped and logged in `desktop.log`.
 
 **Publishing to Jira or GitHub fails**

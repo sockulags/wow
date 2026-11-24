@@ -15,8 +15,6 @@ test.describe.configure({ mode: 'serial' });
 if (sketching) test.use(sketchUse);
 
 const intent = '2026-11-questions-and-models';
-// Invented, in the form of a GitLab token, so the check before send holds it.
-const lookalike = 'glpat-InventedE2eQuestion0123456789';
 
 async function serverInfo(page: Page, home: string) {
   // What the desktop preload injects: the contents of `~/.wow/server.json`.
@@ -121,90 +119,6 @@ test.describe('the question card in a chat thread', () => {
   });
 });
 
-// Sends a message and waits for the turn's answer, the last row after the message.
-async function say(page: Page, text: string): Promise<void> {
-  await composer(page).fill(text);
-  await composer(page).press('Enter');
-  await expect(conversation(page).getByTestId('item-user').filter({ hasText: text })).toBeVisible();
-  await expect(conversation(page).locator(':scope > li').last()).toHaveAttribute(
-    'data-testid',
-    'item-assistant_text',
-  );
-}
-
 test.describe('the question card in the Assistant view', () => {
   test.beforeEach(({ page }) => serverInfo(page, e2eAssistantHome));
-
-  test('answer a question with a choice and with text in the Assistant view @questions-9', async ({
-    page,
-  }) => {
-    await page.goto('/assistant');
-    await expect(composer(page)).toBeFocused();
-    await say(page, 'Set up my morning brief');
-    const card = conversation(page).getByRole('region', { name: 'Questions' }).last();
-    await expect(card.getByTestId('question-header')).toHaveText(['Time', 'Projects']);
-    // The assistant's turn ended at the card.
-    await expect(conversation(page).getByText('Two things first')).toBeVisible();
-    await card.getByRole('radio', { name: /08:30/ }).click();
-    await card.getByRole('checkbox', { name: /Demo/ }).click();
-    await card
-      .getByRole('group', { name: 'Which projects should it read?' })
-      .getByRole('textbox', { name: 'Other' })
-      .fill('and the garden plan');
-    await card.getByRole('button', { name: 'Send answers' }).click();
-
-    // The answer is the next message, marked as the answer.
-    const reply = conversation(page).getByTestId('item-assistant_text').last();
-    await expect(reply).toContainText('Thanks. You answered:');
-    await expect(reply).toContainText('When should the morning brief run? (Time): picked 08:30');
-    await expect(reply).toContainText(
-      'Which projects should it read? (Projects): picked Demo; typed "and the garden plan"',
-    );
-    await expect(card.getByTestId('question-answer')).toHaveText([
-      'Answered: 08:30',
-      'Answered: Demo, and the garden plan',
-    ]);
-    await expect(conversation(page).getByTestId('answered-note').last()).toHaveText(
-      'Answered the questions above.',
-    );
-  });
-
-  test('a typed answer that looks like a secret is held, and a message instead closes the card @questions-10 @questions-5', async ({
-    page,
-  }) => {
-    await page.goto('/assistant');
-    await say(page, 'Plan my morning brief again');
-    const card = conversation(page).getByRole('region', { name: 'Questions' }).last();
-    const other = card
-      .getByRole('radiogroup', { name: 'When should the morning brief run?' })
-      .getByRole('textbox', { name: 'Other' });
-    await other.fill(`use ${lookalike}`);
-    await card.getByRole('checkbox', { name: /Tea timer/ }).click();
-    await other.press('Enter');
-    const held = card.getByTestId('held-message');
-    await expect(held).toContainText('Send anyway');
-    await held.getByRole('button', { name: 'Keep editing' }).click();
-    await expect(held).toHaveCount(0);
-    await expect(conversation(page).getByText(lookalike)).toHaveCount(0);
-
-    await say(page, 'Never mind the brief');
-    await expect(card.getByTestId('question-closed')).toHaveText([
-      'Not answered: a message was sent before an answer.',
-      'Not answered: a message was sent before an answer.',
-    ]);
-    await expect(card.getByRole('textbox')).toHaveCount(0);
-  });
-
-  test('a question that asks for a token is refused, pointing to the secret field @questions-11', async ({
-    page,
-  }) => {
-    await page.goto('/assistant');
-    await say(page, 'Ask me for the token, please');
-    await expect(conversation(page).getByTestId('item-assistant_text').last()).toContainText(
-      'wow refused that question: A question never asks for a secret',
-    );
-    await expect(conversation(page).getByTestId('item-assistant_text').last()).toContainText(
-      'show its field with show_secret_field',
-    );
-  });
 });
