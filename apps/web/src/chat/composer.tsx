@@ -28,6 +28,7 @@ import {
   useId,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -81,6 +82,7 @@ import {
   isStepSkill,
   skillGroup,
   skillSourceLabel,
+  skillsForProject,
 } from './view-model';
 
 export interface ComposerHandle {
@@ -139,6 +141,9 @@ export interface ComposerProps {
   // The open thread's provider and folder: `/` then lists commands above the skills (spec 58 to
   // 60). Without it the list holds skills only.
   readonly commandSource?: CommandSource | undefined;
+  // The folder of the project the message is for: `/` lists its workflows (orchestrator threads
+  // spec 19). Without it, only your own.
+  readonly workflowProject?: string | undefined;
   // The bar's keys while the box has the focus; true when the key was used.
   onBarKey?(event: KeyboardEvent<HTMLTextAreaElement>): boolean;
   // Whose folder `@` lists (agent workbench spec 56). Without it `@` is only a character.
@@ -504,6 +509,7 @@ export function Composer({
   onBarKey,
   draftKey,
   commandSource,
+  workflowProject,
   fileSource,
   imageTarget,
   recentSkills = noSkills,
@@ -560,6 +566,10 @@ export function Composer({
   const pendingCaret = useRef<number>(undefined);
   const arrivals = useRef<Promise<void>>(Promise.resolve());
   const skills = useTopic('skills');
+  const offeredSkills = useMemo(
+    () => skillsForProject(skills ?? [], workflowProject),
+    [skills, workflowProject],
+  );
   const stopBinding = useSetting('keybindings.stopTurn');
   const sendKey = useSetting('chat.sendKey');
   const recallBinding = useSetting('keybindings.composerEditLast');
@@ -583,9 +593,9 @@ export function Composer({
     ? [
         ...wowPicks,
         ...(offersCommands
-          ? providerCommandPicks(providerCommands, wowPicks, skills ?? [], query.query)
+          ? providerCommandPicks(providerCommands, wowPicks, offeredSkills, query.query)
           : []),
-        ...inPickerOrder(filterSkills(skills ?? [], query.query), recentSkills).map(
+        ...inPickerOrder(filterSkills(offeredSkills, query.query), recentSkills).map(
           (skill): ListPick => ({
             kind: 'skill',
             skill,

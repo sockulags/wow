@@ -67,7 +67,8 @@ export function inListOrder<
 // (spec 9).
 export const SkillRef = z.object({
   name: z.string().min(1),
-  source: WowSkillSource.optional(),
+  // wow's own skills, and workflows (orchestrator threads spec 20); absent for a folder skill.
+  source: z.enum(['wow', 'yours', 'workflow', 'project-workflow']).optional(),
 });
 export type SkillRef = z.infer<typeof SkillRef>;
 
@@ -241,3 +242,8 @@ export function automaticSkills(
   }
   return found;
 }
+
+// A workflow file listed with the skills (orchestrator threads spec 19): started with /name in a
+// message, never a step's skill or a folder skill a provider invokes.
+export const isWorkflowSkill = (skill: { readonly source: string }): boolean =>
+  skill.source === 'workflow' || skill.source === 'project-workflow';

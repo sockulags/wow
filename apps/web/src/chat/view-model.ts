@@ -166,6 +166,8 @@ export const skillSourceLabels: Readonly<Record<Skill['source'], string>> = {
   custom: 'Custom folder',
   wow: 'Built into wow',
   yours: 'Your skills',
+  workflow: 'Your workflows',
+  'project-workflow': 'Project workflows',
 };
 
 // The muted source label of one picker row: the plugin's name, or where it was found.
@@ -453,4 +455,24 @@ export function finishedReasoning(items: readonly ThreadItem[]): Set<string> {
     turnsWithLater.add(item.turnId);
   }
   return done;
+}
+
+const slashed = (folder: string) => folder.replaceAll('\\', '/').replace(/\/+$/, '');
+
+// The skills `/` offers in a thread of a project (orchestrator threads spec 19): a project's
+// workflows only in that project, where one replaces your own workflow of the same name.
+export function skillsForProject(
+  skills: readonly Skill[],
+  projectDir: string | undefined,
+): Skill[] {
+  const ownFolder = projectDir === undefined ? undefined : `${slashed(projectDir)}/.wow/workflows`;
+  const mine = skills.filter(
+    (skill) => skill.source === 'project-workflow' && slashed(skill.dir) === ownFolder,
+  );
+  const replaced = new Set(mine.map((skill) => skill.name));
+  return skills.filter((skill) =>
+    skill.source === 'project-workflow'
+      ? mine.includes(skill)
+      : skill.source !== 'workflow' || !replaced.has(skill.name),
+  );
 }

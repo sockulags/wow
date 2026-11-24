@@ -22,6 +22,7 @@ import {
   type Workflow,
   type WorkflowStep,
   withoutAddressAccount,
+  isWorkflowSkill,
 } from '@wow/contracts';
 import { isDeepStrictEqual } from 'node:util';
 import { stringify } from 'yaml';
@@ -117,7 +118,9 @@ function refInstalled(ref: SkillRef, read: ReadModel, fileSkills: readonly strin
   if (source !== undefined) {
     return listed.some((skill) => skill.source === source && skill.name === ref.name);
   }
-  const folders = listed.filter((skill) => skill.source !== 'wow' && skill.source !== 'yours');
+  const folders = listed.filter(
+    (skill) => skill.source !== 'wow' && skill.source !== 'yours' && !isWorkflowSkill(skill),
+  );
   return skillInstalled(
     ref.name,
     folders.map((skill) => skill.name),

@@ -45,6 +45,7 @@ import { connectCommands, providerCommands } from '@/providers/commands';
 import { connectStore } from '@/providers/connect-step';
 import { setupCommands } from '@/settings/setup';
 import { skillCommands } from '@/settings/skills';
+import { workflowFileCommands } from '@/settings/workflow-files-section';
 import { formatWhen } from '@/lib/format';
 import {
   hostItemCommands,
@@ -325,6 +326,7 @@ export function useCommands(gated = false): {
       }),
       ...setupCommands(setupApplications ?? []),
       ...skillCommands(skills ?? []),
+      ...workflowFileCommands(skills ?? []),
       ...panelCommands(panelSelection(pathname, locationSearch)),
       ...viewerCommands({
         panelTabs,

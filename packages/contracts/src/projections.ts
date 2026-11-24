@@ -786,6 +786,9 @@ export const SkillSource = z.enum([
   // Shipped with wow (wow skills spec 1) and written by the user in wow (spec 5).
   'wow',
   'yours',
+  // Workflows as text (orchestrator threads spec 19): wow's own folder and a project's.
+  'workflow',
+  'project-workflow',
 ]);
 export type SkillSource = z.infer<typeof SkillSource>;
 

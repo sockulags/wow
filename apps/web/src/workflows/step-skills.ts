@@ -8,6 +8,7 @@ import {
   type Skill,
   type SkillRef,
   type WowSkillSource,
+  isWorkflowSkill,
 } from '@wow/contracts';
 import type { ComboboxChoice } from '@/components/combobox';
 import { parseGlobs, type DraftStep } from './model';
@@ -61,7 +62,7 @@ function sharedFolders(skills: readonly Skill[], skill: Skill): string {
 export function skillChoices(skills: readonly Skill[]): SkillChoice[] {
   const seen = new Set<string>();
   const choices: SkillChoice[] = [];
-  for (const skill of skills) {
+  for (const skill of skills.filter((entry) => !isWorkflowSkill(entry))) {
     const ref = refOf(skill);
     const value = refKey(ref);
     if (seen.has(value)) continue;
@@ -85,7 +86,9 @@ export function skillChoices(skills: readonly Skill[]): SkillChoice[] {
 
 // The fields a step gets when its own skill is picked.
 export function withStepSkill(ref: SkillRef): Pick<DraftStep, 'skillName' | 'skillSource'> {
-  return { skillName: ref.name, skillSource: ref.source };
+  // A step runs a skill, never a workflow; the builder offers none.
+  const skillSource = ref.source === 'wow' || ref.source === 'yours' ? ref.source : undefined;
+  return { skillName: ref.name, skillSource };
 }
 
 export function withAlsoFollow(step: DraftStep, ref: SkillRef): Pick<DraftStep, 'alsoFollow'> {

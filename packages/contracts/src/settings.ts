@@ -1353,6 +1353,36 @@ export const settingsRegistry = {
     default: defaultWorkflowTemplates,
     scope: 'global',
   }),
+  'workflows.followTemplate': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .max(8000)
+      .meta({ widget: 'template', placeholders: ['workflow'] }),
+    group: 'workflows',
+    label: 'How a main agent follows a workflow',
+    description:
+      "What a main thread's agent is told with a workflow you start with /name: {{workflow}} is the workflow file. Your own text follows it.",
+    default:
+      'Follow this workflow for the request that follows it. Run each step (each "## " heading) as a helper with start_helper, on the instance, model and effort the step names, else the workflow\'s defaults, else your own; give each helper what the steps before it produced. After a step marked "gate: after", ask the person with ask_questions whether to go on, and wait for the answer before the next step. Conditions, loops and skips written in a step are yours to follow. When the last step is done, report what each step did.\n\n{{workflow}}',
+    scope: 'global',
+  }),
+  'workflows.newTemplate': defineSetting({
+    schema: z
+      .string()
+      .trim()
+      .min(1)
+      .max(8000)
+      .meta({ widget: 'template', placeholders: ['name'] }),
+    group: 'workflows',
+    label: 'A new workflow file',
+    description:
+      'What "New workflow" in Settings › Workflows writes in a new file; {{name}} is the name you give it, in double quotes so the front matter takes any name.',
+    default:
+      '---\nname: {{name}}\ndescription: What this workflow is for, in one line\n---\n\n## Plan\n\nRead the request and write a short plan.\n\ngate: after\n\n## Build\n\ninstance: Claude Code\n\nCarry out the plan, with tests.\n\n## Review\n\ninstance: Codex\n\nReview the change and say what to fix.\n',
+    scope: 'global',
+  }),
   'workflows.handoverTemplate': defineSetting({
     schema: z.string().meta({
       widget: 'template',

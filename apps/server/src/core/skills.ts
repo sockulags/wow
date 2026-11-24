@@ -12,7 +12,9 @@ import {
   type Skill,
   type SkillRef,
   type Thread,
+  fillTemplate,
   promptWithSkills,
+  isWorkflowSkill,
 } from '@wow/contracts';
 import {
   changedOwnSkillFile,
@@ -223,7 +225,7 @@ export function skillToSend(
       text: source === 'wow' ? fillBuiltInSkill(text, values) : text,
     };
   }
-  const folder = skills.filter((skill) => !isWow(skill));
+  const folder = skills.filter((skill) => !isWow(skill) && !isWorkflowSkill(skill));
   return { kind: 'invoke', ...folderInvocation(folder, ref.name, provider) };
 }
 
@@ -321,8 +323,12 @@ export function messageWithSkills(
   }
   const values = chatSkillValues(read, context, thread.projectId ?? undefined);
   const skills = read.skills();
+  const projectDir = thread.projectId ? read.project(thread.projectId)?.cwd : undefined;
+  const follow = settingText('workflows.followTemplate', read, context, undefined);
   const found = refs.map((ref) => {
-    const skill = skillToSend(skills, ref, provider, values);
+    const skill = isWorkflowRef(ref)
+      ? workflowToSend(skills, ref.name, projectDir, follow)
+      : skillToSend(skills, ref, provider, values);
     if (!skill) throw new CommandRejected('rejected', missingSkillSentence(ref.name));
     if (skill.kind === 'refused') throw new CommandRejected('rejected', skill.reason);
     return skill;
@@ -335,6 +341,36 @@ export function messageWithSkills(
   return {
     prompt: promptWithSkills(parts, text),
     skills: found.map((skill) => sentSkill(skill)),
+  };
+}
+
+const isWorkflowRef = (ref: SkillRef) =>
+  ref.source === 'workflow' || ref.source === 'project-workflow';
+
+// A workflow started with /name (orchestrator threads spec 19, 20): the thread's project's file
+// of that name, else your own, sent as the follow template around the file's text.
+function workflowToSend(
+  skills: readonly Skill[],
+  name: string,
+  projectDir: string | undefined,
+  follow: string,
+): SkillToSend | undefined {
+  const folder = projectDir === undefined ? undefined : path.join(projectDir, '.wow', 'workflows');
+  const project = skills.find(
+    (skill) =>
+      skill.source === 'project-workflow' &&
+      skill.name === name &&
+      folder !== undefined &&
+      path.resolve(skill.dir) === path.resolve(folder),
+  );
+  const workflow =
+    project ?? skills.find((skill) => skill.source === 'workflow' && skill.name === name);
+  if (!workflow) return undefined;
+  return {
+    kind: 'text',
+    name: workflow.name,
+    source: workflow.source,
+    text: fillTemplate(follow, { workflow: workflow.text ?? '' }),
   };
 }
 

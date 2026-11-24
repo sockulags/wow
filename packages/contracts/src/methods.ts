@@ -32,6 +32,9 @@ import {
   FileListParams,
   FileListResult,
   FileOpenInEditorParams,
+  WorkflowFileCreateParams,
+  WorkflowFileOpenParams,
+  WorkflowFileResult,
   FileOpenInEditorResult,
   FileReadParams,
   FileReadResult,
@@ -503,6 +506,10 @@ export const rpcMethods = {
   // for a path outside the scope's folders, one that is not there, a path cmd.exe would misread
   // (a `%` on Windows), or a program that does not start; with a shell between (the
   // `viewer.editorShell` setting, a Windows `.cmd`) that is the shell, not what it runs.
+  // Settings › Workflows (orchestrator threads spec 23): a new file from the template, refused
+  // when one of that name is there, and a workflow file opened in the user's editor.
+  'workflowFiles.create': { params: WorkflowFileCreateParams, result: WorkflowFileResult },
+  'workflowFiles.open': { params: WorkflowFileOpenParams, result: WorkflowFileResult },
   'files.openInEditor': {
     params: FileOpenInEditorParams,
     result: FileOpenInEditorResult,

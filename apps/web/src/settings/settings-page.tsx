@@ -16,6 +16,7 @@ import { MemorySection } from './memory-section';
 import { PermissionsSection } from './permissions-section';
 import { SetupSection } from './setup-section';
 import { SkillsSection } from './skills-section';
+import { WorkflowFilesSection } from './workflow-files-section';
 import { TrackersSection } from './trackers-section';
 
 export { SettingRow, SettingsForm } from './setting-row';
@@ -176,6 +177,7 @@ export function SettingsPage() {
       {current === 'updates' && <UpdateStatusPanel />}
       {current === 'advanced' && <SetupSection />}
       {current === 'skills' && <SkillsSection />}
+      {current === 'workflows' && <WorkflowFilesSection />}
       {current === 'assistant' && <PermissionsSection />}
       {current === 'assistant' && <MemorySection />}
       {/* Remount per group so drafts never leak between pages. */}
