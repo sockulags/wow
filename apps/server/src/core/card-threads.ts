@@ -53,7 +53,11 @@ export function busyThreadOf(card: CalendarItem, read: ReadModel) {
 // then the project's defaults, then, for a card made before workflows were files, the instance,
 // model and effort the first step of its stored workflow named (its run used those), then the
 // instance's own. A step's permission mode is not taken: it was for that step, not a whole thread.
-function newThreadSettings(card: CalendarItem, read: ReadModel, context: DecideContext) {
+export function newThreadSettings(
+  card: Pick<CalendarItem, 'projectId' | 'workflowId'>,
+  read: ReadModel,
+  context: DecideContext,
+) {
   const project = card.projectId === null ? undefined : read.project(card.projectId);
   const step = card.workflowId === null ? undefined : read.workflow(card.workflowId)?.steps[0];
   const instances = read.providerInstances();

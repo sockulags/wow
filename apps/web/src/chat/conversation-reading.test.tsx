@@ -21,7 +21,7 @@ import { createStore } from 'zustand';
 import type { CommandContext } from '@/app/commands';
 import { createLayoutStore, RuntimeProvider } from '@/app/runtime';
 import { useGlobalKeybindings } from '@/app/use-commands';
-import { keyConflicts, keyScope } from '@/settings/keybindings-table';
+import { keyScope } from '@/settings/keybindings-table';
 import { conversationCommands, conversationStore, toggleReasoning } from './conversation-nav';
 import { createDraftStore } from './draft';
 import { compactionText, settingsChangeText } from './items';

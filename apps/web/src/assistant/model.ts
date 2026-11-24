@@ -225,11 +225,3 @@ export const proposalFocus = createStore<{ readonly id: string | undefined }>(()
 export const waitingProposals = (
   proposals: readonly AssistantProposal[],
 ): readonly AssistantProposal[] => proposals.filter((proposal) => proposal.state === 'pending');
-
-// "1 proposal waits: Run scripts in HTML files", "2 proposals wait: …" with the oldest named.
-export function waitingText(waiting: readonly AssistantProposal[]): string | undefined {
-  const [first] = waiting;
-  if (!first) return undefined;
-  const count = waiting.length === 1 ? '1 proposal waits' : `${waiting.length} proposals wait`;
-  return `${count}: ${first.title}`;
-}

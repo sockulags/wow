@@ -261,15 +261,15 @@ function showSettingWhole(
   context: DecideContext,
 ): string {
   if (typeof value === 'string' && value !== '') {
-    if (key === 'assistant.model') {
-      const instanceId = read.setting('assistant.providerInstanceId', 'global')?.value;
+    if (key === 'chat.defaultModel') {
+      const instanceId = read.setting('chat.defaultInstance', 'global')?.value;
       return modelWords(
         value,
         typeof instanceId === 'string' && instanceId !== '' ? instanceId : undefined,
         context,
       );
     }
-    if (key === 'assistant.providerInstanceId') return read.providerInstance(value)?.name ?? value;
+    if (key === 'chat.defaultInstance') return read.providerInstance(value)?.name ?? value;
   }
   const definition = context.registry[key];
   return (

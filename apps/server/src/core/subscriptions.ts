@@ -5,7 +5,7 @@ import {
   type SubscribeParams,
   type SubscriptionTopic,
 } from '@wow/contracts';
-import { asc, desc, eq, getTableColumns, isNull, ne, sql } from 'drizzle-orm';
+import { asc, desc, eq, getTableColumns, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
@@ -17,12 +17,7 @@ import { threadListStatuses } from './thread-list.js';
 
 // The threads, each main thread with its place in the thread list (orchestrator threads spec 31).
 function threadRows(db: Db) {
-  const threads = db
-    .select()
-    .from(t.threads)
-    .where(ne(t.threads.kind, 'assistant'))
-    .orderBy(asc(t.threads.createdAt))
-    .all();
+  const threads = db.select().from(t.threads).orderBy(asc(t.threads.createdAt)).all();
   const statuses = threadListStatuses(threads, openGates(db));
   return threads.map((thread) => {
     const listStatus = statuses.get(thread.id);
@@ -100,8 +95,6 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.providerInstances).orderBy(asc(t.providerInstances.name)).all();
       case 'threads':
         return threadRows(db);
-      case 'assistantThread':
-        return db.select().from(t.threads).where(eq(t.threads.kind, 'assistant')).all();
       case 'turns':
         // The mark itself stays on the server; that it exists tells the client to read the
         // thread's Changes again. So does the provider's point: the client only needs to know

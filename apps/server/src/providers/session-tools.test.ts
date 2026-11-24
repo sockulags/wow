@@ -1,4 +1,4 @@
-import { assistantThreadId, type ServerCommand, type ThreadTools } from '@wow/contracts';
+import { type ServerCommand, type ThreadTools } from '@wow/contracts';
 import { SecretStore, plainProtector } from '@wow/secrets';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -265,31 +265,5 @@ describe('session tools', () => {
     expect(stored()[0]?.tools.skills).toEqual([
       { name: 'brew-guide', description: 'Brews with [hidden]' },
     ]);
-  });
-
-  it('refuses the assistant', () => {
-    dispatch({
-      type: 'setting.set',
-      key: 'assistant.providerInstanceId',
-      scope: 'global',
-      value: 'claude',
-    });
-    dispatch({
-      type: 'providerInstance.recordTest',
-      providerInstanceId: 'claude',
-      result: { ok: true, account: 'mock', version: 'mock', message: null },
-    });
-    dispatch({ type: 'thread.openAssistant', fallbackModel: 'mock-model', fallbackEffort: 'low' });
-    expect(() =>
-      dispatch({
-        type: 'thread.toolsReported',
-        threadId: assistantThreadId,
-        tools: mockClaudeSessionTools(),
-        source: 'turn',
-      }),
-    ).toThrow('The assistant has no Tools tab');
-    return expect(service.refreshTools(assistantThreadId)).rejects.toThrow(
-      'The assistant has no Tools tab',
-    );
   });
 });

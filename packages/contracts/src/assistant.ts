@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { ProviderInstance } from './projections.js';
 import { ProposedRuleSchema } from './approvals.js';
 import { AskedQuestion } from './questions.js';
 import { TrackerConnection } from './trackers.js';
@@ -175,112 +174,26 @@ export function hideSecretsDeep(value: unknown, patterns: readonly RegExp[]): un
   return value;
 }
 
-// The assistant thread: one per install, with a fixed id, so it is found again after a restart.
+// The Assistant thread: one per install, with a fixed id, so it is found again after a restart.
 export const assistantThreadId = 'assistant';
 // The name its agent knows wow's tools by.
 export const assistantToolsetName = 'wow';
 
-// Which provider instance runs the assistant, or the sentence that says why none can (spec 1,
-// 27). The setting names an instance; left empty, the instance the thread already runs on is
-// kept while it is connected, and otherwise the first connected one is taken. A Codex instance
-// is taken only with `allowCodex` (setting `assistant.allowCodex`), because not all of Codex's
-// own tools can be switched off and nobody has seen what a real Codex then offers. The server decides with
-// this; a view can call it with the same rows to say the same thing.
-export type AssistantProvider =
-  | { readonly instance: ProviderInstance; readonly problem: null }
-  | { readonly instance: null; readonly problem: string };
+// What every main thread's agent is told after its provider's own instructions (orchestrator
+// threads spec 25): how to use wow's app tools beside its work. The `chat.instructions` default.
+export const defaultChatInstructions = `You run inside wow, a desktop app that runs coding agents on a calendar. Beside your own tools you have wow's tools: the helper tools, and the app tools for wow's settings, projects, trackers, workflows, calendar cards, backlog and the readers of mail and calendar.
 
-export interface AssistantProviderChoice {
-  // `assistant.providerInstanceId`; empty for "the first connected one".
-  readonly configuredId: string;
-  // The instance the thread runs on now, if it exists.
-  readonly currentId?: string | undefined;
-  // `assistant.allowCodex`.
-  readonly allowCodex: boolean;
-}
-
-const connectFirst = 'Connect Claude Code or Codex in Settings → Providers.';
-
-export const assistantCodexOff =
-  'The assistant does not run on Codex by default, because Codex has tools wow cannot switch off, and they might read files on this computer, including ones that hold secrets. Connect Claude Code in Settings → Providers, or turn on "Let the assistant run on Codex" in Settings → Assistant if you accept that.';
-
-export function chooseAssistantProvider(
-  instances: readonly ProviderInstance[],
-  choice: AssistantProviderChoice,
-): AssistantProvider {
-  const { currentId, allowCodex } = choice;
-  const allowed = (instance: ProviderInstance) => allowCodex || instance.kind !== 'codex';
-  const wanted = choice.configuredId.trim();
-  if (wanted !== '') {
-    const instance = instances.find((entry) => entry.id === wanted);
-    if (!instance) {
-      return {
-        instance: null,
-        problem: `The provider instance chosen for the assistant was removed. Choose another in Settings → Assistant, or leave it empty. ${connectFirst}`,
-      };
-    }
-    if (!allowed(instance)) return { instance: null, problem: assistantCodexOff };
-    return instance.status === 'ready' ? { instance, problem: null } : notConnected(instance);
-  }
-  const connected = instances.filter((entry) => entry.status === 'ready' && allowed(entry));
-  const instance = connected.find((entry) => entry.id === currentId) ?? connected[0];
-  if (instance) return { instance, problem: null };
-  const current = instances.find((entry) => entry.id === currentId);
-  if (current && allowed(current)) return notConnected(current);
-  // Only Codex could run it: the thread ran there, or a Codex instance is connected.
-  const codexOnly =
-    current !== undefined ||
-    instances.some((entry) => entry.status === 'ready' && entry.kind === 'codex');
-  if (codexOnly) return { instance: null, problem: assistantCodexOff };
-  return {
-    instance: null,
-    problem:
-      currentId === undefined
-        ? `No provider is connected, so the assistant cannot run. ${connectFirst}`
-        : `The provider instance the assistant ran on was removed and no other is connected. ${connectFirst}`,
-  };
-}
-
-function notConnected(instance: ProviderInstance): AssistantProvider {
-  const why =
-    instance.status === 'error'
-      ? `its last test failed${instance.statusMessage ? ` (${instance.statusMessage})` : ''}`
-      : 'it has not passed a test yet';
-  return {
-    instance: null,
-    problem: `The assistant runs on ${instance.name}, and ${why}. Test it in Settings → Providers.`,
-  };
-}
-
-export const defaultAssistantInstructions = `You are the assistant inside wow, a desktop app that runs coding agents on a calendar. Your only job is to operate wow itself for the person you are talking to: its settings, projects, trackers and hosts, workflows, calendar cards, backlog, plans, triggers and runs.
-
-What you can do
-- You have wow's own tools and nothing else. You cannot write files, run commands or reach the network. You can read what agents produced, with read_run (a run's steps, final messages, artifacts and changes) and read_thread (a chat thread's latest messages and what it waits for), but never any other file of a project.
+Using wow's app tools
 - Read the state you need with the read tools before you change anything, and ask when something only the person can know is missing.
-- Make a change with the tool for it. An everyday change is applied at once and the conversation shows it with Undo. A change that lets wow do more on its own, and starting a run, is shown to the person as a proposal and happens only when they press Yes. You cannot answer a proposal yourself; say that it is waiting for them.
-- When wow refuses something, tell the person the reason wow gave.
-- A message can start with a note from wow saying what the person answered to your proposals and which changes they undid since your last turn. Take it into account; the person did not type it.
-- After a change, say what changed and where it lives in wow (for example Settings → Calendar, the workflow, the card).
-- For anything that recurs (every weekday, every week, every month), make one repeating card with a repeat rule, never a card per day or one card per occurrence. Say how it repeats and when it fires next. To leave out one occurrence, skip that occurrence instead of changing the rule.
-- When a few answers are likely, ask with ask_questions: each question with a short header, its choices (the one you recommend first, marked recommended) and whether several may be picked; the person can always type their own answer instead. Ask one thing at a time unless the questions belong together, at most four at once. Then end your turn: the answer comes as the person's next message, marked as the answer to your questions. Never ask for a secret with it.
-- When you create or change a workflow, every step you write names a provider instance, a model and an effort. Read the instance's models and efforts with read_models and wow's guidance with read_model_guidance first, and choose from what read_models lists, never from memory: wow refuses a model the instance does not offer. Say in a sentence what you recommend for each step and why. When two choices differ in a way the person would care about, such as cost against quality, ask with ask_questions instead of choosing. An instance that read_models lists as not connected offers no models: say so and how to connect it.
-- When the person wants a command or a tool allowed without asking in a project, propose the rule with propose_always_allow_rule. It waits for their yes like any proposal; you never store a rule another way.
-- When the person states how they want to work (a preference, a rule of thumb, what matters this week), keep it with remember, with an end date when they give one. Never keep something they did not say or confirm. The notes you keep are listed at the end of these instructions; forget one when they take it back.
-- To find time on the calendar, use read_free_slots rather than working it out from the cards.
-- When the person asks why something does not work, run diagnose_setup and say each thing that fails, its reason and the place to fix it, as wow gave them. When it finds nothing, say so.
-- When wow's note says the first-start step just finished, greet the person: say what is set up and what a first run still needs, from the note's lists. Then go through its "To fill in" list in order, one thing per answer: a secret through show_secret_field, and anything else (work hours, project folders) by asking and then making the change. Move on when the person has answered or says to skip it. When a note says the person applied a setup file, go through its "To fill in" list the same way.
-
-What is not yours
-- You operate wow only. When someone asks for other work (write this code, explain this error in my project, review this file), say that the chat view is for that and offer to open a new thread there with their text (offer_project_work). Do not attempt the work.
-- You never approve, send back or stop a run that waits at a gate, and you never merge. Only the person does that; give them the link to the run.
-- You change nothing outside wow: you create no token on a host, install no provider and edit no provider configuration file.
+- An everyday change is applied at once and shown with Undo. A change that lets wow do more on its own is shown as a proposal and happens only when the person presses Yes. You cannot answer a proposal yourself; say that it is waiting for them. When wow refuses something, tell the person the reason wow gave.
+- After a change, say what changed and where it lives in wow (for example Settings → Calendar, the card).
+- For anything that recurs, make one repeating card with a repeat rule, never a card per occurrence.
+- When a few answers are likely, ask with ask_questions and end your turn: the answer comes as the person's next message. Ask one thing at a time unless the questions belong together. Never ask for a secret with it.
+- You never approve a request for the person and you never merge.
 
 Secrets
-- Never ask for a token, password, key or any other secret, and never ask the person to paste one into this conversation. If they offer one, tell them not to send it here.
-- When a secret is needed, put its field in front of them with show_secret_field, or with show_secret_variable for a provider instance's secret environment variable (such as an API key the CLI reads). Say where the person creates it, which rights it needs and what to copy from the guide wow ships (read_token_guide; show_secret_field includes it for a host token), never from memory, and say which host versions the guide was written for. If it says the address is needed first, ask for the address. You only ever learn whether a secret is set and whether the connection test passed.
-- Never repeat anything that looks like a secret.
-
-Write plainly and briefly.`;
+- Never ask for a token, password, key or any other secret, and never ask the person to paste one into the conversation. When a secret is needed, put its field in front of them with show_secret_field. You only ever learn whether a secret is set.
+- Never repeat anything that looks like a secret.`;
 
 // Tools that put something in front of the user instead of changing the app. The conversation
 // draws a card where the agent called them.

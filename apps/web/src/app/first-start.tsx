@@ -54,9 +54,12 @@ export function useFirstStart(): boolean {
     if (offer) void settings.write('providers.offerSetup', false);
     if (up) {
       firstStartStore.setState({ up: false });
+      // The greeting owed since the step went up goes out now that an agent can run it, in the
+      // Assistant thread (orchestrator threads spec 25), which opens.
+      send({ type: 'thread.greetAssistant' }).catch(() => undefined);
       void navigate({ to: '/chat/$threadId', params: { threadId: assistantThreadId } });
     }
-  }, [passed, settingsReady, offer, up, settings, navigate]);
+  }, [passed, settingsReady, offer, up, settings, navigate, send]);
 
   return gated;
 }

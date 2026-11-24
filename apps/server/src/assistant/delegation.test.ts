@@ -28,7 +28,8 @@ let ids = 0;
 const asUser = (command: ServerCommand) => server.engine.dispatch(`u${++ids}`, command);
 const rows = <T>(topic: SubscriptionTopic, threadId?: string) =>
   snapshot(server.database.db, threadId ? { topic, threadId } : { topic }) as T[];
-const threads = () => rows<Thread>('threads');
+// The threads other than the Assistant thread, which is listed as a main thread too.
+const threads = () => rows<Thread>('threads').filter((thread) => thread.id !== assistantThreadId);
 const uses = () => rows<AssistantPermissionUse>('assistantPermissionUses');
 
 interface Called {

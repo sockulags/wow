@@ -6,13 +6,12 @@ import type {
   ThreadItem,
 } from '@wow/contracts';
 import { act, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import type { Connection, ConnectionState } from '@wow/client-runtime';
 import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand';
 import { createTestRuntime, renderApp } from '@/test/render';
 import type * as ModelModule from './model';
-import { askOf, waitingText } from './model';
+import { askOf } from './model';
 
 // The real reading of a tool call's ask, counted: the view reads the conversation's tool calls
 // again only when what they are read from changed.

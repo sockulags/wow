@@ -76,7 +76,7 @@ import {
 import type { ReadModel } from './orchestrator.js';
 
 // The assistant thread is a row of the same table, shown through a topic of its own.
-const threadTopics: SubscriptionTopic[] = ['threads', 'assistantThread'];
+const threadTopics: SubscriptionTopic[] = ['threads'];
 
 // A second approval in a thread that already needs the user does not restart its wait.
 const stateSince = (state: string, at: string) =>
@@ -331,6 +331,9 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
       tx.insert(threads)
         .values({
           ...event.payload,
+          // The assistant thread of before is an ordinary main thread (orchestrator threads spec
+          // 25), also when its old events are read again.
+          ...(event.payload.kind === 'assistant' ? { kind: 'chat' as const } : {}),
           stateSince: event.payload.stateSince ?? event.payload.createdAt,
         })
         .run();

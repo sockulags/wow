@@ -840,9 +840,6 @@ describe('app assistant', () => {
   });
 
   it('registers the assistant settings and names every settings page', () => {
-    expect(settingsRegistry['assistant.providerInstanceId'].default).toBe('');
-    expect(settingsRegistry['assistant.model'].default).toBe('');
-    expect(settingsRegistry['assistant.effort'].default).toBe('');
     expect(settingsRegistry['assistant.secretPatterns'].default).toEqual(defaultSecretPatterns);
     expect(Object.keys(settingGroupTitles)).toEqual(SettingGroup.options);
     expect(settingGroupTitles.assistant).toBe('Assistant');

@@ -46,11 +46,6 @@ export interface DesktopShell {
   // The route the window shows while it has the focus, else undefined.
   focusedRoute(): string | undefined;
   setLoginItem(openAtLogin: boolean): void;
-  // Registers the global key of the quick ask (chief of staff spec 31), or takes it away with
-  // undefined; false when another program holds the key.
-  setQuickAsk(accelerator: string | undefined, onPress: () => void): boolean;
-  // Shows the small assistant prompt on top of every window, for this server.
-  openQuickAsk(endpoint: ServerEndpoint): void;
   askRestart(message: string): Promise<boolean>;
   // Hands the update state to the web app (the preload bridge).
   setUpdateState(state: UpdateState): void;
@@ -106,8 +101,6 @@ export class DesktopController {
   #runStates: RunStates | undefined;
   #runs: readonly WorkflowRun[] = [];
   #threads: readonly Thread[] = [];
-  // The quick ask key as last registered (chief of staff spec 31).
-  #quickAsk: string | undefined;
   // The decision queue, once the server sent it (chief of staff spec 16).
   #decisions: readonly Decision[] | undefined;
   #triggers: readonly Trigger[] = [];
@@ -169,13 +162,6 @@ export class DesktopController {
     if (this.#settings?.closeToTray ?? true) return 'hide';
     void this.quit();
     return 'close';
-  }
-
-  // The global key was pressed: the small prompt opens for the running server, if there is one.
-  quickAsk(): void {
-    const server = this.#server;
-    if (server === undefined || this.#quitting !== undefined) return;
-    this.#options.shell.openQuickAsk(server.endpoint);
   }
 
   trayAction(action: TrayAction): void {
@@ -338,23 +324,6 @@ export class DesktopController {
     // A slower earlier read must not overwrite a newer one.
     if (read !== this.#settingsRead) return;
     this.#settings = settings;
-    if (this.#quickAsk !== settings.quickAskShortcut) {
-      this.#quickAsk = settings.quickAskShortcut;
-      const key = settings.quickAskShortcut.trim();
-      const taken = !this.#options.shell.setQuickAsk(key === '' ? undefined : key, () =>
-        this.quickAsk(),
-      );
-      if (taken && key !== '') {
-        this.#options.shell.notify(
-          {
-            title: 'The quick ask key is taken',
-            body: `Another program holds ${key}. Pick another in Settings → Desktop.`,
-            path: '/settings/desktop',
-          },
-          () => this.open('/settings/desktop'),
-        );
-      }
-    }
     if (this.#loginItem !== settings.autostart) {
       this.#loginItem = settings.autostart;
       this.#options.shell.setLoginItem(settings.autostart);

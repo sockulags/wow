@@ -1,9 +1,4 @@
-import {
-  ServerMessage,
-  assistantThreadId,
-  type RpcResponse,
-  type SubscriptionPush,
-} from '@wow/contracts';
+import { ServerMessage, type RpcResponse, type SubscriptionPush } from '@wow/contracts';
 import { SecretStore, defaultProtector, plainProtector } from '@wow/secrets';
 import { spawn } from 'node:child_process';
 import {
@@ -632,35 +627,6 @@ describe('rpc', () => {
     expect(limited.result.truncated).toBe(true);
     expect(await client.request('files.list', { threadId: 'nope' })).toMatchObject({
       error: { code: 'not_found' },
-    });
-  });
-
-  it("answers files.read and files.list for the assistant's thread with rejected", async () => {
-    await send('c0', {
-      type: 'providerInstance.create',
-      providerInstanceId: 'mock',
-      kind: 'claude',
-      name: 'Mock',
-      binaryPath: 'claude',
-      configDir: '',
-      env: {},
-      launchArgs: [],
-    });
-    await send('c1', {
-      type: 'setting.set',
-      key: 'assistant.providerInstanceId',
-      scope: 'global',
-      value: 'mock',
-    });
-    await client.request('provider.test', { providerInstanceId: 'mock' });
-    expect(
-      await send('c3', { type: 'thread.openAssistant', fallbackModel: 'mock-model' }),
-    ).not.toHaveProperty('error');
-    expect(await readFileOf({ threadId: assistantThreadId, path: 'README.md' })).toMatchObject({
-      error: { code: 'rejected' },
-    });
-    expect(await client.request('files.list', { threadId: assistantThreadId })).toMatchObject({
-      error: { code: 'rejected' },
     });
   });
 

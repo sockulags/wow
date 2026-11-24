@@ -1,6 +1,5 @@
 import {
   RpcResponse,
-  assistantThreadId,
   type DomainEventKind,
   type ProviderCommand,
   type ServerCommand,
@@ -387,33 +386,6 @@ describe('images in the composer', () => {
         mediaType: 'image/png',
       },
     ]);
-  });
-
-  it('takes no image for the assistant @agent-workbench-61', async () => {
-    expect(errorOf(await put(assistantThreadId, png()))).toEqual({
-      code: 'rejected',
-      message: 'The assistant takes no images.',
-    });
-    dispatch({
-      type: 'setting.set',
-      key: 'assistant.providerInstanceId',
-      scope: 'global',
-      value: 'claude',
-    });
-    dispatch({
-      type: 'providerInstance.recordTest',
-      providerInstanceId: 'claude',
-      result: { ok: true, account: 'mock', version: 'mock', message: null },
-    });
-    dispatch({ type: 'thread.openAssistant', fallbackModel: 'mock-model', fallbackEffort: 'low' });
-    expect(() =>
-      dispatch({
-        type: 'thread.sendMessage',
-        threadId: assistantThreadId,
-        text: 'Look at this',
-        attachments: [{ id: '0f8fad5b-d9cb-469f-a165-70867728950e.png' }],
-      }),
-    ).toThrow('The assistant takes no images');
   });
 
   it('takes no image for a workflow step thread', async () => {

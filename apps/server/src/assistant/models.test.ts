@@ -2,7 +2,6 @@ import {
   Diagnosis,
   ModelGuidance,
   ModelsRead,
-  defaultAssistantInstructions,
   defaultModelGuidance,
   type AssistantChange,
   type ProviderModel,
@@ -312,15 +311,6 @@ describe('the workflows the assistant writes (spec 15, 16)', () => {
         reason: `Codex at home is not connected, so wow cannot check Step 1 (plan-work): ${reason}`,
       },
     });
-  });
-
-  it('has an instruction text that names the tools, says to give the reason and when to ask', () => {
-    expect(defaultAssistantInstructions).toContain('read_models');
-    expect(defaultAssistantInstructions).toContain('read_model_guidance');
-    expect(defaultAssistantInstructions).toContain('what you recommend for each step and why');
-    expect(defaultAssistantInstructions).toContain(
-      'such as cost against quality, ask with ask_questions',
-    );
   });
 });
 

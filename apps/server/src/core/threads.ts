@@ -176,10 +176,19 @@ function greetingEvents(read: ReadModel, context: DecideContext, thread: Thread)
     turnStarted(read, thread, context.now, {
       text,
       prompt: `${note}\n\n${text}`,
-      assistant: true,
     }),
     { kind: 'assistant.greetingSent', aggregate: assistantThreadId, payload: { at: context.now } },
   ];
+}
+
+// What the user did with the assistant's work since the Assistant thread's last turn, and a setup
+// file applied since: told to that thread only, before the user's words (app assistant spec 10,
+// 24).
+function assistantNotes(read: ReadModel, context: DecideContext, thread: Thread): string[] {
+  if (thread.id !== assistantThreadId) return [];
+  return [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
+    (entry): entry is string => entry !== null,
+  );
 }
 
 function turnStarted(
@@ -189,7 +198,6 @@ function turnStarted(
   {
     text,
     prompt,
-    assistant,
     answers,
     skills,
     queued: mark,
@@ -198,7 +206,6 @@ function turnStarted(
   }: {
     text: string;
     prompt: string;
-    assistant: boolean;
     answers?: { askItemId: string; replies: QuestionReply[] };
     skills?: SentSkill[] | undefined;
     queued?: 'afterTurn';
@@ -261,7 +268,6 @@ function turnStarted(
         permissionMode: thread.permissionMode,
         ...startFrom(thread),
         ...(images && images.length > 0 ? { images: images.map((image) => image.id) } : {}),
-        ...(assistant ? { kind: 'assistant' as const } : {}),
       },
     },
   };
@@ -488,8 +494,8 @@ function handedOverEarlier(
   return [...events, offerQueued(read, context, thread, rest)];
 }
 
-// A message as the next turn: on the assistant's thread on the instance the settings name now,
-// with wow's notes before it (app assistant spec 27); the skills go in front of the text.
+// A message as the next turn; on the Assistant thread with wow's notes of what the user answered
+// before it (app assistant spec 27); the skills go in front of the text.
 function messageTurn(
   read: ReadModel,
   context: DecideContext,
@@ -501,24 +507,17 @@ function messageTurn(
   images: readonly SentImage[] = [],
 ): DomainEvent[] {
   checkMessage(stored, text, picked, images);
-  const assistant = stored.kind === 'assistant' ? assistantThreadEvents(read, context) : undefined;
-  const thread = assistant?.thread ?? stored;
-  const notes = assistant
-    ? [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
-        (entry): entry is string => entry !== null,
-      )
-    : [];
+  const thread = stored;
+  const notes = assistantNotes(read, context, thread);
   const note = notes.length === 0 ? null : notes.join('\n\n');
   const withSkills =
     picked.length > 0
       ? messageWithSkills(read, context, thread, picked, text)
       : { prompt: text, skills: undefined };
   return [
-    ...(assistant?.events ?? []),
     turnStarted(read, thread, context.now, {
       text,
       prompt: note ? `${note}\n\n${withSkills.prompt}` : withSkills.prompt,
-      assistant: assistant !== undefined,
       skills: withSkills.skills,
       ...(mark ? { queued: mark } : {}),
       files,
@@ -773,7 +772,8 @@ export function decideThread(
       const owe: DomainEvent[] = read.greetingOwed()
         ? []
         : [{ kind: 'assistant.greetingOwed', aggregate: assistantThreadId, payload: { at: now } }];
-      if (!read.thread(assistantThreadId) || read.runningTurn(assistantThreadId)) return owe;
+      // The Assistant thread is made here when it is missing: the first start opens it.
+      if (read.runningTurn(assistantThreadId)) return owe;
       let opened: ReturnType<typeof assistantThreadEvents>;
       try {
         opened = assistantThreadEvents(read, context);
@@ -920,7 +920,6 @@ export function decideThread(
         turnStarted(read, thread, now, {
           text: command.text,
           prompt: command.prompt,
-          assistant: false,
           skills: command.skills,
         }),
       ];
@@ -942,7 +941,6 @@ export function decideThread(
         turnStarted(read, thread, now, {
           text: sent.text,
           prompt: sent.prompt,
-          assistant: false,
           skills: sent.skills,
         }),
       ];
@@ -998,27 +996,11 @@ export function decideThread(
         if (problem) throw new CommandRejected('rejected', `"${question.question}": ${problem}`);
       });
       const answer = askAnswerPrompt(ask, command.replies);
-      // A main thread's answer goes on in that thread, with none of the assistant's notes.
-      if (stored.kind !== 'assistant') {
-        return [
-          turnStarted(read, stored, now, {
-            text: askAnswerText(ask, command.replies),
-            prompt: answer,
-            assistant: false,
-            answers: { askItemId: item.id, replies: command.replies },
-          }),
-        ];
-      }
-      const opened = assistantThreadEvents(read, context);
-      const notes = [assistantAnswersNote(read, context), setupAppliedNote(read, context)].filter(
-        (entry): entry is string => entry !== null,
-      );
+      // The answer goes on in that thread, after wow's notes on the Assistant thread.
       return [
-        ...opened.events,
-        turnStarted(read, opened.thread, now, {
+        turnStarted(read, stored, now, {
           text: askAnswerText(ask, command.replies),
-          prompt: [...notes, answer].join('\n\n'),
-          assistant: true,
+          prompt: [...assistantNotes(read, context, stored), answer].join('\n\n'),
           answers: { askItemId: item.id, replies: command.replies },
         }),
       ];
