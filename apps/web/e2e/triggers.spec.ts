@@ -166,6 +166,9 @@ test.beforeAll(async () => {
       },
     ],
   });
+  // The workflow's file, which a card starts by the stored workflow's name (orchestrator threads
+  // spec 22, 27); the thread runs on the instance and model its first step names.
+  await request('workflowFiles.create', { name: 'Bug e2e' });
 });
 
 test.afterAll(async () => {

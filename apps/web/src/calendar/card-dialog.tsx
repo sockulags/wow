@@ -66,7 +66,6 @@ function initialForm(
   card: CalendarItem | undefined,
   zone: string,
   projectId: string,
-  storedName: string | undefined,
 ): CardFormValues {
   const start = new Date(dialog.type === 'create' ? dialog.start : (card?.start ?? Date.now()));
   const end = new Date(dialog.type === 'create' ? dialog.end : (card?.end ?? Date.now()));
@@ -76,7 +75,7 @@ function initialForm(
     start: clockTime(minuteOfDay(start, zone)),
     end: clockTime(minuteOfDay(end, zone)),
     projectId: card ? (card.projectId ?? '') : projectId,
-    workflowName: card?.workflowName ?? storedName ?? '',
+    workflowName: card?.workflowName ?? '',
     threadMode: card?.threadMode ?? 'new',
     backlogItemId: card?.backlogItemId ?? '',
     body: card?.body ?? '',
@@ -163,14 +162,14 @@ function CardForm({
     dialog.type === 'edit' && dialog.deleting ? 'which' : undefined,
   );
   const [form, setForm] = useState(() =>
-    initialForm(
-      dialog,
-      card,
-      zone,
-      lastUsedProjectId(cards, projects),
-      workflows.find((entry) => entry.id === card?.workflowId)?.name,
-    ),
+    initialForm(dialog, card, zone, lastUsedProjectId(cards, projects)),
   );
+  // A card made before workflows were files names its stored workflow; the form shows that
+  // workflow's name, read when the list is there, and sends nothing about it until it is changed.
+  const [workflowTouched, setWorkflowTouched] = useState(false);
+  const storedName = workflows.find((entry) => entry.id === card?.workflowId)?.name;
+  const workflowName =
+    workflowTouched || form.workflowName ? form.workflowName : (storedName ?? '');
   const [error, setError] = useState<string>();
   const [titleMissing, setTitleMissing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -185,7 +184,7 @@ function CardForm({
   // The workflow files the card can start: yours, and the chosen project's (spec 19, 27).
   const workflowFiles = skillsForProject(skills.filter(isWorkflowSkill), project?.cwd);
   const summary = triggerSummary({
-    workflowName: form.focus ? '' : form.workflowName,
+    workflowName: form.focus ? '' : workflowName,
     threadMode: form.threadMode,
     project,
     start: range.ok ? range.start : undefined,
@@ -293,9 +292,7 @@ function CardForm({
         zone,
         ...(form.body.trim() ? { body: form.body.trim() } : {}),
         ...(form.projectId ? { projectId: form.projectId } : {}),
-        ...(form.workflowName && !form.focus
-          ? { workflowName: form.workflowName, threadMode: form.threadMode }
-          : {}),
+        ...(workflowName && !form.focus ? { workflowName, threadMode: form.threadMode } : {}),
         ...(form.backlogItemId ? { backlogItemId: form.backlogItemId } : {}),
         ...(form.focus ? { focus: true } : {}),
         ...(repeat.rule ? { repeat: repeat.rule } : {}),
@@ -308,9 +305,16 @@ function CardForm({
         ...times,
         body: orNull(form.body.trim()),
         projectId: orNull(form.projectId),
-        // A card made before workflows were files moves to the file of its workflow's name.
-        ...(card?.workflowId ? { workflowId: null } : {}),
-        workflowName: form.focus ? null : orNull(form.workflowName),
+        // A changed workflow is a file; a card made before workflows were files leaves its stored
+        // workflow for it. An untouched one keeps what it has.
+        ...(form.focus
+          ? { workflowId: null, workflowName: null }
+          : workflowTouched
+            ? {
+                ...(card?.workflowId ? { workflowId: null } : {}),
+                workflowName: orNull(form.workflowName),
+              }
+            : {}),
         threadMode: form.threadMode,
         backlogItemId: orNull(form.backlogItemId),
         focus: form.focus,
@@ -435,12 +439,15 @@ function CardForm({
               <FormField id="card-workflow" label="Workflow">
                 <ChoiceSelect
                   id="card-workflow"
-                  value={form.workflowName}
+                  value={workflowName}
                   choices={[
                     { value: '', label: 'No workflow' },
-                    ...workflowChoices(workflowFiles, form.workflowName),
+                    ...workflowChoices(workflowFiles, workflowName),
                   ]}
-                  onValueChange={(workflowName) => set({ workflowName })}
+                  onValueChange={(picked) => {
+                    setWorkflowTouched(true);
+                    set({ workflowName: picked });
+                  }}
                 />
               </FormField>
               <FormField id="card-project" label="Project">

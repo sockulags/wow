@@ -50,22 +50,27 @@ export function busyThreadOf(card: CalendarItem, read: ReadModel) {
 }
 
 // Instance, model, effort and permission mode for a new main thread (spec 2): the chat settings,
-// then the project's defaults, then the instance's own.
+// then the project's defaults, then, for a card made before workflows were files, what the first
+// step of its stored workflow named (its run used those), then the instance's own.
 function newThreadSettings(card: CalendarItem, read: ReadModel, context: DecideContext) {
   const project = card.projectId === null ? undefined : read.project(card.projectId);
+  const step = card.workflowId === null ? undefined : read.workflow(card.workflowId)?.steps[0];
   const instances = read.providerInstances();
   const named = settingValue('chat.defaultInstance', read, context);
   const instance =
     instances.find((each) => each.id === named) ??
     instances.find((each) => each.id === project?.defaultProviderInstanceId) ??
+    instances.find((each) => each.id === step?.providerInstanceId) ??
     instances.find((each) => each.status === 'ready') ??
     instances[0];
   if (!instance) throw new CommandRejected('rejected', 'No provider is set up to run the thread.');
   const settingModel = settingValue('chat.defaultModel', read, context);
   const fromProject = project?.defaultProviderInstanceId === instance.id ? project : undefined;
+  const fromStep = step?.providerInstanceId === instance.id ? step : undefined;
   const model =
     (named === instance.id && typeof settingModel === 'string' && settingModel.trim()) ||
     fromProject?.defaultModel ||
+    fromStep?.model ||
     instance.defaultModel;
   if (!model) {
     throw new CommandRejected(
@@ -78,9 +83,14 @@ function newThreadSettings(card: CalendarItem, read: ReadModel, context: DecideC
     instance,
     model,
     effort:
-      fromProject?.defaultEffort || instance.defaultEffort || options.defaultEffort || 'default',
+      fromProject?.defaultEffort ||
+      fromStep?.effort ||
+      instance.defaultEffort ||
+      options.defaultEffort ||
+      'default',
     permissionMode:
       fromProject?.defaultPermissionMode ||
+      fromStep?.permissionMode ||
       instance.defaultPermissionMode ||
       options.permissionModes[0]?.id ||
       'default',
