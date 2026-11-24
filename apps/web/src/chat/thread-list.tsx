@@ -144,7 +144,11 @@ export function ThreadList({
   const list = useRef<HTMLDivElement>(null);
   const { hits, error: searchError } = useThreadSearch(filter);
   const narrow = useBelow('list');
+  // Asked for by "Filter threads", until a thread opens or Escape puts an empty filter away. Not
+  // closed on blur: a click on a chip or a row would take the focus and fold the list under it.
   const [filterOpen, setFilterOpen] = useState(false);
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  useEffect(() => setFilterOpen(false), [pathname]);
   const wantsFocus = useRef(false);
   useEffect(() => {
     if (focusRequest === 0) return;
@@ -361,7 +365,6 @@ export function ThreadList({
             placeholder="Filter threads"
             value={filter}
             onChange={(event) => threadListStore.setState({ filter: event.target.value })}
-            onBlur={() => setFilterOpen(false)}
             onKeyDown={(event) => {
               if (event.key === 'ArrowDown') {
                 event.preventDefault();
@@ -373,6 +376,11 @@ export function ThreadList({
                 event.preventDefault();
                 event.stopPropagation();
                 threadListStore.setState({ filter: '' });
+              } else if (event.key === 'Escape' && filterOpen) {
+                // An empty filter put away: a narrow window gets its rail back.
+                event.preventDefault();
+                event.stopPropagation();
+                setFilterOpen(false);
               }
             }}
             className="h-7 pl-7 text-xs"

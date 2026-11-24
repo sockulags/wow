@@ -1,6 +1,6 @@
 import { settingValue, type SettingsState } from '@wow/client-runtime';
 import { useRouterState } from '@tanstack/react-router';
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import { KeyHint } from '@/components/hint';
 import {
@@ -17,6 +17,7 @@ import { eventToBinding, hasCommandModifier, normalizeBinding } from './keybindi
 import { paletteScore, startList, displayTitle } from './palette-model';
 import { useLayout, useRuntime, useSetting } from './runtime';
 import { takePanelFocusRequest } from '@/panel/panel-state';
+import { threadListStore } from '@/chat/thread-commands';
 import { usePaletteThreadSearch } from '@/chat/thread-search';
 import { sections } from './sections';
 
@@ -43,6 +44,10 @@ export function CommandPalette({
 }) {
   const { layout, settings } = useRuntime();
   const open = useLayout((state) => state.paletteOpen);
+  const filterRequestAtOpen = useRef(threadListStore.getState().focusRequest);
+  useEffect(() => {
+    if (open) filterRequestAtOpen.current = threadListStore.getState().focusRequest;
+  }, [open]);
   const values = useStore(settings, (state: SettingsState) => state.values);
   const recentCount = useSetting('appearance.paletteRecent');
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -126,8 +131,12 @@ export function CommandPalette({
       // (agent workbench spec 93).
       className="top-[12vh] translate-y-0"
       // A command that moved the focus on purpose ("Show in panel") keeps it there.
+      // So does "Filter threads", which asked the thread list for its field.
       onCloseAutoFocus={(event) => {
         if (takePanelFocusRequest(layout, true)) event.preventDefault();
+        if (threadListStore.getState().focusRequest !== filterRequestAtOpen.current) {
+          event.preventDefault();
+        }
       }}
     >
       <CommandFilter byId={byId} onKeyDown={onKeyDown}>

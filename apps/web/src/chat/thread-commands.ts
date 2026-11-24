@@ -151,8 +151,9 @@ export function threadListCommands({
       group: 'Chat',
       keywords: ['search', 'find', 'thread list'],
       keybinding: 'keybindings.threadFilter',
-      run: ({ navigate }) => {
-        if (!inChat) void navigate({ to: '/chat' });
+      // The list is the app's left side on every page; a hidden one is shown.
+      run: ({ layout }) => {
+        layout.setState({ sidebarOpen: true });
         threadListStore.setState((state) => ({ focusRequest: state.focusRequest + 1 }));
       },
     },

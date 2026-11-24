@@ -384,6 +384,48 @@ describe('a narrow window (orchestrator threads spec 30)', () => {
     expect(nav().hasAttribute('data-rail')).toBe(false);
   });
 
+  it('takes a click on a project chip after the filter was opened, and Escape gives the rail back', async () => {
+    narrowWindow();
+    const { runtime } = fake({
+      projects: [project('p-garden', 'Garden'), project('p-tea', 'Tea')],
+      threads: [
+        thread('t1', 'Water the plants', { projectId: 'p-garden' }),
+        thread('t2', 'Steep the leaves', { projectId: 'p-tea' }),
+      ],
+    });
+    await renderApp('/chat', runtime);
+    const user = userEvent.setup();
+    expect(await listed()).toHaveLength(2);
+    await user.keyboard('{Control>}{Shift>}f{/Shift}{/Control}');
+    const field = await screen.findByRole('searchbox', { name: 'Filter threads' });
+    expect(document.activeElement).toBe(field);
+    await user.click(screen.getByRole('radio', { name: 'Tea' }));
+    expect(rowTitles()).toEqual(['Steep the leaves']);
+    expect(nav().hasAttribute('data-rail')).toBe(false);
+    await user.click(screen.getByRole('radio', { name: 'Tea' }));
+    act(() => field.focus());
+    await user.keyboard('{Escape}');
+    expect(nav().hasAttribute('data-rail')).toBe(true);
+  });
+
+  it('keeps the field focused after "Filter threads" from the palette', async () => {
+    narrowWindow();
+    const { runtime } = fake({ projects: [], threads: [thread('t1', 'Kettle timer')] });
+    await renderApp('/chat/t1', runtime);
+    const user = userEvent.setup();
+    expect(await listed()).toEqual(['Kettle timer']);
+    act(() => runtime.layout.setState({ paletteOpen: true }));
+    await user.type(
+      await screen.findByPlaceholderText('Type a command or search…'),
+      'Filter threads',
+    );
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const field = screen.getByRole('searchbox', { name: 'Filter threads' });
+    expect(document.activeElement).toBe(field);
+    expect(nav().hasAttribute('data-rail')).toBe(false);
+  });
+
   it('stays whole while a filter is set, so what it narrows to is never hidden', async () => {
     narrowWindow();
     threadListStore.setState({ filter: 'kettle' });
