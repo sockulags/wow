@@ -10,7 +10,7 @@ import { RpcResponse } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
 import { eq } from 'drizzle-orm';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -1334,6 +1334,31 @@ describe('workflows as text (orchestrator threads spec 19, 20, 22)', () => {
     expect(
       await exportStoredWorkflows({ db: server.database.db, home, logger: server.logger }),
     ).toEqual([]);
+  });
+
+  it('keeps a workflow its own name when only its file name had to change', async () => {
+    dispatch({
+      type: 'workflow.create',
+      workflowId: 'w3',
+      name: 'Release: v2',
+      steps: [storedStep('r', 'check-work')],
+    });
+    const home = path.join(root, 'colon home');
+    const [file] = await exportStoredWorkflows({
+      db: server.database.db,
+      home,
+      logger: server.logger,
+    });
+    expect(path.basename(file ?? '')).toBe('Release- v2.md');
+    expect(await readFile(file ?? '', 'utf8')).toMatch(/^name: ["']Release: v2["']$/m);
+  });
+
+  it('makes wow’s workflow folder even with nothing to write, so it is watched', async () => {
+    const home = path.join(root, 'empty home');
+    expect(
+      await exportStoredWorkflows({ db: server.database.db, home, logger: server.logger }),
+    ).toEqual([]);
+    expect((await stat(path.join(home, 'workflows'))).isDirectory()).toBe(true);
   });
 });
 

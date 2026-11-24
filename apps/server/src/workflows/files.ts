@@ -85,16 +85,22 @@ export async function exportStoredWorkflows(deps: {
   );
   const folder = userWorkflowsDir(deps.home);
   const written: string[] = [];
-  if (stored.length > 0) await mkdir(folder, { recursive: true });
+  // Made even with nothing to write, so the folder is there to be watched (orchestrator threads
+  // spec 19): a file the user puts in it later is listed without a restart.
+  await mkdir(folder, { recursive: true });
   for (const workflow of stored) {
     const base = workflowFileBase(workflow.name);
     let file = path.join(folder, `${base}.md`);
-    for (let n = 1; existsSync(file); n += 1) file = path.join(folder, `${base}-${n}.md`);
+    let n = 0;
+    while (existsSync(file)) {
+      n += 1;
+      file = path.join(folder, `${base}-${n}.md`);
+    }
     await writeFile(
       file,
-      // The file's own name, so a workflow written as <name>-1.md is the workflow <name>-1.
+      // Its own name, and on a clash the same number as its file, so no two have one name.
       workflowFileText(
-        { ...workflow, name: path.basename(file, '.md') },
+        { ...workflow, name: n === 0 ? workflow.name : `${workflow.name}-${n}` },
         (id) => names.get(id) ?? id,
       ),
       { encoding: 'utf8', flag: 'wx' },
