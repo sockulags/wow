@@ -24,12 +24,17 @@ export const pages: readonly Section[] = pageIds.flatMap(
 function PagesMenu() {
   const navigate = useNavigate();
   return (
-    <div className="flex shrink-0 border-t border-sidebar-border px-2 py-1">
+    <div className="flex shrink-0 border-t border-sidebar-border px-2 py-1 max-xl:px-1">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="w-full justify-start">
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Settings"
+            className="w-full justify-start max-xl:justify-center max-xl:px-0"
+          >
             <SettingsIcon />
-            Settings
+            <span className="max-xl:sr-only">Settings</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start" className="w-56">

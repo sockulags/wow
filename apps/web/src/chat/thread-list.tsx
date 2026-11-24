@@ -31,7 +31,9 @@ import { listTitle } from './view-model';
 
 // The thread list on the left side of the app (orchestrator threads spec 30 to 32): main threads
 // with their title, project and status, ordered by status. It keeps the filter, the project
-// chips, pin, archive, mark done, the row menu and picking several rows.
+// chips, pin, archive, mark done, the row menu and picking several rows. Below 1280px it narrows to
+// a 3rem rail of status marks, as the sections did (audit A-12), so a narrow window keeps its room
+// for the view; the title moves into the row's hover title.
 
 // The open thread is read as soon as it is on screen in a focused window, and again whenever a
 // turn ends or a request arrives while it is (agent workbench spec 70). A second request in a
@@ -224,8 +226,9 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
             data-thread-id={thread.id}
             data-picked={isPicked || undefined}
             aria-description={isPicked ? 'Picked' : undefined}
+            title={listTitle(thread, workflow)}
             className={cn(
-              'flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring',
+              'flex flex-col rounded-md px-2 py-1.5 text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring max-xl:items-center max-xl:px-0',
               isPicked && 'bg-primary/15 ring-1 ring-primary/40',
             )}
             activeProps={{ className: 'bg-sidebar-accent', 'aria-current': 'page' }}
@@ -243,7 +246,7 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
               <StatusMark status={listStatusOf(thread)} />
               <span
                 data-testid="thread-row-title"
-                className={cn('min-w-0 flex-1 truncate', unread && 'font-semibold')}
+                className={cn('min-w-0 flex-1 truncate max-xl:sr-only', unread && 'font-semibold')}
               >
                 {listTitle(thread, workflow)}
               </span>
@@ -251,32 +254,36 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
                 <SparklesIcon
                   aria-label="Started by the assistant"
                   data-testid="thread-row-assistant"
-                  className="size-3.5 shrink-0 text-muted-foreground"
+                  className="size-3.5 shrink-0 text-muted-foreground max-xl:hidden"
                 />
               )}
               {thread.pinned && (
                 <PinIcon
                   aria-label="Pinned"
-                  className="size-3.5 shrink-0 fill-current text-muted-foreground"
+                  className="size-3.5 shrink-0 fill-current text-muted-foreground max-xl:hidden"
                 />
               )}
               {thread.state === 'failed' && (
-                <span className="shrink-0 text-2xs text-state-failed">Failed</span>
+                <span className="shrink-0 text-2xs text-state-failed max-xl:hidden">Failed</span>
               )}
               {isArchived(thread) && (
-                <span className="shrink-0 text-2xs text-muted-foreground">Archived</span>
+                <span className="shrink-0 text-2xs text-muted-foreground max-xl:hidden">
+                  Archived
+                </span>
               )}
             </span>
             <span
               data-testid="thread-row-detail"
               title={place}
-              className="truncate pl-5.5 text-2xs text-muted-foreground"
+              className="truncate pl-5.5 text-2xs text-muted-foreground max-xl:hidden"
             >
               {place}
             </span>
           </Link>
         </ThreadRowMenu>
-        <RowButtons thread={thread} />
+        <span className="max-xl:hidden">
+          <RowButtons thread={thread} />
+        </span>
       </li>
     );
   };
@@ -284,19 +291,24 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
   return (
     <nav
       aria-label="Threads"
-      className="flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+      className="flex w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground max-xl:w-12"
       onKeyDown={onListKey}
     >
-      <div className="flex h-11 shrink-0 items-center gap-1 px-2">
-        <Button asChild variant="ghost" size="sm" className="w-full justify-start">
-          <Link to="/chat/new">
+      <div className="flex h-11 shrink-0 items-center gap-1 px-2 max-xl:px-1">
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start max-xl:justify-center max-xl:px-0"
+        >
+          <Link to="/chat/new" title="New thread">
             <PlusIcon />
-            New thread
-            <ShortcutHint shortcut="keybindings.newThread" className="ml-auto" />
+            <span className="max-xl:sr-only">New thread</span>
+            <ShortcutHint shortcut="keybindings.newThread" className="ml-auto max-xl:hidden" />
           </Link>
         </Button>
       </div>
-      <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-1">
+      <div className="flex shrink-0 flex-col gap-1.5 px-2 pb-1 max-xl:hidden">
         <div className="relative">
           <SearchIcon
             aria-hidden
@@ -361,11 +373,14 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
         )}
       </div>
       <PickedBar threads={threads ?? []} />
-      <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div ref={list} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 max-xl:px-1">
         {threads === undefined ? (
-          <TopicPlaceholder status={status} compact rows={4} />
+          <div className="max-xl:hidden">
+            <TopicPlaceholder status={status} compact rows={4} />
+          </div>
         ) : mains.length === 0 ? (
           <EmptyState
+            className="max-xl:hidden"
             compact
             icon={MessagesSquareIcon}
             title="No threads yet"
@@ -373,6 +388,7 @@ export function ThreadList({ footer }: { readonly footer?: ReactNode }) {
           />
         ) : visible.length === 0 ? (
           <EmptyState
+            className="max-xl:hidden"
             compact
             icon={SearchIcon}
             title="No thread matches"
