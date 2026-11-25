@@ -3,7 +3,6 @@ import {
   type CalendarItem,
   type CalendarOccurrence,
   type CardState,
-  type WorkflowRun,
 } from '@wow/contracts';
 import { useEffect, useState } from 'react';
 import { useRuntime } from '@/app/runtime';
@@ -15,8 +14,8 @@ import { addDays, startOfDay, type LocalDate } from './time';
 // never counts days itself. Each occurrence of a repeating card becomes a block of its own, with
 // an id made of the card and the day, so the grid's layout, focus and drag work on it unchanged.
 
-// What an occurrence shows: the state of its run, or what happened instead. `skipped` is an
-// occurrence that started nothing because the card's earlier run was still going.
+// What an occurrence shows: the state of its thread, or what happened instead. `skipped` is an
+// occurrence that started nothing because the card's earlier thread was still going.
 export type OccurrenceState = CardState | 'skipped';
 
 export interface ShownOccurrence {
@@ -30,8 +29,6 @@ export interface ShownOccurrence {
   // What the block says, or null when there is nothing to say (a plain card, or a day that went
   // by with nothing to run).
   readonly state: OccurrenceState | null;
-  // The run a reached occurrence started, from before cards started threads.
-  readonly runId: string | null;
   // The main thread a reached occurrence started or wrote to (orchestrator threads spec 27); it
   // opens there.
   readonly threadId: string | null;
@@ -57,18 +54,14 @@ export function viewRange(
 export const isRepeatingCard = (card: CalendarItem): boolean =>
   card.source === 'local' && card.repeat !== null && card.repeat !== undefined;
 
-function stateOf(
-  occurrence: CalendarOccurrence,
-  card: CalendarItem,
-  runs: ReadonlyMap<string, WorkflowRun>,
-): OccurrenceState | null {
+function stateOf(occurrence: CalendarOccurrence, card: CalendarItem): OccurrenceState | null {
   const record = occurrence.record;
   if (record) {
     switch (record.outcome) {
       case 'fired':
         // The card follows the thread it started last; an earlier occurrence's thread went on.
-        if (record.threadId) return card.threadId === record.threadId ? cardState(card) : 'done';
-        return record.runId ? (runs.get(record.runId)?.state ?? null) : null;
+        if (!record.threadId) return null;
+        return card.threadId === record.threadId ? cardState(card) : 'done';
       case 'failed':
         return 'failed';
       case 'skipped':
@@ -95,10 +88,8 @@ export interface OccurrenceBlocks {
 export function occurrenceBlocks(
   cards: readonly CalendarItem[],
   range: CalendarRange | undefined,
-  runs: readonly WorkflowRun[],
 ): OccurrenceBlocks {
   const byId = new Map(cards.map((card) => [card.id, card]));
-  const runsById = new Map(runs.map((run) => [run.id, run]));
   const items: CalendarItem[] = [];
   const shown = new Map<string, ShownOccurrence>();
   for (const occurrence of range?.occurrences ?? []) {
@@ -106,8 +97,7 @@ export function occurrenceBlocks(
     // Single cards are drawn from their own row; a card the topic no longer has is gone.
     if (!occurrence.repeating || !card || !isRepeatingCard(card)) continue;
     const id = occurrenceId(card.id, occurrence.date);
-    const state = stateOf(occurrence, card, runsById);
-    const runId = occurrence.record?.runId ?? null;
+    const state = stateOf(occurrence, card);
     const threadId = occurrence.record?.threadId ?? null;
     shown.set(id, {
       cardId: card.id,
@@ -121,7 +111,6 @@ export function occurrenceBlocks(
           card.nextAt !== undefined &&
           Date.parse(occurrence.start) < Date.parse(card.nextAt)),
       state,
-      runId,
       threadId,
     });
     items.push({
@@ -130,7 +119,6 @@ export function occurrenceBlocks(
       start: occurrence.start,
       end: occurrence.end,
       state: state ?? card.state,
-      runId,
     });
   }
   return { items, shown };
@@ -141,10 +129,9 @@ export function occurrenceBlocks(
 export function calendarBlocks(
   items: readonly CalendarItem[],
   range: CalendarRange | undefined,
-  runs: readonly WorkflowRun[],
 ): OccurrenceBlocks {
   const cards = items.filter((item) => item.source === 'local');
-  const repeating = occurrenceBlocks(cards, range, runs);
+  const repeating = occurrenceBlocks(cards, range);
   return {
     items: [...items.filter((item) => !isRepeatingCard(item)), ...repeating.items],
     shown: repeating.shown,
@@ -168,7 +155,7 @@ export interface CalendarRangeRead {
   readonly retry: () => void;
 }
 
-// Reads the range from the server, and again whenever a card, a trigger or a run changes, since
+// Reads the range from the server, and again whenever a card or a trigger changes, since
 // any of them can move, add or finish an occurrence. The newest answer wins.
 export function useCalendarRange(
   range: { readonly from: string; readonly to: string } | undefined,

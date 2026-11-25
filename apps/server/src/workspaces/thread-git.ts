@@ -477,7 +477,6 @@ export class ThreadGit {
     const { settings } = this.#deps;
     const options = {
       timeoutMs: settings.get('trackers.requestTimeoutMs'),
-      listFallbackCount: settings.get('hosts.listFallbackCount'),
       longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
       clock: this.#clock,
       ...(this.#deps.fetch ? { fetch: this.#deps.fetch } : {}),

@@ -20,7 +20,6 @@ import {
   type ThreadItem,
   type Turn,
 } from '@wow/contracts';
-import { threadTitle } from './model';
 import { oneLine } from './tools/facts';
 
 // Pure helpers for how chat, workflows and backlog present server rows: labels, times, groups.
@@ -46,13 +45,11 @@ export function providerLabel(
 // permission mode and folder of the thread the user started last. Threads live on the server, so
 // this follows the user across windows and restarts without anything kept in the browser.
 export function lastUsedThread(threads: readonly Thread[]): Thread | undefined {
-  return threads
-    .filter((thread) => thread.runId === null)
-    .reduce<Thread | undefined>(
-      (latest, thread) =>
-        latest === undefined || thread.createdAt > latest.createdAt ? thread : latest,
-      undefined,
-    );
+  return threads.reduce<Thread | undefined>(
+    (latest, thread) =>
+      latest === undefined || thread.createdAt > latest.createdAt ? thread : latest,
+    undefined,
+  );
 }
 
 // Folders threads ran in without a project, newest first, for the project picker's recent
@@ -68,16 +65,6 @@ export function recentFolders(
     if (!folders.includes(thread.cwd)) folders.push(thread.cwd);
   }
   return folders;
-}
-
-// A run's thread is titled "<workflow>: <skill>"; in a list that names the workflow on the
-// second line, the title is the step.
-export function listTitle(thread: Pick<Thread, 'title'>, workflowName: string | undefined): string {
-  const title = threadTitle(thread);
-  const prefix = workflowName ? `${workflowName}: ` : undefined;
-  return prefix && title.startsWith(prefix) && title.length > prefix.length
-    ? title.slice(prefix.length)
-    : title;
 }
 
 const pad = (value: number) => String(value).padStart(2, '0');

@@ -1,26 +1,16 @@
 import {
-  isCardTrigger,
   type CalendarItem,
   type Decision,
   type Thread,
   type Trigger,
   type UpdateState,
-  type Workflow,
-  type WorkflowRun,
 } from '@wow/contracts';
 import {
   desktopSettingKeys,
   readDesktopSettings,
   type DesktopSettings,
 } from './desktop-settings.js';
-import {
-  chatNotices,
-  runNotices,
-  runStates,
-  type ChatNotice,
-  type Notice,
-  type RunStates,
-} from './notifications.js';
+import { chatNotices, type ChatNotice, type Notice } from './notifications.js';
 import type { RpcClient } from './rpc-client.js';
 import type { ServerEndpoint, ServerProcess } from './server-process.js';
 import {
@@ -97,9 +87,6 @@ export class DesktopController {
   #settings: DesktopSettings | undefined;
   #settingsRead = 0;
   #loginItem: boolean | undefined;
-  #workflows: readonly Workflow[] = [];
-  #runStates: RunStates | undefined;
-  #runs: readonly WorkflowRun[] = [];
   #threads: readonly Thread[] = [];
   // The decision queue, once the server sent it (chief of staff spec 16).
   #decisions: readonly Decision[] | undefined;
@@ -224,7 +211,7 @@ export class DesktopController {
   async installUpdate(): Promise<void> {
     const updates = this.#updates;
     if (updates?.state.status !== 'ready' || this.#quitting !== undefined) return;
-    const warning = restartWarning(this.#threads, this.#runs);
+    const warning = restartWarning(this.#threads);
     if (warning !== undefined && !(await this.#options.shell.confirmUpdateRestart(warning))) return;
     if (this.#quitting !== undefined) return;
     this.#installing = true;
@@ -275,13 +262,6 @@ export class DesktopController {
       });
       initial = false;
       await this.#readSettings(client);
-      await client.subscribe('workflows', (rows) => {
-        this.#workflows = rows;
-      });
-      await client.subscribe('workflowRuns', (rows) => {
-        this.#runsChanged(rows);
-        this.#renderTray();
-      });
       await client.subscribe('threads', (rows) => {
         this.#threads = rows;
         this.#renderTray();
@@ -334,14 +314,6 @@ export class DesktopController {
     this.#renderTray();
   }
 
-  #runsChanged(runs: readonly WorkflowRun[]): void {
-    this.#runs = runs;
-    const notices = runNotices(this.#runStates, runs, this.#workflows);
-    this.#runStates = runStates(runs);
-    if (!(this.#settings?.notifications ?? false)) return;
-    for (const notice of notices) this.#options.shell.notify(notice, () => this.open(notice.path));
-  }
-
   // Not while the window shows that thread and has the focus (spec 64). Allow once and Deny
   // answer the approval like the buttons in the thread; the click opens the thread.
   #notifyChat(notice: ChatNotice): void {
@@ -380,7 +352,6 @@ export class DesktopController {
     this.#client?.close();
     this.#client = undefined;
     this.#server = undefined;
-    this.#runStates = undefined;
     this.#notificationIds = undefined;
     this.#options.shell.closeWindow();
     this.#renderTray();
@@ -418,7 +389,6 @@ export class DesktopController {
     await this.#quitting;
     this.#installing = false;
     this.#quitting = undefined;
-    this.#runStates = undefined;
     this.#notificationIds = undefined;
     try {
       await this.#launch();
@@ -439,8 +409,7 @@ export class DesktopController {
       ...(serverReady
         ? traySummary(
             this.#threads,
-            this.#runs,
-            this.#triggers.filter(isCardTrigger),
+            this.#triggers,
             this.#items,
             (this.#options.now ?? (() => new Date()))(),
             this.#options.formatTime ?? localTime,

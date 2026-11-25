@@ -39,8 +39,6 @@ const thread: Thread = {
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: at,
   updatedAt: at,
 };

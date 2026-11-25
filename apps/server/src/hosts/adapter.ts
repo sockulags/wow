@@ -6,7 +6,6 @@ import {
   type Issue,
   type Page,
   type Ticket,
-  type UnitRef,
 } from '@wow/contracts';
 
 // What the poller needs from a code host. One adapter per host kind; everything the host calls
@@ -23,8 +22,6 @@ export interface FoundChangeRequest {
   readonly state: ChangeRequest['state'];
   readonly draft: boolean;
   readonly mergedAt: string | null;
-  // The `Intent-Unit` lines of its body.
-  readonly units: readonly UnitRef[];
   // The web addresses its body links to.
   readonly links?: readonly string[];
   // Present when the answer that found it already said where its head is, and with it whether
@@ -54,9 +51,6 @@ export interface HostAdapter {
   readonly kind: HostKind;
   // The host as the user knows it, such as github.com.
   readonly name: string;
-  // The change requests whose body carries an `Intent-Unit: <intentId>/…` line: one search, or
-  // the newest few of the repository on a host without search. Never the whole repository.
-  findForIntent(intentId: string): Promise<FoundChangeRequest[]>;
   // The newest change request whose head is this branch, if there is one.
   findForBranch(branch: string): Promise<FoundChangeRequest | undefined>;
   // State, head commit, checks and review comments of one change request.

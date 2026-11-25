@@ -96,7 +96,6 @@ export function useCommands(gated = false): {
   const outlookProfile = useTopic('outlookStatus')?.[0]?.profile;
   const showWeekends = useSetting('calendar.showWeekends');
   const backlogItems = useTopic('backlogItems');
-  const pageReads = useTopic('pageReads');
   const setupApplications = useTopic('setupApplications');
   const skills = useTopic('skills');
   const openBacklogItemId = /^\/backlog\/(?!new$)([^/]+)$/.exec(pathname)?.[1];
@@ -152,7 +151,7 @@ export function useCommands(gated = false): {
       }),
       ...approvalCommands(approvalOffer),
       ...threadChangesCommands(
-        openThread?.runId === null ? openThread.id : undefined,
+        openThread?.id,
         tabsRoute,
         changesOpen,
         changesTurnOnly,
@@ -170,7 +169,7 @@ export function useCommands(gated = false): {
         outlineOpen,
       ),
       ...workingCopyCommands({
-        openThread: openThread?.runId === null ? openThread : undefined,
+        openThread,
         onNewThread: pathname === '/chat/new',
         draft: draftCopy,
       }),
@@ -216,7 +215,6 @@ export function useCommands(gated = false): {
         panelTabs,
         pathname: tabsRoute,
         projects: projects ?? [],
-        pageReads: pageReads ?? [],
       }),
       ...openFileCommands(fileTarget),
       ...hostItemCommands({
@@ -263,7 +261,6 @@ export function useCommands(gated = false): {
     setupApplications,
     skills,
     panelTabs,
-    pageReads,
     tabsRoute,
     connectShown,
     questionCard,

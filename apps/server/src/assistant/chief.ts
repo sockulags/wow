@@ -387,8 +387,7 @@ export class Chief {
               .join('; ')}.`,
       path: '/chat/assistant',
     });
-    const happened =
-uses.length > 0 || decisions.length > 0;
+    const happened = uses.length > 0 || decisions.length > 0;
     return { lines: [...lines, ...this.#rest()], happened };
   }
 

@@ -141,8 +141,17 @@ describe(`migration ${added}`, () => {
         .join(', ');
     expect(columnsOf('threads')).not.toContain('"working_copy"');
     old.prepare('attach database ? as today').run(path.join(today, databaseFileName));
+    // The columns both schemas have: today's tables have gained some since and lost others.
     for (const table of ['projects', 'provider_instances', 'threads']) {
-      const had = columnsOf(table);
+      const had = (
+        old
+          .prepare(
+            `select name from pragma_table_info('${table}') where name in (select name from pragma_table_info('${table}', 'today'))`,
+          )
+          .all() as { name: string }[]
+      )
+        .map((column) => `"${column.name}"`)
+        .join(', ');
       old.exec(`insert into ${table} (${had}) select ${had} from today.${table}`);
     }
     old.exec('detach database today');

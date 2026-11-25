@@ -2,7 +2,6 @@ import {
   type Decision,
   type ServerCommand,
   type SubscriptionTopic,
-  type WorkflowRun,
   type WorkflowStep,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
@@ -83,30 +82,28 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-function runAtGate(runId = 'run-1'): WorkflowRun {
-  asUser({ type: 'workflowRun.start', runId, workflowId: 'delivery', projectId: 'tea' });
-  const run = rows<WorkflowRun>('workflowRuns').find((entry) => entry.id === runId);
+// A card whose start passed while nothing ran: it waits for the user as missed.
+function missedCard(): void {
   asUser({
-    type: 'workflowRun.stepCompleted',
-    runId,
-    stepId: run?.steps[0]?.stepId ?? '',
-    finalMessage: 'Done.\n\nAPPROVED',
-    artifactsFound: ['notes.md'],
+    type: 'card.create',
+    cardId: 'late',
+    title: 'Brew yesterday',
+    start: '2026-11-09T08:00:00.000Z',
+    end: '2026-11-09T09:00:00.000Z',
+    zone: 'Europe/Stockholm',
+    projectId: 'tea',
+    workflowId: 'delivery',
   });
-  const waiting = rows<WorkflowRun>('workflowRuns').find((entry) => entry.id === runId);
-  if (!waiting) throw new Error('no run');
-  return waiting;
 }
 
 const row = (extra: Partial<Decision>): Omit<Decision, 'brief' | 'briefPending'> => ({
   id: 'x',
-  kind: 'gate',
+  kind: 'limit',
   at: now,
   title: 't',
   where: null,
   path: '/',
   threadId: null,
-  runId: null,
   proposalId: null,
   approvalId: null,
   questionId: null,
@@ -118,59 +115,25 @@ const row = (extra: Partial<Decision>): Omit<Decision, 'brief' | 'briefPending'>
 });
 
 describe('the queue (chief of staff spec 16, 17)', () => {
-  it('lists a run at its gate with what wow says of it', () => {
-    runAtGate();
-    expect(decisions()).toMatchObject([
-      {
-        id: 'gate:run-1:s1',
-        kind: 'gate',
-        title: 'deliver-work waits for your review',
-        where: 'Delivery · Tea',
-        path: '/workflows/runs/run-1',
-        fixed: ['Artifacts: notes.md'],
-        brief: null,
-      },
-    ]);
-  });
-
-  it('puts what holds a turn first, then gates, proposals and failures, soonest card first', () => {
+  it('puts what holds a turn first, then limits, proposals and missed cards, soonest card first', () => {
     const order = [
-      row({ id: 'failed', kind: 'failedRun', at: '2026-11-10T07:00:00.000Z' }),
+      row({ id: 'missed', kind: 'missedCard', at: '2026-11-10T07:00:00.000Z' }),
       row({ id: 'proposal', kind: 'proposal', at: '2026-11-10T06:00:00.000Z' }),
-      row({ id: 'gate-late', kind: 'gate', cardStart: '2026-11-10T15:00:00.000Z' }),
-      row({ id: 'gate-soon', kind: 'gate', cardStart: '2026-11-10T09:00:00.000Z' }),
-      row({ id: 'gate-none', kind: 'gate', at: '2026-11-10T05:00:00.000Z' }),
+      row({ id: 'limit-late', kind: 'limit', cardStart: '2026-11-10T15:00:00.000Z' }),
+      row({ id: 'limit-soon', kind: 'limit', cardStart: '2026-11-10T09:00:00.000Z' }),
+      row({ id: 'limit-none', kind: 'limit', at: '2026-11-10T05:00:00.000Z' }),
       row({ id: 'approval', kind: 'approval', holdsTurn: true, at: '2026-11-10T07:59:00.000Z' }),
     ]
       .toSorted(decisionOrder)
       .map((entry) => entry.id);
     expect(order).toEqual([
       'approval',
-      'gate-soon',
-      'gate-late',
-      'gate-none',
+      'limit-soon',
+      'limit-late',
+      'limit-none',
       'proposal',
-      'failed',
+      'missed',
     ]);
-  });
-
-  it('keeps a failed run until it is dismissed, and dismisses nothing else', () => {
-    runAtGate();
-    asUser({ type: 'workflowRun.stop', runId: 'run-1' });
-    asUser({ type: 'workflowRun.start', runId: 'run-2', workflowId: 'delivery', projectId: 'tea' });
-    const run = rows<WorkflowRun>('workflowRuns').find((entry) => entry.id === 'run-2');
-    asUser({
-      type: 'workflowRun.stepFailed',
-      runId: 'run-2',
-      stepId: run?.steps[0]?.stepId ?? '',
-      error: 'The provider stopped.',
-    });
-    expect(decisions().map((entry) => entry.id)).toContain('failedRun:run-2');
-    expect(() => asUser({ type: 'decision.dismiss', decisionId: 'gate:run-1:s1' })).toThrow(
-      /Only a failed run or a missed card/,
-    );
-    asUser({ type: 'decision.dismiss', decisionId: 'failedRun:run-2' });
-    expect(decisions().map((entry) => entry.id)).not.toContain('failedRun:run-2');
   });
 });
 
@@ -182,11 +145,11 @@ describe('briefs (chief of staff spec 18)', () => {
 
   it('writes no brief it was not asked for, and asks for none past the daily limit', async () => {
     expect(
-      (await call('write_brief', { decisionId: 'gate:nope:s1', text: 'x', recommendation: 'y' }))
+      (await call('write_brief', { decisionId: 'missedCard:nope', text: 'x', recommendation: 'y' }))
         .isError,
     ).toBe(true);
     asUser({ type: 'setting.set', key: 'assistant.briefsPerDay', scope: 'global', value: 0 });
-    runAtGate();
+    missedCard();
     await server.briefs.settled();
     expect(decisions()[0]).toMatchObject({ briefPending: false, brief: null });
   });

@@ -25,10 +25,10 @@ import {
   projectChips,
   threadListStore,
 } from './thread-commands';
+import { threadTitle } from './model';
 import { threadRowPlace } from './thread-row';
 import { useThreadSearch } from './thread-search';
 import { isMainThread, listStatusOf, listStatusTitles, threadListOrder } from './thread-sections';
-import { listTitle } from './view-model';
 
 // The thread list on the left side of the app (orchestrator threads spec 30 to 32): main threads
 // with their title, project and status, ordered by status. It keeps the filter, the project
@@ -132,8 +132,6 @@ export function ThreadList({
   readonly footer?: ReactNode | ((rail: boolean) => ReactNode);
 }) {
   const { rows: threads, status } = useTopicState('threads');
-  const runs = useTopic('workflowRuns') ?? [];
-  const workflows = useTopic('workflows') ?? [];
   const projects = useTopic('projects') ?? [];
   const pickedRows = useStore(threadListStore, (state) => state.picked);
   const { settings } = useRuntime();
@@ -156,11 +154,6 @@ export function ThreadList({
     setFilterOpen(true);
   }, [focusRequest]);
 
-  const workflowName = (runId: string | null) => {
-    if (runId === null) return undefined;
-    const run = runs.find((candidate) => candidate.id === runId);
-    return workflows.find((candidate) => candidate.id === run?.workflowId)?.name ?? 'Workflow run';
-  };
   const mains = threads?.filter(isMainThread) ?? [];
   const chips = projectChips(mains, projects);
   const picked = pickedProject(mains, projects, projectId);
@@ -236,7 +229,6 @@ export function ThreadList({
   };
 
   const renderRow = (thread: Thread) => {
-    const workflow = workflowName(thread.runId);
     const unread = isUnread(thread);
     const place = threadRowPlace(thread, projects);
     const isPicked = pickedRows.includes(thread.id);
@@ -244,7 +236,7 @@ export function ThreadList({
     const archived = isArchived(thread);
     // In the rail the hover title says what the row's text would.
     const hover = rail
-      ? [listTitle(thread, workflow), place, failed && 'Failed', archived && 'Archived']
+      ? [threadTitle(thread), place, failed && 'Failed', archived && 'Archived']
           .filter(Boolean)
           .join(' · ')
       : undefined;
@@ -285,7 +277,7 @@ export function ThreadList({
                   rail && 'sr-only',
                 )}
               >
-                {listTitle(thread, workflow)}
+                {threadTitle(thread)}
               </span>
               {thread.startedBy === 'assistant' && (
                 <SparklesIcon

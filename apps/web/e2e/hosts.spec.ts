@@ -8,7 +8,7 @@ import { sketchPath, sketching, sketchUse } from './sketch';
 // U6 ground truth (review loop spec 23, 26, 28, 30, 31) against the Changes copy of the e2e
 // server: project `tea-garden` is on a branch with an invented pull request, has a plan whose
 // units have pull requests on the mock GitHub, and is the only project with a GitHub token.
-// The first test follows the plan and the tests share that server, so they run in order.
+// The tests share that server, so they run in order.
 test.describe.configure({ mode: 'serial' });
 
 const control = `http://127.0.0.1:${e2eChangesTrackerPort}`;

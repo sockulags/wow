@@ -29,7 +29,6 @@ const item = (id: string, start: string, end: string, extra: Partial<CalendarIte
     projectId: null,
     backlogItemId: null,
     workflowId: null,
-    runId: null,
     state: 'scheduled',
     updatedAt: start,
     ...extra,

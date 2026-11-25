@@ -7,7 +7,6 @@ import {
   type ProviderModel,
   type ServerCommand,
   type SetupApplication,
-  type Thread,
   type Workflow,
   type WorkflowStep,
 } from '@wow/contracts';
@@ -53,11 +52,6 @@ function refusal(send: () => unknown): string | undefined {
 
 const workflow = (id: string) =>
   (snapshot(server.database.db, { topic: 'workflows' }) as Workflow[]).find((row) => row.id === id);
-
-const firstThread = (runId: string) =>
-  (snapshot(server.database.db, { topic: 'threads' }) as Thread[]).find(
-    (thread) => thread.runId === runId,
-  );
 
 async function call(name: string, args: Record<string, unknown> = {}) {
   const result = await server.assistant.tools.call(name, args);
@@ -382,18 +376,11 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
     updatedAt: '2026-10-01T08:00:00.000Z',
   };
 
-  it('loads and runs as before, and the diagnosis names the step', async () => {
+  it('loads as before, and the diagnosis names the step', async () => {
     dispatch({ type: 'workflow.restore', workflow: old });
     expect(workflow('old')?.steps[0]).not.toHaveProperty('model');
     dispatch({ type: 'workflow.update', workflowId: 'old', name: 'Older review' });
     expect(workflow('old')?.name).toBe('Older review');
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'old', projectId: 'tea' });
-    expect(snapshot(server.database.db, { topic: 'workflowRuns' })).toMatchObject([
-      { id: 'r1', workflowId: 'old' },
-    ]);
-    // Its first step's thread starts as before: with no model, which the runner fails, when
-    // neither the instance nor the project has a default.
-    expect(firstThread('r1')).toMatchObject({ stepId: 'check-work', model: '' });
 
     const result = await server.assistant.tools.call('diagnose_setup', {});
     const { problems } = Diagnosis.parse(JSON.parse(result.text));
@@ -406,29 +393,6 @@ describe('a workflow stored before the rule (spec 19, 20)', () => {
         place: { label: 'Settings → Workflows → Older review', path: '/settings/workflows' },
       },
     ]);
-  });
-
-  it("starts a run's step stored without a model on its instance's default (spec 19)", () => {
-    dispatch({
-      type: 'workflow.restore',
-      workflow: {
-        ...old,
-        id: 'old-default',
-        steps: [step('check-work', { providerInstanceId: 'codex-work' })],
-      },
-    });
-    dispatch({
-      type: 'workflowRun.start',
-      runId: 'r2',
-      workflowId: 'old-default',
-      projectId: 'tea',
-    });
-    expect(firstThread('r2')).toMatchObject({
-      stepId: 'check-work',
-      providerInstanceId: 'codex-work',
-      model: 'codex-max',
-      effort: 'medium',
-    });
   });
 
   it('is put back without a model by an undo, though its instance has a default (spec 19)', async () => {

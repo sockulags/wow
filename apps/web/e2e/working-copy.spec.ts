@@ -7,9 +7,7 @@ import { choose } from './controls';
 import { e2eChangesHome, e2eMugProjectId } from './env';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
-// U7 ground truth (review loop spec 36, 37) against the Changes copy of the e2e server, whose
-// home holds an invented tea timer repository as project "Tea cup". The mock agent edits
-// whatever folder its turn starts in, so the test can tell where the run worked.
+// Against the Changes copy of the e2e server, whose home holds invented tea repositories.
 
 test.beforeEach(async ({ page }) => {
   // What the desktop preload injects: the contents of `~/.wow/server.json`.
@@ -20,8 +18,6 @@ test.beforeEach(async ({ page }) => {
     (globalThis as { wowServerInfo?: unknown }).wowServerInfo = serverInfo;
   }, info);
 });
-
-test.describe('working copies', () => {});
 
 // Thread work U2 (spec 10 to 16): a chat thread in project "Tea mug", whose project setting turns
 // "Own working copy" on for new threads. The mock agent's "Edit the bell" writes src/bell.ts in

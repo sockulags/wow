@@ -586,13 +586,7 @@ export type AssistantPermissionUse = z.infer<typeof AssistantPermissionUse>;
 // The decision queue (chief of staff spec 16 to 19): everything that waits for the user, in the
 // server's order, each with a brief. `fixed` is what wow says itself; `brief` is what the
 // assistant wrote once when the row appeared, within `assistant.briefsPerDay`.
-export const DecisionKind = z.enum([
-  'approval',
-  'question',
-  'limit',
-  'proposal',
-  'missedCard',
-]);
+export const DecisionKind = z.enum(['approval', 'question', 'limit', 'proposal', 'missedCard']);
 export type DecisionKind = z.infer<typeof DecisionKind>;
 
 export const DecisionBrief = z.object({

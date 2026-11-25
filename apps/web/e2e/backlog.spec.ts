@@ -22,7 +22,7 @@ async function received(): Promise<Received[]> {
   return (await response.json()) as Received[];
 }
 
-// Starts the run of the item's card, as the scheduler does at the card's time.
+// Starts the thread of the item's card, as the scheduler does at the card's time.
 async function fire(itemId: string): Promise<void> {
   const response = await fetch(`${trackers}/fire?backlogItemId=${itemId}`, { method: 'POST' });
   expect(response.ok).toBe(true);

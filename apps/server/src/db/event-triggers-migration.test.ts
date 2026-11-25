@@ -55,7 +55,6 @@ const launch = (home: string) =>
     watchSkills: () => ({ close: () => Promise.resolve() }),
     clock: () => now,
     schedulerTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
-    hostTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
     hooks: { providers: { claude: (row) => new MockProviderAdapter(row.kind) } },
   });
 
@@ -157,18 +156,25 @@ describe('migration 0011_event_triggers', () => {
       'offer_run_now',
     ]);
     old.prepare('attach database ? as today').run(path.join(today, databaseFileName));
-    // Only the columns the previous schema has: today's tables have gained some since.
-    for (const table of ['projects', 'provider_instances', 'workflows', 'calendar_items']) {
+    // Only the columns both schemas have: today's tables have gained some since and lost others.
+    for (const table of [
+      'projects',
+      'provider_instances',
+      'workflows',
+      'calendar_items',
+      'triggers',
+    ]) {
       const had = (
-        old.prepare(`select name from pragma_table_info('${table}')`).all() as { name: string }[]
+        old
+          .prepare(
+            `select name from pragma_table_info('${table}') where name in (select name from pragma_table_info('${table}', 'today'))`,
+          )
+          .all() as { name: string }[]
       )
         .map((column) => `"${column.name}"`)
         .join(', ');
       old.exec(`insert into ${table} (${had}) select ${had} from today.${table}`);
     }
-    old.exec(
-      `insert into triggers (${columns.join(', ')}) select ${columns.join(', ')} from today.triggers`,
-    );
     old.exec('detach database today');
     expect(old.prepare('select count(*) as n from triggers').get()).toEqual({ n: 2 });
     old.close();
@@ -179,33 +185,21 @@ describe('migration 0011_event_triggers', () => {
     expect(db.select().from(triggers).orderBy(triggers.id).all()).toEqual([
       {
         id: 'c1:trigger',
-        kind: 'card',
         calendarItemId: 'c1',
         workflowId: 'wf1',
         runAt: iso(60),
         zone: 'Europe/Stockholm',
         state: 'scheduled',
-        runId: null,
         offerRunNow: false,
-        projectId: null,
-        event: null,
-        enabled: null,
-        createdAt: null,
       },
       {
         id: 'c2:trigger',
-        kind: 'card',
         calendarItemId: 'c2',
         workflowId: 'wf1',
         runAt: iso(-600),
         zone: 'Europe/Stockholm',
         state: 'missed',
-        runId: null,
         offerRunNow: true,
-        projectId: null,
-        event: null,
-        enabled: null,
-        createdAt: null,
       },
     ]);
 
@@ -216,24 +210,19 @@ describe('migration 0011_event_triggers', () => {
     const [run] = db.select().from(threads).all();
     expect(run).toMatchObject({ projectId: 'p1', parentThreadId: null });
     expect(db.select().from(triggers).all()).toContainEqual(
-      expect.objectContaining({ id: 'c1:trigger', state: 'fired', runId: run?.id }),
+      expect.objectContaining({ id: 'c1:trigger', state: 'fired' }),
     );
     expect(db.select().from(calendarItems).all()).toContainEqual(
       expect.objectContaining({ id: 'c1', state: 'running', threadId: run?.id }),
     );
 
-    // The missed card's "Run now" still works, and an event trigger fits beside them.
-    server.engine.dispatch('run-now', { type: 'card.runNow', cardId: 'c2', runId: 'r2' });
+    // The missed card's "Run now" still works.
+    server.engine.dispatch('run-now', { type: 'card.runNow', cardId: 'c2', threadId: 'r2' });
     expect(db.select().from(triggers).all()).toContainEqual(
-      expect.objectContaining({ id: 'c2:trigger', state: 'fired', runId: 'r2' }),
+      expect.objectContaining({ id: 'c2:trigger', state: 'fired' }),
     );
-    server.engine.dispatch('event', {
-      type: 'trigger.create',
-      triggerId: 'on-merged',
-      projectId: 'p1',
-      event: 'merged',
-      workflowId: 'wf1',
-    });
-    expect(db.select().from(triggers).all()).toHaveLength(3);
+    expect(db.select().from(calendarItems).all()).toContainEqual(
+      expect.objectContaining({ id: 'c2', threadId: 'r2' }),
+    );
   });
 });

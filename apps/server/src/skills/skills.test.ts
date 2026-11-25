@@ -3,8 +3,6 @@ import type {
   ProviderInstance,
   ServerCommand,
   Skill,
-  TextItemPayload,
-  WorkflowRun,
   WorkflowStep,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
@@ -83,14 +81,11 @@ const rpcDispatch = (command: ServerCommand) => {
     secrets: undefined as never,
     db: undefined as never,
     skills: server.skills,
-    hosts: undefined as never,
     hostLookup: undefined as never,
     images: undefined as never,
     snapshots: undefined as never,
     threadGit: undefined as never,
     threadApply: undefined as never,
-    plans: undefined as never,
-    workflows: undefined as never,
     providers: undefined as never,
     providerUpdates: undefined as never,
     trackers: undefined as never,
@@ -150,31 +145,6 @@ const startTurns = () =>
 const promptOf = (threadId: string) =>
   startTurns().find((turn) => turn.threadId === threadId)?.prompt;
 
-const run = (runId: string): WorkflowRun =>
-  server.database.db
-    .select()
-    .from(workflowRuns)
-    .where(eq(workflowRuns.id, runId))
-    .get() as WorkflowRun;
-
-function runBecomes(runId: string, predicate: (run: WorkflowRun) => boolean): Promise<WorkflowRun> {
-  return new Promise((resolve) => {
-    const check = () => {
-      const current = server.database.db
-        .select()
-        .from(workflowRuns)
-        .where(eq(workflowRuns.id, runId))
-        .get();
-      if (current && predicate(current)) {
-        unsubscribe();
-        resolve(current);
-      }
-    };
-    const unsubscribe = server.engine.onCommit(check);
-    check();
-  });
-}
-
 const firstItem = (threadId: string) =>
   server.database.db
     .select()
@@ -192,23 +162,6 @@ async function writeSkill(dir: string, name: string, body = ''): Promise<void> {
 }
 
 const file = () => path.join(wowHome, 'skills', 'tidy', 'SKILL.md');
-
-const verdictBlock = (approved: string, changes: string, blocked: string) =>
-  [
-    '<skill name="wow-verdict">',
-    'End your final message with exactly one of these lines, alone on the last line and with nothing after it:',
-    '',
-    `${approved} when the work is done and acceptable as it is.`,
-    `${changes} when it needs changes before it can go on.`,
-    `${blocked} when it cannot go on without someone's help.`,
-    '</skill>',
-  ].join('\n');
-
-const handoverBlock = [
-  '<skill name="wow-handover">',
-  'End your final message with a short handover in three parts: what you did, what is left, and what the next step needs to know to go on.',
-  '</skill>',
-].join('\n');
 
 const tidyBlock = ['<skill name="tidy">', 'Tidy the imports.', '</skill>'].join('\n');
 
@@ -286,7 +239,7 @@ describe('built-in skills (spec 1, 3, 4)', () => {
     expect(existsSync(path.join(userHome, '.claude', 'skills', 'wow-verdict'))).toBe(false);
   });
 
-  it('leaves a built-in skill switched off in the setting out of every list and attaches it nowhere', async () => {
+  it('leaves a built-in skill switched off in the setting out of every list', async () => {
     dispatch({
       type: 'setting.set',
       key: 'skills.builtInOff',
@@ -296,54 +249,10 @@ describe('built-in skills (spec 1, 3, 4)', () => {
     await server.skills.refresh();
     expect(groupOf('wow-verdict', 'wow')).toBeUndefined();
     expect(groupOf('wow-artifacts', 'wow')).toBeDefined();
-
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Review',
-      steps: [step('review', { gateAfter: true, gateAfterCondition: ['verdict'] })],
-    });
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-    await runBecomes('r1', (row) => row.state !== 'running');
-    expect(promptOf('r1.review')).toBe('/review');
   });
 });
 
 describe('built-in texts filled from settings and the run (spec 2)', () => {
-  it('names the changed verdict lines, the expected artifacts and the Intent-Unit line of the unit', async () => {
-    for (const [key, value] of [
-      ['workflows.verdictApprovedLine', 'SHIP IT'],
-      ['workflows.verdictChangesRequestedLine', 'FIX IT'],
-      ['workflows.verdictBlockedLine', 'STUCK'],
-    ] as const) {
-      dispatch({ type: 'setting.set', key, scope: 'project:p1', value });
-    }
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Deliver',
-      steps: [
-        step('ship', {
-          expectedArtifacts: ['docs/plan.md', 'docs/notes.md'],
-          gateAfter: true,
-          gateAfterCondition: ['verdict'],
-        }),
-      ],
-    });
-    dispatch({
-      type: 'workflowRun.start',
-      runId: 'r1',
-      workflowId: 'wf',
-      projectId: 'p1',
-    });
-    await runBecomes('r1', (row) => row.state !== 'running');
-    const prompt = promptOf('r1.ship') ?? '';
-    expect(prompt).toContain(verdictBlock('SHIP IT', 'FIX IT', 'STUCK'));
-    expect(prompt).toContain('- docs/plan.md\n- docs/notes.md\n</skill>');
-    // No unit: wow-pull-request is not attached and no unit sentence is sent.
-    expect(prompt).not.toContain('Intent-Unit');
-  });
-
   it('leaves the unit sentence out of a wow-pull-request picked in chat without a unit', async () => {
     createThread('t1', 'claude-work');
     dispatch({
@@ -645,7 +554,7 @@ describe('two hand-made folders with the same skill name', () => {
     await server.skills.refresh();
   });
 
-  it('lists both but sends, runs, changes and deletes neither, naming both folders', async () => {
+  it('lists both but sends, changes and deletes neither, naming both folders', async () => {
     expect(skillList().filter((skill) => skill.name === 'brew')).toHaveLength(2);
     createThread('t1', 'claude-work');
     expect(() =>
@@ -663,22 +572,12 @@ describe('two hand-made folders with the same skill name', () => {
       }),
     ).toThrow(refusal);
     expect(() => dispatch({ type: 'skill.delete', name: 'brew' })).toThrow(refusal);
-
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Brew',
-      steps: [step('brew', { skillName: 'brew', skillSource: 'yours' })],
-    });
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-    const failed = await runBecomes('r1', (row) => row.state !== 'running');
-    expect(failed.steps[0]?.error).toBe(`The step cannot start. ${refusal}`);
     expect(startTurns()).toEqual([]);
   });
 });
 
 describe('the same name in Yours and in a folder (spec 9)', () => {
-  it('lists both with their groups, and running one sends only that one', async () => {
+  it('lists both with their groups', async () => {
     await writeSkill(path.join(userHome, '.claude', 'skills'), 'tidy');
     await server.skills.refresh();
     dispatch({
@@ -687,214 +586,10 @@ describe('the same name in Yours and in a folder (spec 9)', () => {
     });
     expect(groupOf('tidy', 'yours')).toBeDefined();
     expect(groupOf('tidy', 'user-claude')).toBeDefined();
-
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Tidy',
-      steps: [
-        step('mine', { skillName: 'tidy', skillSource: 'yours' }),
-        step('theirs', { skillName: 'tidy' }),
-      ],
-    });
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-    await runBecomes('r1', (row) => row.state !== 'running');
-    expect(promptOf('r1.mine')).toBe(tidyBlock);
-    expect(promptOf('r1.theirs')).toBe('/tidy\n\nThe previous step (tidy) ended with:\n\nDone');
-  });
-});
-
-const runStep = async (providerInstanceId: string) => {
-  dispatch({
-    type: 'workflow.create',
-    workflowId: 'wf',
-    name: 'Tidy',
-    steps: [
-      step('tidy-up', {
-        skillName: 'tidy',
-        skillSource: 'yours',
-        providerInstanceId,
-        alsoFollow: [{ name: 'wow-handover', source: 'wow' }, { name: 'ship' }],
-        extraPrompt: 'Only the server.',
-      }),
-    ],
-  });
-  dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-  await runBecomes('r1', (row) => row.state !== 'running');
-  return promptOf('r1.tidy-up');
-};
-
-describe('a step with a wow skill and Also follow (spec 10, 11)', () => {
-  beforeEach(() => {
-    dispatch({
-      type: 'skill.create',
-      skill: { name: 'tidy', description: 'Mine', text: 'Tidy the imports.' },
-    });
-  });
-
-  it('sends Claude Code exactly the skill text, the other wow skill, the folder skill invocation, then the extra prompt', async () => {
-    expect(await runStep('claude-work')).toBe(
-      [tidyBlock, '', handoverBlock, '', '/ship Only the server.'].join('\n'),
-    );
-  });
-
-  it('sends Codex exactly the skill text, the other wow skill, the folder skill invocation, then the extra prompt', async () => {
-    expect(await runStep('codex-work')).toBe(
-      [tidyBlock, '', handoverBlock, '', '$ship Only the server.'].join('\n'),
-    );
-  });
-});
-
-describe('built-in skills attached by themselves (spec 12, 13)', () => {
-  const unit = {
-    planRunId: 'pr1',
-    planId: 'p1:demo',
-    intentId: 'demo',
-    unitKey: 'U2',
-    title: 'Count down',
-  };
-
-  // A plan run starts a unit's run; here the run waits before its step and is given the unit
-  // the way a plan run's start stores it.
-  const startStep = async (overrides: Partial<WorkflowStep>, withUnit = false) => {
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Deliver',
-      steps: [step('ship', { ...overrides, gateBefore: true })],
-    });
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-    await runBecomes('r1', (row) => row.state === 'waiting');
-    if (withUnit) {
-      server.database.db.update(workflowRuns).set({ unit }).where(eq(workflowRuns.id, 'r1')).run();
-    }
-    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
-    await runBecomes(
-      'r1',
-      (row) =>
-        row.steps[0]?.state !== 'not_started' &&
-        row.steps[0]?.state !== 'running' &&
-        row.state !== 'running',
-    );
-    return promptOf('r1.ship') ?? '';
-  };
-
-  it('attaches wow-verdict to a step whose rule reads the verdict, wow-artifacts to one with expected artifacts and wow-pull-request to a unit run, with the reason, and sends no sentence of its own twice', async () => {
-    const prompt = await startStep(
-      {
-        expectedArtifacts: ['docs/plan.md'],
-        rules: [{ when: { fact: 'verdict', is: 'blocked' }, goTo: { type: 'end' } }],
-      },
-      true,
-    );
-    expect(prompt).toContain('<skill name="wow-verdict">');
-    expect(prompt).toContain('<skill name="wow-artifacts">');
-    expect(prompt).toContain('<skill name="wow-pull-request">');
-    expect(prompt).not.toContain('This step is expected to produce');
-    expect(prompt).not.toContain('put this line in its body');
-    expect(prompt.match(/Intent-Unit: demo\/U2/g)).toHaveLength(1);
-    const payload = firstItem('r1.ship')?.payload as TextItemPayload;
-    expect(payload.skills?.map((skill) => [skill.name, skill.reason])).toEqual([
-      ['ship', undefined],
-      ['wow-verdict', 'a rule of this step reads the verdict'],
-      ['wow-artifacts', 'this step expects artifacts'],
-      ['wow-pull-request', 'this run delivers unit U2 of demo'],
-    ]);
-  });
-
-  it("sends a step's thread its message again on Retry as the step sent it, not as chat skills", async () => {
-    const prompt = await startStep({}, true);
-    expect(prompt).toContain('Intent-Unit: demo/U2');
-    const sentBefore = (firstItem('r1.ship')?.payload as TextItemPayload | undefined)?.skills;
-    expect(sentBefore?.map((skill) => skill.name)).toContain('wow-pull-request');
-    dispatch({ type: 'thread.retry', threadId: 'r1.ship' });
-    const prompts = startTurns()
-      .filter((turn) => turn.threadId === 'r1.ship')
-      .map((turn) => turn.prompt);
-    expect(prompts).toEqual([prompt, prompt]);
-    const items = server.database.db
-      .select()
-      .from(threadItems)
-      .where(eq(threadItems.threadId, 'r1.ship'))
-      .all()
-      .filter((item) => item.kind === 'user');
-    expect(items.map((item) => (item.payload as TextItemPayload).skills)).toEqual([
-      sentBefore,
-      sentBefore,
-    ]);
-    createThread('chat', 'claude-work');
-    expect(() => dispatch({ type: 'thread.retry', threadId: 'chat' })).toThrow(
-      "Only a workflow step's thread is retried this way",
-    );
-  });
-
-  it('attaches nothing with the setting off, and keeps the sentences wow added before', async () => {
-    dispatch({
-      type: 'setting.set',
-      key: 'workflows.attachBuiltInSkills',
-      scope: 'project:p1',
-      value: false,
-    });
-    const prompt = await startStep(
-      { expectedArtifacts: ['docs/plan.md'], gateAfter: true, gateAfterCondition: ['verdict'] },
-      true,
-    );
-    expect(prompt).not.toContain('<skill');
-    expect(prompt).toContain('This step is expected to produce:\n- docs/plan.md');
-    expect(prompt).toContain('put this line in its body: Intent-Unit: demo/U2');
-  });
-
-  it('leaves out a built-in skill the step leaves out', async () => {
-    const prompt = await startStep({
-      expectedArtifacts: ['docs/plan.md'],
-      gateAfter: true,
-      gateAfterCondition: ['verdict'],
-      leaveOut: ['wow-artifacts'],
-    });
-    expect(prompt).toContain('<skill name="wow-verdict">');
-    expect(prompt).not.toContain('<skill name="wow-artifacts">');
-    expect(prompt).toContain('This step is expected to produce:\n- docs/plan.md');
   });
 });
 
 describe('runs and workflows stored before (spec 13)', () => {
-  it('continues a run stored before wow skills with the prompts it had', async () => {
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Deliver',
-      steps: [
-        step('plan', { gateAfter: true }),
-        step('ship', { expectedArtifacts: ['docs/plan.md'] }),
-      ],
-    });
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-    await runBecomes('r1', (row) => row.state === 'waiting');
-    // As a run from before this change was stored: without the mark.
-    server.database.db
-      .update(workflowRuns)
-      .set({ wowSkills: null })
-      .where(eq(workflowRuns.id, 'r1'))
-      .run();
-    dispatch({ type: 'workflowRun.continue', runId: 'r1' });
-    await runBecomes('r1', (row) => row.state === 'done');
-    expect(promptOf('r1.ship')).toBe(
-      [
-        '/ship',
-        '',
-        'The previous step (plan) ended with:',
-        '',
-        'Done',
-        '',
-        'This step is expected to produce:',
-        '- docs/plan.md',
-      ].join('\n'),
-    );
-    const payload = firstItem('r1.ship')?.payload as TextItemPayload;
-    expect(payload.skills).toBeUndefined();
-    expect(run('r1').wowSkills).toBeNull();
-  });
-
   it('loads a workflow without alsoFollow', () => {
     dispatch({ type: 'workflow.create', workflowId: 'wf', name: 'Old', steps: [step('ship')] });
     const stored = snapshot(server.database.db, { topic: 'workflows' }) as {
@@ -926,23 +621,6 @@ describe('what a message or a step was sent with (spec 14, 15)', () => {
         { name: 'review', source: 'user-claude', invocation: '$review' },
       ],
     });
-  });
-
-  it('fails a step naming a skill that is gone before it starts, with the skill name', async () => {
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Tidy',
-      steps: [step('tidy-up', { alsoFollow: [{ name: 'tidy', source: 'yours' }] })],
-    });
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-    const failed = await runBecomes('r1', (row) => row.state === 'failed');
-    expect(failed.steps[0]).toMatchObject({
-      state: 'failed',
-      error:
-        'The skill tidy no longer exists, so the step cannot start. Pick another skill for it, or make the skill again.',
-    });
-    expect(startTurns()).toEqual([]);
   });
 
   it('sends a message that is only a picked skill, and refuses one with neither text nor skill', async () => {

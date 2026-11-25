@@ -141,19 +141,10 @@ async function fillSource(): Promise<void> {
   set('trackers.jira.authMode', 'pat');
   set('trackers.jira.email', markedEmail);
   set('trackers.github.owner', 'marked-owner-6620');
-  set('hosts.pollSeconds', 600);
+  set('hosts.longestWaitMinutes', 600);
   set('scheduler.tickSeconds', 45);
   set('calendar.workHours', { start: '07:00', end: '15:00', days: ['monday'] });
   set('skills.directories', [path.join(root, markedFolderName)]);
-  set('workflows.templates', [
-    {
-      kind: 'tea',
-      name: 'Tea',
-      steps: [
-        { skillName: 'deliver-work', gateBefore: false, gateAfter: true, expectedArtifacts: [] },
-      ],
-    },
-  ]);
   // A value that is not marked secret but looks like one stays out of the file.
   set('workflows.verdictApprovedLine', `APPROVED ${lookalike}`);
   on(source, {
@@ -200,7 +191,7 @@ afterEach(async () => {
 });
 
 describe('saving a setup (spec 21)', () => {
-  it('holds changed settings, tracker and host settings, workflows and templates, and lists a set secret to fill in', () => {
+  it('holds changed settings, tracker and host settings and workflows, and lists a set secret to fill in', () => {
     const saved = save(source);
     const file = parse(saved.text) as Record<string, unknown>;
     expect(file).toMatchObject({
@@ -210,9 +201,8 @@ describe('saving a setup (spec 21)', () => {
         'trackers.github.baseUrl': 'https://github.example.com/api/v3',
         'trackers.jira.baseUrl': 'https://jira.example.com',
         'trackers.jira.authMode': 'pat',
-        'hosts.pollSeconds': 600,
+        'hosts.longestWaitMinutes': 600,
         'scheduler.tickSeconds': 45,
-        'workflows.templates': [{ kind: 'tea', name: 'Tea' }],
       },
       toFillIn: ['trackers.github.token'],
       workflows: [
@@ -309,7 +299,7 @@ describe('starting from a setup file (spec 22)', () => {
     const { text } = save(source);
     const shown = ready(other, text);
     expect(shown.added).toContainEqual({
-      what: 'Interval (Hosts)',
+      what: 'Longest wait for a request limit (Hosts)',
       from: expect.stringContaining('(default)'),
       to: '600',
     });
@@ -317,12 +307,6 @@ describe('starting from a setup file (spec 22)', () => {
       what: 'Tick interval (Scheduler)',
       from: '20',
       to: '45',
-    });
-    expect(shown.added).toContainEqual({
-      what: 'Templates (Workflows)',
-      from: 'Bug, Feature, Initiative (default)',
-      to: 'Tea',
-      full: expect.stringContaining('skillName: deliver-work') as string,
     });
     expect(shown.replaced).toContainEqual({
       what: 'Workflow "Delivery"',
@@ -341,12 +325,12 @@ describe('starting from a setup file (spec 22)', () => {
 
     const before = {
       tick: stored(other, 'scheduler.tickSeconds'),
-      poll: stored(other, 'hosts.pollSeconds'),
+      poll: stored(other, 'hosts.longestWaitMinutes'),
       workflow: workflowOf(other, 'their-delivery'),
     };
     const id = apply(other, text);
     expect(stored(other, 'scheduler.tickSeconds')).toBe(45);
-    expect(stored(other, 'hosts.pollSeconds')).toBe(600);
+    expect(stored(other, 'hosts.longestWaitMinutes')).toBe(600);
     expect(stored(other, 'trackers.github.baseUrl')).toBe('https://github.example.com/api/v3');
     expect(stored(other, 'trackers.github.token')).toBeUndefined();
     expect(workflowOf(other, 'their-delivery')).toMatchObject({
@@ -365,7 +349,7 @@ describe('starting from a setup file (spec 22)', () => {
 
     on(other, { type: 'setup.undo', applicationId: id });
     expect(stored(other, 'scheduler.tickSeconds')).toBe(before.tick);
-    expect(stored(other, 'hosts.pollSeconds')).toBe(before.poll);
+    expect(stored(other, 'hosts.longestWaitMinutes')).toBe(before.poll);
     expect(stored(other, 'trackers.github.baseUrl')).toBeUndefined();
     expect(workflowOf(other, 'their-delivery')).toEqual({
       ...before.workflow,
@@ -387,9 +371,14 @@ describe('starting from a setup file (spec 22)', () => {
 
   it('refuses Undo once something the file set changed again, and says what', () => {
     const id = apply(other, save(source).text);
-    on(other, { type: 'setting.set', key: 'hosts.pollSeconds', scope: 'global', value: 900 });
+    on(other, {
+      type: 'setting.set',
+      key: 'hosts.longestWaitMinutes',
+      scope: 'global',
+      value: 900,
+    });
     expect(() => on(other, { type: 'setup.undo', applicationId: id })).toThrow(
-      /The setup from team\.yaml cannot be undone\. .*it changed again since \(it is now 900 s\)/,
+      /The setup from team\.yaml cannot be undone\. .*it changed again since \(it is now 900 min\)/,
     );
     // Nothing was taken back.
     expect(stored(other, 'scheduler.tickSeconds')).toBe(45);
@@ -524,9 +513,9 @@ describe('refusing a file (spec 23)', () => {
     ],
     [
       'a setting of the wrong type',
-      'settings:\n  hosts.pollSeconds: soon\n',
+      'settings:\n  hosts.longestWaitMinutes: soon\n',
       5,
-      'Setting hosts.pollSeconds: Invalid input: expected number, received string',
+      'Setting hosts.longestWaitMinutes: Invalid input: expected number, received string',
     ],
     [
       'a workflow step of the wrong type',
@@ -578,9 +567,9 @@ describe('refusing a file (spec 23)', () => {
     ],
     [
       'toFillIn naming a setting that is not secret',
-      'toFillIn:\n  - hosts.polling\n',
+      'toFillIn:\n  - scheduler.paused\n',
       5,
-      'toFillIn names hosts.polling, which is not a secret setting',
+      'toFillIn names scheduler.paused, which is not a secret setting',
     ],
   ])('refuses %s with the line and the reason', (_name, body, line, reason) => {
     expect(problems(other, file(body))).toEqual([{ line, reason }]);
@@ -663,7 +652,7 @@ describe('a step whose provider kind has no instance here', () => {
   const codexBody =
     'workflows:\n  - id: second\n    name: Second opinion\n    steps:\n      - id: a\n        skillName: check-work\n        provider: codex\n        gateBefore: false\n        gateAfter: true\n        expectedArtifacts: []\n';
 
-  it('is saved again with its kind, and a run says which kind it waits for', () => {
+  it('is saved again with its kind', () => {
     apply(other, file(codexBody));
     expect(applications(other)[0]?.marked).toEqual([
       {
@@ -682,12 +671,6 @@ describe('a step whose provider kind has no instance here', () => {
       parse(saved.text) as { workflows: { id: string; steps: unknown[] }[] }
     ).workflows.find((workflow) => workflow.id === 'second');
     expect(entry?.steps[0]).toMatchObject({ id: 'a', skillName: 'check-work', provider: 'codex' });
-    on(other, { type: 'project.create', projectId: 'tea', name: 'Tea', cwd: root });
-    expect(() =>
-      on(other, { type: 'workflowRun.start', runId: 'r1', workflowId: 'second', projectId: 'tea' }),
-    ).toThrow(
-      'Step check-work has no Codex instance here yet: choose one for it in the workflow Second opinion.',
-    );
   });
 
   it('is taken over by the first instance of its kind made here', () => {
@@ -717,12 +700,14 @@ describe('the size of a setup file', () => {
       scope: 'global',
       value: 1024,
     });
-    const long = file(`settings:\n  hosts.pollSeconds: 600\n# ${'x'.repeat(1100)}\n`);
+    const long = file(`settings:\n  hosts.longestWaitMinutes: 600\n# ${'x'.repeat(1100)}\n`);
     const reason =
       'The file is 1.2 KB; a setup file may be at most 1 KB (Settings → Advanced → Largest setup file).';
     expect(problems(other, long)).toEqual([{ line: null, reason }]);
     expect(() => apply(other, long)).toThrow(reason);
-    expect(ready(other, file('settings:\n  hosts.pollSeconds: 600\n')).added).toHaveLength(1);
+    expect(ready(other, file('settings:\n  hosts.longestWaitMinutes: 600\n')).added).toHaveLength(
+      1,
+    );
   });
 });
 

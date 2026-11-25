@@ -341,8 +341,7 @@ export const readers = {
         })),
   }),
   read_triggers: reader({
-    description:
-      'The time triggers of calendar cards with their state.',
+    description: 'The time triggers of calendar cards with their state.',
     input: none,
     read: (_args, deps) => {
       const cards = new Map(

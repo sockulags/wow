@@ -151,7 +151,11 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
         return db.select().from(t.workflows).orderBy(asc(t.workflows.name)).all();
       case 'triggers':
         // By the time they fire.
-        return db.select().from(t.triggers).orderBy(asc(t.triggers.runAt), asc(t.triggers.id)).all();
+        return db
+          .select()
+          .from(t.triggers)
+          .orderBy(asc(t.triggers.runAt), asc(t.triggers.id))
+          .all();
       case 'notifications':
         // Newest first.
         return db.select().from(t.notifications).orderBy(desc(t.notifications.at)).all();

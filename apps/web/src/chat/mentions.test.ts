@@ -25,8 +25,6 @@ const thread = (id: string, title: string, extra: Partial<Thread> = {}): Thread 
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
   ...extra,
@@ -38,7 +36,6 @@ const item: BacklogItem = {
   body: 'The bell is too loud at night.',
   tags: ['bell'],
   state: 'idea',
-  runId: null,
   remote: null,
   createdAt: '2026-11-02T08:00:00.000Z',
 };
@@ -54,11 +51,10 @@ const text = (id: string, payload: Record<string, unknown>): ThreadItem => ({
 });
 
 describe('mentions of threads and backlog items (spec 36)', () => {
-  it('offers other chat threads newest first, never itself or a step', () => {
+  it('offers other chat threads newest first, never itself', () => {
     const threads = [
       thread('t1', 'Ring the bell'),
       thread('t2', 'Bell volume', { updatedAt: '2026-11-03T08:00:00.000Z' }),
-      thread('t3', 'Bell step', { runId: 'r1' }),
     ];
     expect(threadMatches(threads, 'bell', 't1', 5).map((found) => found.id)).toEqual(['t2']);
     expect(backlogMatches([item, { ...item, id: 'b2', state: 'done' }], 'bell', 5)).toEqual([item]);

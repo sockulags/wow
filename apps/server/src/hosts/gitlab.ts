@@ -1,4 +1,3 @@
-import { intentUnitLines } from '@wow/agent-os';
 import type { HostCheck, Issue, ReviewComment } from '@wow/contracts';
 import {
   gitLabApi,
@@ -34,14 +33,10 @@ import { checkStateOf } from './github.js';
 
 export interface GitLabHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest merge requests are read when the search is turned down.
-  readonly listFallbackCount: number;
 }
 
 // GitLab's largest page.
 const pageSize = 100;
-// A search the host turns down (an older version, or a parameter it does not know): the newest
-// merge requests are read instead. 404 is not here: it means the project is not visible.
-const noSearch = new Set([400, 405, 422, 501]);
 // CI is off for the project or the token may not see it: no checks from it.
 const noPipelines = new Set([403, 404, 410, 501]);
 
@@ -70,7 +65,6 @@ function found(item: unknown): FoundChangeRequest | undefined {
     // `work_in_progress` is what versions before 14 call a draft.
     draft: field(item, 'draft') === true || field(item, 'work_in_progress') === true,
     mergedAt: hostTime(field(item, 'merged_at')),
-    units: intentUnitLines(text(field(item, 'description'))),
     links: webLinksIn(text(field(item, 'description'))),
     ...(typeof branch === 'string' && typeof sha === 'string' && sha !== ''
       ? { head: { branch, sha, fromFork } }
@@ -286,22 +280,6 @@ export function createGitLabHost(
       if (!short) return waitUntil;
       return waitUntil && waitUntil > short ? waitUntil : short;
     },
-    async findForIntent(intentId) {
-      // Only `<intent-id>/` is searched for: a line in bold, underscores or quote marks does not
-      // hold the phrase `Intent-Unit: <intent-id>/`, and the lines are read below.
-      const search = encodeURIComponent(`${intentId}/`);
-      const all = await getOr(
-        `${project}/merge_requests?state=all&search=${search}&in=description&order_by=created_at&sort=desc&per_page=${pageSize}`,
-        noSearch,
-        () =>
-          mergeRequests(
-            `state=all&order_by=created_at&sort=desc&per_page=${Math.min(options.listFallbackCount, pageSize)}`,
-          ),
-        (body) => list(body).flatMap((item) => found(item) ?? []),
-      );
-      // The search matches the id anywhere; only a description with the line itself counts.
-      return all.filter((request) => request.units.some((unit) => unit.intentId === intentId));
-    },
     async findForBranch(branch) {
       const [newest] = await mergeRequests(
         `state=all&source_branch=${encodeURIComponent(branch)}&order_by=created_at&sort=desc&per_page=1`,
@@ -414,7 +392,6 @@ export function createGitLabHost(
         headBranch: current.head.branch,
         headSha: current.head.sha,
         fromFork: current.head.fromFork,
-        units: [...request.units],
         links: [...(current.links ?? request.links ?? [])],
         checkState: checkStateOf(all),
         checks: all,

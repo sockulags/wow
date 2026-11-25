@@ -13,10 +13,7 @@ import {
   secretPatterns,
   settingGroupTitles,
   SettingGroup,
-  ChangeRequest,
-  changeRequestName,
   Command,
-  InternalCommand,
   WorkingCopy,
   workingCopyOnDisk,
   subscriptionTopics,
@@ -32,8 +29,6 @@ import {
   ruleConditionText,
   ruleProblems,
   WorkflowStep,
-  alwaysStopSkillDefaults,
-  alwaysStops,
   settingsRegistry,
   type SettingDefinition,
 } from './index.js';
@@ -240,7 +235,6 @@ describe('working copies', () => {
     expect(workingCopyOnDisk(WorkingCopy.parse({ ...copy, state: 'kept' }))).toBe(true);
     expect(workingCopyOnDisk(WorkingCopy.parse({ ...copy, state: 'removed' }))).toBe(false);
   });
-
 });
 
 const reviewStep = {
@@ -310,7 +304,6 @@ describe('rules on a step (workflow branches spec 1 to 18)', () => {
     expect(ruleConditionText({ fact: 'checks', is: 'successful' })).toBe('checks successful');
     expect(ruleConditionText({ fact: 'stepFailed' })).toBe('step failed');
   });
-
 });
 
 describe('app assistant', () => {
@@ -498,4 +491,3 @@ describe('app assistant', () => {
     ).toEqual(['https://a.example.invalid', 'ada@example.invalid']);
   });
 });
-

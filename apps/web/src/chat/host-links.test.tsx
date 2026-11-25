@@ -228,7 +228,6 @@ const prRead: HostItemRead = {
       mergedAt: null,
       headBranch: 'agent/water',
       headSha: 'b2b2b2',
-      units: [],
       checkState: 'failure',
       checks: [
         { name: 'test', state: 'failure', url: null },

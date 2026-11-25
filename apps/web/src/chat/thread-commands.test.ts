@@ -32,8 +32,6 @@ const thread = (id: string, overrides: Partial<Thread> = {}): Thread => ({
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
   ...overrides,

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Database } from '../db/database.js';
-import { events as eventLog, threads as threadsTable } from '../db/schema.js';
+import { events as eventLog } from '../db/schema.js';
 import { Engine } from './engine.js';
 import { snapshot } from './subscriptions.js';
 import { searchThreads } from './thread-search.js';
@@ -116,7 +116,6 @@ describe('chat notifications (spec 64, 65)', () => {
         title: 'Needs you: Kettle timer',
         body: 'Allow pnpm test?',
         path: '/chat/t1',
-        runId: null,
         calendarItemId: null,
         threadId: 't1',
         approvalId: 't1:tool-1',
@@ -194,37 +193,11 @@ describe('the thread list (spec 67 to 70)', () => {
     );
   });
 
-  it('archives and unarchives a chat thread, and refuses a workflow step thread', () => {
+  it('archives and unarchives a chat thread', () => {
     dispatch({ type: 'thread.setArchived', threadId: 't1', archived: true });
     expect(thread()?.archived).toBe(true);
     dispatch({ type: 'thread.setArchived', threadId: 't1', archived: false });
     expect(thread()?.archived).toBe(false);
-
-    database.db
-      .insert(threadsTable)
-      .values({
-        id: 'step-thread',
-        projectId: null,
-        cwd: '/work/kettle',
-        branch: null,
-        providerInstanceId: 'claude-work',
-        providerSessionId: null,
-        title: 'Feature: deliver-work',
-        model: 'sonnet',
-        effort: 'high',
-        permissionMode: 'default',
-        state: 'idle',
-        pinned: false,
-        runId: 'run-1',
-        stepId: 's1',
-        createdAt: new Date(start).toISOString(),
-        updatedAt: new Date(start).toISOString(),
-      })
-      .run();
-    expect(() =>
-      dispatch({ type: 'thread.setArchived', threadId: 'step-thread', archived: true }),
-    ).toThrow("A workflow step's thread belongs to its run, so it is not archived on its own.");
-    expect(thread('step-thread')?.archived).toBe(false);
   });
 
   it('brings an archived thread back when a turn starts or a request arrives, once', () => {

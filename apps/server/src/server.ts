@@ -38,7 +38,7 @@ import { HostLookup } from './hosts/lookup.js';
 import { createLogger, type LogSink, type Logger } from './logger.js';
 import type { OutlookService } from './outlook/service.js';
 import { discoverProjects } from './projects/discover.js';
-import { readCurrentBranch, readHeadCommit } from './projects/git.js';
+import { readHeadCommit } from './projects/git.js';
 import { defaultConfigDir, detectProviders } from './providers/detect.js';
 import { ProviderService } from './providers/service.js';
 import { FolderSnapshots } from './files/snapshots.js';

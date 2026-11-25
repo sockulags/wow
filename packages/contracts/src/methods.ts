@@ -27,7 +27,7 @@ import {
   PullRequestPlan,
   PullRequestPlanParams,
 } from './thread-git.js';
-import { RunDiff, ThreadDiff, ThreadDiffParams } from './diff.js';
+import { ThreadDiff, ThreadDiffParams } from './diff.js';
 import {
   FileListParams,
   FileListResult,
@@ -40,7 +40,6 @@ import {
   FileReadResult,
 } from './files.js';
 import { HostItemRead, HostLookupParams, HostLookupResult } from './host-links.js';
-import { ChangeRequest } from './hosts.js';
 import {
   Approval,
   BacklogItem,

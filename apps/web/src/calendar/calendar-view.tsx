@@ -194,7 +194,6 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   const { rows: items = [], status: itemsStatus } = useTopicState('calendarItems');
   const status = useTopic('outlookStatus')?.[0];
   const triggers = useTopic('triggers');
-  const runs = useTopic('workflowRuns');
   const paused = useSetting('scheduler.paused');
   const maxOccurrences = useSetting('calendar.maxOccurrences');
   const deleteKey = useSetting('keybindings.calendarDeleteCard');
@@ -215,12 +214,9 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
     [cards, moving],
   );
   // Repeating cards are drawn from the server's occurrences in the shown range (spec 15).
-  const rangeRead = useCalendarRange(viewRange(days, zone), [items, triggers, runs]);
+  const rangeRead = useCalendarRange(viewRange(days, zone), [items, triggers]);
   const shownRange = rangeRead.range;
-  const blocks = useMemo(
-    () => calendarBlocks(items, shownRange, runs ?? []),
-    [items, shownRange, runs],
-  );
+  const blocks = useMemo(() => calendarBlocks(items, shownRange), [items, shownRange]);
   const occurrences = blocks.shown;
   const hidden = notShown(cards, shownRange);
   const runNowIds = useMemo(() => {
@@ -265,7 +261,7 @@ function ConnectedCalendar({ search }: { search: CalendarSearch }) {
   };
   const runNow = (itemId: string) => {
     const cardId = cardIdOf(itemId);
-    dispatch({ type: 'card.runNow', cardId, runId: globalThis.crypto.randomUUID() }).catch(
+    dispatch({ type: 'card.runNow', cardId, threadId: globalThis.crypto.randomUUID() }).catch(
       (error: unknown) =>
         notify.error('The workflow could not start', { description: errorMessage(error) }),
     );

@@ -27,7 +27,7 @@ const colleague = [
   'version: 1',
   'wow: 0.1.2',
   'settings:',
-  '  hosts.pollSeconds: 900',
+  '  hosts.longestWaitMinutes: 900',
   '  diff.maxFiles: 500',
   '  trackers.jira.projectKey: TEA',
   'toFillIn:',
@@ -79,7 +79,7 @@ test.describe('setup file', () => {
     const dialog = page.getByRole('dialog', { name: 'Start from colleague.yaml' });
     const added = dialog.getByRole('region', { name: 'Added' });
     await expect(added.getByTestId('setup-line')).toHaveText([
-      'Interval (Hosts): 60 (default) → 900',
+      'Longest wait for a request limit (Hosts): 60 (default) → 900',
       'Most files listed (Changes): 2000 (default) → 500',
       'Workflow "Kettle check": new: 1 step: kettle-check',
     ]);
@@ -97,7 +97,9 @@ test.describe('setup file', () => {
     const row = section.getByTestId('setup-application').first();
     await expect(row).toContainText('colleague.yaml · 3 added, 1 replaced');
     await page.goto('/settings/hosts');
-    await expect(page.getByLabel('Interval', { exact: true })).toHaveValue('900');
+    await expect(page.getByLabel('Longest wait for a request limit', { exact: true })).toHaveValue(
+      '900',
+    );
 
     // One Undo takes the whole file back.
     await page.goto('/settings/advanced');
@@ -115,14 +117,18 @@ test.describe('setup file', () => {
     await upload(
       page,
       'wrong.yaml',
-      ['version: 1', 'settings:', '  scheduler.speed: 3', '  hosts.pollSeconds: soon', ''].join(
-        '\n',
-      ),
+      [
+        'version: 1',
+        'settings:',
+        '  scheduler.speed: 3',
+        '  hosts.longestWaitMinutes: soon',
+        '',
+      ].join('\n'),
     );
     const dialog = page.getByRole('dialog', { name: 'Start from wrong.yaml' });
     await expect(dialog.getByTestId('setup-problem')).toHaveText([
       'Line 3: Unknown setting scheduler.speed',
-      'Line 4: Setting hosts.pollSeconds: Invalid input: expected number, received string',
+      'Line 4: Setting hosts.longestWaitMinutes: Invalid input: expected number, received string',
     ]);
     await expect(dialog.getByRole('button', { name: 'Apply' })).toHaveCount(0);
     await page.keyboard.press('Escape');

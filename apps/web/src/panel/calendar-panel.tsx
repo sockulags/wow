@@ -1,8 +1,7 @@
 import {
-  isCardTrigger,
   repeatRuleWords,
   type CalendarItem,
-  type CardTrigger,
+  type Trigger,
   type TriggerState,
 } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
@@ -31,7 +30,7 @@ const stateDot: Readonly<Record<string, string>> = {
   missed: 'bg-state-failed',
 };
 
-function triggerText(trigger: CardTrigger, zone: string): string {
+function triggerText(trigger: Trigger, zone: string): string {
   const when = formatWhen(trigger.runAt, zone);
   const text: Readonly<Record<TriggerState, string>> = {
     scheduled: `Scheduled, ${when}`,
@@ -61,15 +60,16 @@ function CardPanel({ card }: { readonly card: CalendarItem }) {
   // A card names its workflow file; one made before workflows were files names a stored one.
   const workflowName =
     card.workflowName ?? workflows.find((candidate) => candidate.id === card.workflowId)?.name;
-  const trigger = triggers
-    .filter(isCardTrigger)
-    .find((candidate) => candidate.calendarItemId === card.id);
+  const trigger = triggers.find((candidate) => candidate.calendarItemId === card.id);
   const item = backlog.find((candidate) => candidate.id === card.backlogItemId);
   const offersRunNow = runNowCardIds([card], triggers).has(card.id);
   const runNow = () =>
-    dispatch({ type: 'card.runNow', cardId: card.id, runId: globalThis.crypto.randomUUID() }).catch(
-      (error: unknown) =>
-        notify.error('The workflow could not start', { description: errorMessage(error) }),
+    dispatch({
+      type: 'card.runNow',
+      cardId: card.id,
+      threadId: globalThis.crypto.randomUUID(),
+    }).catch((error: unknown) =>
+      notify.error('The workflow could not start', { description: errorMessage(error) }),
     );
 
   return (

@@ -23,7 +23,7 @@ export interface TrayState {
   readonly schedulerPaused: boolean;
   // The downloaded release waiting for "Restart to update", if any.
   readonly updateReady: string | undefined;
-  // Threads that wait for an answer plus runs waiting at a gate (audit E-15).
+  // Threads that wait for an answer (audit E-15).
   readonly needsYou?: number | undefined;
   // The first rows of the decision queue, in its order (chief of staff spec 16); when the queue is
   // known, "N need you" and these open the Assistant, where the queue is.
@@ -94,7 +94,6 @@ export const trayTooltip = (state: TrayState): string =>
 // The tray's summary of the day from the server's rows: how many need you, and the next trigger.
 export function traySummary(
   threads: readonly { readonly state: string }[],
-  runs: readonly { readonly state: string }[],
   triggers: readonly {
     readonly state: string;
     readonly runAt: string;
@@ -106,9 +105,7 @@ export function traySummary(
   decisions?: readonly { readonly title: string }[],
 ): Pick<TrayState, 'needsYou' | 'next' | 'queue'> {
   const needsYou =
-    decisions?.length ??
-    threads.filter((thread) => thread.state === 'needs_you').length +
-      runs.filter((run) => run.state === 'waiting').length;
+    decisions?.length ?? threads.filter((thread) => thread.state === 'needs_you').length;
   const upcoming = triggers
     .filter((trigger) => trigger.state === 'scheduled' && Date.parse(trigger.runAt) > now.getTime())
     .toSorted((a, b) => Date.parse(a.runAt) - Date.parse(b.runAt))[0];

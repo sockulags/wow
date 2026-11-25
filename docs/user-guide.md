@@ -5,9 +5,8 @@ with Claude Code and Codex, workflows that chain skills with stops for your answ
 of ideas. Everything runs on your machine. Nothing is sent to Outlook, Jira or GitHub unless you
 press a button that says so.
 
-This guide covers the first run, providers, the calendar, chat, workflows (with review at a gate,
-working copies, event triggers and gates that pass by themselves), plans, the backlog, the
-assistant, settings and troubleshooting. Technical details are in `docs/architecture.md`.
+This guide covers the first run, providers, the calendar, chat, workflows, working copies, the
+backlog, the assistant, settings and troubleshooting. Technical details are in `docs/architecture.md`.
 
 ## First run
 
@@ -61,9 +60,9 @@ hours, then your project folders, which a file never holds.
 The older three-step guide (providers, projects, done) is still in the palette as "Detect
 installed providers".
 
-A project is a name and a folder; threads, cards and workflow runs work in that folder. Add your
-projects in Settings → Projects (see "Projects" below). A thread can also use any folder you type
-instead of a project; cards with a trigger and workflow runs need a project.
+A project is a name and a folder; threads and the threads cards start work in that folder. Add
+your projects in Settings → Projects (see "Projects" below). A thread can also use any folder you
+type instead of a project.
 
 ### Finding your way
 
@@ -80,50 +79,46 @@ workflows, settings pages and actions together; arrow keys and Enter pick.
 
 Default keys (all changeable in Settings → Keybindings):
 
-| Key              | Does                                                         |
-| ---------------- | ------------------------------------------------------------ |
-| Ctrl+K           | Command palette                                              |
-| Ctrl+1, 2, 3, 5  | Calendar, Chat, Settings › Workflows, Backlog                |
-| Ctrl+,           | Settings                                                     |
-| Ctrl+B           | Show or hide the thread list                                 |
-| Ctrl+J           | Show or hide the context panel                               |
-| F6               | Move the focus into the panel and back                       |
-| Ctrl+Shift+L     | Dark or light theme                                          |
-| Ctrl+Alt+N       | New thread                                                   |
-| Ctrl+.           | Stop the running turn                                        |
-| Ctrl+B           | Chat: send the running command or subagent to the background |
-| Ctrl+Shift+J     | Next that needs you                                          |
-| Ctrl+O           | Chat: open or close all reasoning                            |
-| Ctrl+F           | Chat: find in the conversation                               |
-| F3 / Shift+F3    | Chat: next match, previous match                             |
-| Alt+Up / Down    | Chat: previous message, next message                         |
-| C                | Chat: copy the message that has the keyboard                 |
-| E                | Chat: edit your last message, when it has the keyboard       |
-| F                | Chat: fork from the message that has the keyboard            |
-| Up               | Chat, in an empty message box: edit your last message        |
-| End              | Chat: back to the newest output                              |
-| Shift+End        | Chat: go to "New since you looked"                           |
-| B                | Chat: mark or unmark the message that has the keyboard       |
-| Alt+PageUp / Dn  | Chat: previous marked message, next marked message           |
-| Ctrl+Shift+U     | Chat: show the outline                                       |
-| T, N, P          | Calendar: today, next, previous                              |
-| D, W             | Calendar: day view, week view                                |
-| C                | Calendar: new card on the day you are on                     |
-| Ctrl+= / -       | Calendar: zoom in, zoom out                                  |
-| Ctrl+0           | Calendar: reset zoom                                         |
-| Ctrl+Enter       | Run at a gate: Approve                                       |
-| Ctrl+Shift+Enter | Run at a gate: Send back                                     |
-| Ctrl+Shift+D     | Run: Steps or Changes tab                                    |
-| Ctrl+Shift+K     | Chat: commit the thread's changes                            |
-| Ctrl+Shift+Y     | Run: Steps or Path tab                                       |
-| O                | Changes tab: this step only, and back                        |
-| C                | Diff line: comment on it                                     |
-| Shift+Enter      | Focused file or line: open in editor                         |
+| Key             | Does                                                         |
+| --------------- | ------------------------------------------------------------ |
+| Ctrl+K          | Command palette                                              |
+| Ctrl+1, 2, 3, 5 | Calendar, Chat, Settings › Workflows, Backlog                |
+| Ctrl+,          | Settings                                                     |
+| Ctrl+B          | Show or hide the thread list                                 |
+| Ctrl+J          | Show or hide the context panel                               |
+| F6              | Move the focus into the panel and back                       |
+| Ctrl+Shift+L    | Dark or light theme                                          |
+| Ctrl+Alt+N      | New thread                                                   |
+| Ctrl+.          | Stop the running turn                                        |
+| Ctrl+B          | Chat: send the running command or subagent to the background |
+| Ctrl+Shift+J    | Next that needs you                                          |
+| Ctrl+O          | Chat: open or close all reasoning                            |
+| Ctrl+F          | Chat: find in the conversation                               |
+| F3 / Shift+F3   | Chat: next match, previous match                             |
+| Alt+Up / Down   | Chat: previous message, next message                         |
+| C               | Chat: copy the message that has the keyboard                 |
+| E               | Chat: edit your last message, when it has the keyboard       |
+| F               | Chat: fork from the message that has the keyboard            |
+| Up              | Chat, in an empty message box: edit your last message        |
+| End             | Chat: back to the newest output                              |
+| Shift+End       | Chat: go to "New since you looked"                           |
+| B               | Chat: mark or unmark the message that has the keyboard       |
+| Alt+PageUp / Dn | Chat: previous marked message, next marked message           |
+| Ctrl+Shift+U    | Chat: show the outline                                       |
+| T, N, P         | Calendar: today, next, previous                              |
+| D, W            | Calendar: day view, week view                                |
+| C               | Calendar: new card on the day you are on                     |
+| Ctrl+= / -      | Calendar: zoom in, zoom out                                  |
+| Ctrl+0          | Calendar: reset zoom                                         |
+| Ctrl+Shift+K    | Chat: commit the thread's changes                            |
+| O               | Changes: this turn only, and back                            |
+| C               | Diff line: comment on it                                     |
+| Shift+Enter     | Focused file or line: open in editor                         |
 
 Ctrl+B sends to the background only while the open thread runs a command or subagent its provider
 can move there (Claude Code), so the turn goes on; otherwise, on Windows and Linux, it shows or
 hides the sidebar as usual.
-Ctrl+Shift+J goes to the oldest approval, question, plan, gate or assistant proposal that waits for
+Ctrl+Shift+J goes to the oldest approval, question, plan or assistant proposal that waits for
 you, wherever it is; pressed again, to the next one. C copies the message that has the keyboard, as
 markdown for an answer and as written for your own; it and the other single-letter chat keys only
 work while a message has the keyboard.
@@ -141,19 +136,15 @@ and it stays that way after a restart (`appearance.contextPanel`). What it shows
 view:
 
 - **Calendar**: click a card for its time, project, workflow, trigger, backlog item and notes,
-  with **Edit card**. When the card has a run, the thread of the step the run is on follows live
-  below it: the conversation, **Approve**, **Send back** and **Stop** when the run waits for you, and the
-  composer to answer the step. Click a meeting for its time, place, organizer, **Join** and **Open
+  with **Edit card**, and a link to the thread the card started. Click a meeting for its time, place, organizer, **Join** and **Open
   in Outlook**. While the panel is open a click selects instead of opening the card form or the
   meeting's popover, and the arrow keys in the grid move the selection with the focus; Enter on
   a selected card, or **Edit card**, opens the form. The selection is in the address
   (`?item=…`), so a reload shows the same card.
-- **Workflows**: a run shows its active step's thread; a workflow shows its steps, where it waits
-  for you and its runs.
-- **Backlog**: an item shows its state, tags, where it is planned on the calendar, its runs and
-  the issue it was published to.
+- **Backlog**: an item shows its state, tags, where it is planned on the calendar and the issue
+  it was published to.
 - **Chat**: the thread's provider, model, effort, permissions, project and folder, its token use
-  and cost, and the run, card and backlog item it belongs to.
+  and cost, and the card and backlog item it belongs to.
 
 With nothing selected the panel says what would appear there. Drag its left edge to make it wider
 or narrower, or focus the edge and use the arrow keys (Shift for bigger steps, Home and End for
@@ -179,7 +170,7 @@ When the download is done you get a notification, a bar above every view (with *
 which opens the release notes, and **Later**, which hides the bar until the next version), a
 "Restart to update" entry in the tray menu and in the palette. Restarting stops the server cleanly, installs the new
 version without questions and starts it again; your data in `~/.wow` stays as it is. If a turn is
-running or a workflow run is working, wow tells you first: restarting ends those turns as failed,
+running, wow tells you first: restarting ends those turns as failed,
 so choose "Later" to let them finish. Nothing installs until you choose to restart.
 
 "Check for updates" in the palette checks now; Settings → Updates shows the current version, the
@@ -372,8 +363,8 @@ one card; wow works out its occurrences.
   monthly card on the 31st has no occurrence in a month without one. "Does not repeat" makes it a
   single card again.
 - **In the calendar** every occurrence in the days shown is drawn with a repeat mark. One that
-  has passed shows how it went (Done, Failed, Missed, or Skipped when the card's earlier run was
-  still going) and opens its run; one still to come opens the card. When one card has more
+  has passed shows how it went (Done, Failed, Missed, or Skipped when the card's thread was
+  still working) and opens its thread; one still to come opens the card. When one card has more
   occurrences in the days shown than `calendar.maxOccurrences`, the first ones are drawn and a
   line above the grid says so. When the occurrences cannot be read from the server, a banner says
   so and **Try again** reads them once more.
@@ -383,17 +374,17 @@ one card; wow works out its occurrences.
   and one that has passed does not move.
 - **Edit**: changing the title, time, workflow, project or rule changes every occurrence that has
   not started. Occurrences that have passed stay where they were, and those that ran keep their
-  runs.
+  threads.
 - **Delete**: **Delete…** in the form, or the **Delete** key (`keybindings.calendarDeleteCard`)
   on a card in the grid, asks **This occurrence** or **The whole series**. This occurrence skips
-  that day only; the whole series deletes the card, and asks first whether to stop a run that is
-  going. **Undo** brings back either, a series with its rule and skipped days.
+  that day only; the whole series deletes the card and leaves its threads. **Undo** brings back either, a series with its rule and skipped days.
 - **Palette**: "Skip next occurrence: <title>" skips the day the card fires next, and "Delete
   series: <title>" opens the same choice. A single card has "Delete card: <title>", which asks
   before it deletes.
 
-A repeating trigger starts one run per occurrence, named with its day. If the run of an earlier
-occurrence is still going, the occurrence starts nothing and a notification says it was skipped.
+A repeating card starts a thread per occurrence, named with its day, or sends the next message
+to its one thread. If that thread is still working, the occurrence starts nothing and a
+notification says it was skipped.
 A card whose remaining occurrences were all skipped by hand never fires again and shows Done.
 After wow was closed or paused over several occurrences, only the latest follows
 `scheduler.missedPolicy`; the older ones are recorded as missed.
@@ -635,7 +626,7 @@ files, ran 1 command · 1 failed". Click the changed files to open Changes narro
 **This turn only** for the last turn, **Turn 2 only** for an earlier one (the files that turn
 changed and that still differ). wow measures a turn's changes from the snapshots it keeps of the
 folder; without them (a folder outside Git, snapshots off for the project) the line leaves the
-changes out. A workflow step's thread shows what ran only; its changes are the run's. With `chat.contextMeter` on, the composer shows
+changes out. With `chat.contextMeter` on, the composer shows
 how much of the context window the thread uses, with a Compact action for Claude.
 
 ### When the agent needs you
@@ -840,8 +831,8 @@ filter opens the first.
 
 **Rename, archive, unread**: **F2** or "Rename thread" edits the title in the header; the list
 and the palette follow. A title can have up to `chat.threadTitleMaxLength` (200) characters. "Archive thread" hides a thread from the list; the filter and the palette
-still find it once you type, marked "Archived", and "Unarchive thread" brings it back. A workflow
-step's thread belongs to its run and is not archived on its own. An archived thread comes back to
+still find it once you type, marked "Archived", and "Unarchive thread" brings it back. An
+archived thread comes back to
 the list by itself when a turn starts in it (you send a message, or the agent goes on after
 background work) or when it asks for an approval or a question. A thread whose turn ended or that
 needs you while you were not looking at it is bold with a dot until you open it; "Mark unread"
@@ -858,8 +849,7 @@ for the thread on screen in a focused window, or for a turn you stopped yourself
 **Mark thread done** in the thread header (or in the palette) moves a thread you have finished
 with to **Done**. It is available while the agent neither works nor waits for you. **Reopen
 thread** puts it back under Idle (a thread whose last turn failed keeps its marker), and sending a
-new message to a done thread reopens it as well. A workflow step's thread moves to Done by itself
-when its step completes; with a gate after the step, that happens once you press Approve.
+new message to a done thread reopens it as well.
 
 Change model, effort or permission mode in the composer bar; the next turn uses them. **Ctrl+.**
 or the stop button interrupts a running turn and keeps what it produced; the turn ends with
@@ -966,11 +956,10 @@ no agent is asked to give it.
   end of what you typed (before that, it moves the cursor there). **Alt+Up** and **Alt+Down** move from message to message, and
   **C** copies the message that has the keyboard. All these keys are settings under Keybindings,
   for example if Alt+Up clashes with your screen reader.
-- **Next that needs you**: **Ctrl+Shift+J** goes to the oldest approval, question, plan, gate or
+- **Next that needs you**: **Ctrl+Shift+J** goes to the oldest approval, question, plan or
   assistant proposal that waits for you, wherever it is, and puts the keyboard on it; press it
   again for the next one. Oldest means the one that has waited longest: renaming a thread or
-  changing its model does not move it. A gate that waits for the pull request's checks is not
-  waiting for you and is skipped.
+  changing its model does not move it.
 - **Edit your last message**: press **Up** in an empty message box, **E** on your last message, or
   its **Edit** button. The message comes back into the box; send it and it replaces that message
   and its answer, and the agent goes on as if the old one had never been sent. The old exchange
@@ -1052,11 +1041,10 @@ no agent is asked to give it.
 ### The palette
 
 **Ctrl+K** opens the palette. Before you type it lists what needs you (threads waiting for an
-answer, runs at a gate), your most recent threads, runs and backlog items
-(`appearance.paletteRecent` sets how many), and the open view's actions. Typing searches
-everything: threads, cards, workflows, runs, backlog items, settings pages and actions, with
-matches in the title ranked first. The right side of each row says what it is ("Run · Waiting for
-you · 14:39").
+answer), your most recent threads and backlog items (`appearance.paletteRecent` sets how many),
+and the open view's actions. Typing searches everything: threads, cards, workflows, backlog items,
+settings pages and actions, with matches in the title ranked first. The right side of each row
+says what it is.
 
 ## Files and host items
 
@@ -1140,17 +1128,17 @@ The list shows open items (not done, not dropped) by default; the state filter s
 
 Edit the title in the heading, the body with **Write** and **Preview**, and tags as chips (Enter or
 a comma adds one; tags other items use are suggested). **Ctrl+S** saves. You set an item to Idea or
-Dropped yourself; Planned, Running and Done follow its card and run and show read-only with the
+Dropped yourself; Planned, Running and Done follow its card and its thread and show read-only with the
 reason. **Delete** removes the item at once and offers **Undo** (a card that pointed at it keeps
 its time and workflow but loses the link).
 
 - **Plan on calendar** suggests the next free slot in your work hours, around Outlook meetings and
   other cards, with Start and End like the card dialog, and the workflow you planned with last. It
   warns when the time overlaps something. It creates a card for the item and makes the item
-  "planned". The item follows the run: "running" while it runs, "done" when it finishes, back to
-  "planned" with the failure shown if it fails or is stopped.
+  "planned". The item follows the thread its card starts: "running" while it works or waits for
+  you, "done" when it is done, and back to "planned" otherwise.
 - **Publish to Jira** and **Publish to GitHub** use the trackers of the item's project: the
-  project of its card (from Plan on calendar) or of its run. An item without one asks which
+  project of its card (from Plan on calendar). An item without one asks which
   project the issue is for; **No project** uses the defaults in Settings → Trackers. The dialog
   then shows the issue first: where it goes ("Publishes to acme/widgets on github.com for
   Widgets", with where the repository came from, such as "From git remote"), an editable
@@ -1202,7 +1190,7 @@ project picker (new thread, card dialog, Run now, Plan on calendar) offers the n
 
 Each row also says what wow found in the folder: the git remote and branch (`origin ·
 github.com/acme/widgets · main`), **No git repository**, **No git remote**, or **Folder
-missing** when the folder is gone (threads and runs cannot work there until it is back).
+missing** when the folder is gone (threads cannot work there until it is back).
 **Trackers** opens the project's Jira and GitHub settings (see Backlog).
 
 **Import from Claude and Codex** (also in the palette) looks through the session history of every
@@ -1216,11 +1204,10 @@ Uncheck what you do not want (the box above the list checks or clears all) and p
 for it, a model, effort and permission mode that a new thread in the project starts with. "As the
 last thread" clears them.
 
-**Rename** changes only the name; threads, cards and runs follow it. **Remove** asks first and
+**Rename** changes only the name; threads and cards follow it. **Remove** asks first and
 leaves the folder and its files alone. Threads that used the project keep working in its folder
 without a project. Cards lose the project, so their triggers will not fire until you pick another
-one. Finished workflow runs keep their history. A project with a workflow run in progress cannot be
-removed: stop the run or let it finish first. The palette has "Rename project …" and "Remove
+one. The palette has "Rename project …" and "Remove
 project …" for every project.
 
 To rename, move or delete a project's folder on disk, Remove is not needed first, but on Windows a
@@ -1303,11 +1290,10 @@ was changed again since. Several changes in one answer get a row each.
 
 A change that lets wow do more on its own shows as a proposal card with exactly what would change,
 **Yes** and **No** (with an optional reason that goes back to the assistant), and nothing changes
-until you press Yes: a step's permission mode, a gate condition, a step's rules, an event
-trigger, "for units" or "own working copy" on a workflow, resuming the scheduler, the missed
-policy `run`, `hosts.polling` on, `viewer.htmlScripts` on, writing, changing or removing one of your own skills (the
-card shows the text, or what changes), and
-starting a run ("Start <workflow> in <project>"). A card with a workflow that starts sooner than
+until you press Yes: a step's permission mode, a gate condition, a step's rules, "for units" or
+"own working copy" on a stored workflow, resuming the scheduler, the missed policy `run`,
+`viewer.htmlScripts` on, writing, changing or removing one of your own skills (the card shows the
+text, or what changes), and starting a card's thread now. A card with a workflow that starts sooner than
 `assistant.startSoonMinutes` (15) from now is a proposal too. A value longer than `assistant.valueLength` (160) characters is cut
 short on its line; "show all of it" under the line opens the whole of it. The palette has Yes and No for every
 waiting proposal and Undo for every change.
@@ -1433,8 +1419,8 @@ Useful ones to know:
 - `calendar.zone`, `calendar.firstDayOfWeek`, `calendar.workHours`, `calendar.lookaheadDays`
 - `outlook.pollSeconds`, `outlook.requestTimeoutMs`
 - `scheduler.missedPolicy`, `scheduler.notifications`, `scheduler.paused`
-- `workflows.templates`, `workflows.handoverTemplate`, `workflows.sendBackTemplate`
-- `plans.intentsDirectory`, `hosts.polling`, `hosts.pollSeconds`
+- `workflows.followTemplate`, `workflows.newTemplate`
+- `hosts.longestWaitMinutes`, `hosts.pageMaxBytes`
 - `viewer.maxFileBytes`, `viewer.htmlScripts`, `diff.maxFileBytes`, `diff.maxHashBytes`, `workspaces.root`
 - `appearance.theme` (dark by default), `appearance.density`
 - `desktop.closeToTray`, `desktop.autostart`, `desktop.startMinimized`
@@ -1446,7 +1432,7 @@ Everything is in `~/.wow` (`%USERPROFILE%\.wow` on Windows), or in the folder `W
 
 | File           | What                                                                  |
 | -------------- | --------------------------------------------------------------------- |
-| `wow.sqlite`   | All data: threads, cards, workflows, runs, backlog, settings, history |
+| `wow.sqlite`   | All data: threads, cards, workflows, backlog, settings, history       |
 | `secrets.json` | Encrypted tokens and secret environment values                        |
 | `server.json`  | Port and token of the running server; removed on a clean stop         |
 | `desktop.log`  | The desktop app's log and the server's output                         |

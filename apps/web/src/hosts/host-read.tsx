@@ -1,18 +1,21 @@
-import type { ChangeRequest, HostRead, HostRefreshParams } from '@wow/contracts';
+import type { ChangeRequest } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { ExternalLinkIcon, RefreshCwIcon } from 'lucide-react';
-import { useState } from 'react';
-import { useRuntime } from '@/app/runtime';
-import { errorMessage } from '@/chat/data';
 import { Badge } from '@/components/ui/badge';
 import { safeHref } from '@/components/markdown';
 import { Button } from '@/components/ui/button';
 import { useDateFormat } from '@/lib/format';
-import { changeRequestStateLabel, checksLabel, lastFetchedLabel, settingLabel } from './labels';
+import {
+  changeRequestStateLabel,
+  checksLabel,
+  lastFetchedLabel,
+  settingLabel,
+  type HostReadFacts,
+} from './labels';
 
-// What the Plans view and the run's Pull request tab share: when the host was last asked, what
-// went wrong since, and "Refresh now" (review loop spec 26, 30, 31 and 32). The time is the
-// server's; nothing here is worked out from this window's clock.
+// What a linked item's tab shows about its read (agent workbench spec 21): when the host was last
+// asked, what went wrong since, and "Refresh now". The time is the server's; nothing here is
+// worked out from this window's clock.
 
 const stateVariants = {
   Open: 'info',
@@ -84,38 +87,18 @@ export function HostLink({
   );
 }
 
-// Asks the host once (`hosts.refresh`), whatever the polling settings say.
-export function useHostRefresh(params: HostRefreshParams) {
-  const { connection } = useRuntime();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const { planId, runId } = params;
-  const refresh = async () => {
-    if (!connection) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      await connection.request('hosts.refresh', {
-        ...(planId === undefined ? {} : { planId }),
-        ...(runId === undefined ? {} : { runId }),
-      });
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return { busy, error, refresh };
-}
-
 export function HostReadLine({
   read,
   refresh,
   openUrl,
 }: {
   // A pull request read or a ticket read: both say when and from where, and what went wrong.
-  readonly read: Pick<HostRead, 'fetchedAt' | 'host' | 'hostName' | 'error'> | undefined;
-  readonly refresh: ReturnType<typeof useHostRefresh>;
+  readonly read: HostReadFacts | undefined;
+  readonly refresh: {
+    readonly busy: boolean;
+    readonly error: string | undefined;
+    readonly refresh: () => Promise<void> | void;
+  };
   // The pull request or ticket on the host, for "Open on host".
   readonly openUrl?: string | undefined;
 }) {

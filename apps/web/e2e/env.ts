@@ -43,15 +43,13 @@ export const e2ePanelOutlookControlPort = 4552;
 export const e2ePanelTrackerPort = 4553;
 export const e2ePanelWorkflowId = 'panel-e2e';
 export const e2ePanelCardId = 'panel-e2e-card';
-// The same server seeds a workflow whose one step expects `review/*` and waits after it, and
-// invented files of every kind the viewer shows in the project's `review` folder. POST
-// /run?workflowId=…&runId=… on its tracker port starts a run of it.
+// The same server seeds invented files of every kind the viewer shows in the project's `review`
+// folder, and a stored workflow that expects them.
 export const e2eViewerWorkflowId = 'viewer-e2e';
 
-// A sixth server for the Changes tab tests (e2e/changes.spec.ts): opening a changed file opens
-// the context panel, a global setting the panel tests need to themselves. Its home holds an
-// invented Git repository as a second project and a two-step workflow whose mock agent edits it;
-// POST /run?workflowId=…&runId=…&projectId=… on its tracker port starts a run.
+// A sixth server for the Changes tests (e2e/changes.spec.ts): opening a changed file opens the
+// context panel, a global setting the panel tests need to themselves. Its home holds invented Git
+// repositories as projects, which the mock agent edits.
 export const e2eChangesHome = path.join(tmpdir(), 'wow-e2e-changes-home');
 export const e2eChangesPort = 4561;
 export const e2eChangesOutlookControlPort = 4562;
@@ -102,13 +100,6 @@ export const e2eHostileSkillName = 'say "hi" [now]\n(url(x)) <b>{end}';
 // The mock agent answers a step with the extra prompt "Check the kettle until it holds." with
 // CHANGES_REQUESTED the first time and with APPROVED when it is asked again in the same thread.
 export const e2eLimitWorkflowId = 'limit-e2e';
-export const e2eEventProjectId = 'tea-leaf';
-export const e2eEventWorkflowId = 'event-e2e';
-export const e2eEventIntentId = '2026-08-tea-leaf';
-export const e2eEventBranch = 'agent/U1-pick-the-leaves';
-export const e2ePlanRunProjectId = 'tea-pot';
-export const e2ePlanRunWorkflowId = 'plan-run-e2e';
-export const e2ePlanRunIntentId = '2026-07-tea-pot';
 export const e2eCopyProjectId = 'tea-cup';
 export const e2eCopyWorkflowId = 'copy-e2e';
 // A chat thread's Changes (agent workbench U6) read a tea repository of their own, project
@@ -152,7 +143,7 @@ export const e2eBinary = (home: string, name: string) =>
 // The mock Jira and GitHub the backlog tests publish to (e2e/server.ts): POST
 // /jira/rest/api/2/issue and POST /github/repos/<owner>/<repo>/issues create invented issues, GET
 // /requests lists what was received. The same port answers POST /fire?backlogItemId=…, which starts
-// the workflow run of the item's card the way a trigger does. The settings copy listens on
+// the thread of the item's card the way a trigger does. The settings copy listens on
 // its own port.
 export const e2eTrackerPort = 4521;
 export const e2eSettingsTrackerPort = 4522;

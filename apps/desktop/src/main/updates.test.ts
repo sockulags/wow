@@ -32,8 +32,6 @@ const workingThread: Thread = {
   permissionMode: 'default',
   state: 'working',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
 };
@@ -265,10 +263,10 @@ describe('auto-update', () => {
 });
 
 describe('restartWarning', () => {
-  it('names running turns and workflow runs, and nothing when all is quiet', () => {
-    expect(restartWarning([{ state: 'idle' }], [{ state: 'waiting' }])).toBeUndefined();
-    expect(
-      restartWarning([{ state: 'working' }, { state: 'needs_you' }], [{ state: 'running' }]),
-    ).toMatch(/^2 threads have turns running and 1 workflow run is running\. /);
+  it('names running turns, and nothing when all is quiet', () => {
+    expect(restartWarning([{ state: 'idle' }])).toBeUndefined();
+    expect(restartWarning([{ state: 'working' }, { state: 'needs_you' }])).toMatch(
+      /^2 threads have turns running\. /,
+    );
   });
 });

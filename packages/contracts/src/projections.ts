@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { SentImage } from './attachments.js';
-import type { HostKind } from './hosts.js';
 import { ApprovalPlan, ProposedRuleSchema } from './approvals.js';
 import {
   ApprovalDecision,
@@ -21,11 +20,7 @@ import { QuestionOption, QuestionReply } from './questions.js';
 import { SentSkill, SkillRef } from './skills.js';
 import { CardOccurrence, LocalDay, PastSeries, RepeatRule } from './repeat.js';
 import { SecretRef, Weekday, WorkHours } from './settings.js';
-import {
-  FileHash,
-  WorkflowStep,
-  WorkingCopy,
-} from './workflow.js';
+import { WorkflowStep, WorkingCopy } from './workflow.js';
 
 // Row shapes of the projection tables in docs/architecture.md, as clients receive them through
 // subscriptions. Absent optional columns arrive as null, because that is what SQLite stores.

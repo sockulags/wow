@@ -34,10 +34,6 @@ export const HostCheck = z.object({
 });
 export type HostCheck = z.infer<typeof HostCheck>;
 
-// One `Intent-Unit: <intent-id>/<unit-key>` line of a change request's body.
-export const UnitRef = z.object({ intentId: z.string().min(1), unitKey: z.string().min(1) });
-export type UnitRef = z.infer<typeof UnitRef>;
-
 export const ReviewComment = z.object({
   id: Id,
   author: z.string(),
@@ -50,8 +46,8 @@ export const ReviewComment = z.object({
 });
 export type ReviewComment = z.infer<typeof ReviewComment>;
 
-// A pull request (GitHub) or merge request (GitLab) as last read. Later units compare the next read with this row, so it
-// keeps the state, the head commit, the check result and the newest comment.
+// A pull request (GitHub) or merge request (GitLab) as last read: its state, head commit, checks
+// and review comments.
 export const ChangeRequest = z.object({
   // `<projectId>:<number>`.
   id: Id,
@@ -68,13 +64,11 @@ export const ChangeRequest = z.object({
   // The head is in another repository than the one wow follows (a fork), or the host did not
   // say it is in this one. Absent on rows read before wow asked.
   fromFork: z.boolean().optional(),
-  units: z.array(UnitRef),
   checkState: CheckState,
   checks: z.array(HostCheck),
   comments: z.array(ReviewComment),
   newestCommentId: Id.nullable(),
-  // The web addresses its body links to, so the pages it names can be read (spec 35). Absent on
-  // rows read before wow looked for them.
+  // The web addresses its body links to. Absent on rows read before wow looked for them.
   links: z.array(z.string().min(1)).optional(),
 });
 export type ChangeRequest = z.infer<typeof ChangeRequest>;

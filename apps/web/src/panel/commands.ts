@@ -1,9 +1,7 @@
-import { type PageRead, type Project } from '@wow/contracts';
+import { type Project } from '@wow/contracts';
 import { openInBrowser } from '@/chat/host-links';
-import { safeHref } from '@/components/markdown';
 import type { AppCommand, CommandGroup } from '@/app/commands';
 import { DETAILS_TAB, type LayoutState, type OpenFileDialog } from '@/app/runtime';
-import { pageTitle, runPageRead } from '@/workflows/pages-tab';
 import { hasSelection, type PanelSelection } from './model';
 import { openInEditor } from './editor';
 import { askHostItem } from './host-tab';
@@ -17,7 +15,6 @@ import {
   panelTabsOf,
   selectedTab,
   shownFile,
-  shownPage,
   tabName,
   toggleFullSize,
 } from './viewer';
@@ -56,45 +53,14 @@ export interface ViewerCommandData {
   readonly panelTabs: LayoutState['panelTabs'];
   readonly pathname: string;
   readonly projects: readonly Project[];
-  // What was last read about the pages of each run.
-  readonly pageReads?: readonly PageRead[] | undefined;
 }
 
 // The file viewer from the keyboard (review loop spec 6): every artifact the open run's steps
 // left is one "Open artifact" command, and an open file can be put away, copied as a path (the
 // one the server resolved, like the header's button), and, once it is read as a picture, shown
 // at full size.
-export function viewerCommands({
-  panelTabs,
-  pathname,
-  pageReads = [],
-}: ViewerCommandData): AppCommand[] {
+export function viewerCommands({ panelTabs, pathname }: ViewerCommandData): AppCommand[] {
   const commands: AppCommand[] = [];
-  const shown = shownPage({ panelTabs }, pathname);
-  if (shown) {
-    const link = runPageRead(pageReads, shown.runId)?.pages.find(
-      (entry) => entry.ref === shown.ref,
-    );
-    commands.push({
-      id: 'viewer.back',
-      title: 'Back to conversation',
-      group: 'Workflows',
-      keywords: ['close page', 'viewer', 'side panel'],
-      detail: link ? pageTitle(link) : '',
-      run: ({ layout }) => closeViewer(layout, pathname),
-    });
-    const url = safeHref(link?.page?.url ?? link?.link);
-    if (link && url !== undefined) {
-      commands.push({
-        id: 'viewer.page.openOnHost',
-        title: `Open page on host: ${pageTitle(link)}`,
-        group: 'Workflows',
-        keywords: ['confluence', 'browser', 'external'],
-        detail: url,
-        run: () => void window.open(url, '_blank', 'noreferrer'),
-      });
-    }
-  }
   const file = shownFile({ panelTabs }, pathname);
   if (file) {
     commands.push(

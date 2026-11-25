@@ -177,7 +177,6 @@ describe('shell', () => {
       'Scheduler',
       'Workflows',
       'Skills',
-      'Plans',
       'Trackers',
       'Hosts',
       'Viewer',

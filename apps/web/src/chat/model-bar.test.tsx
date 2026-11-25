@@ -66,8 +66,6 @@ const thread: Thread = {
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
 };
@@ -440,14 +438,14 @@ describe('two conversations on screen (agent workbench spec 6)', () => {
   it('keeps the palette on the focused composer while the other one re-renders', async () => {
     const { connection, sent } = connectionWith({ turns: [], threadItems: [] });
     const runtime = runtimeOf(connection);
-    const step: Thread = { ...thread, id: 'thread-2', runId: 'run-1', stepId: 'build' };
-    const view = (other: Thread) => (
+    const other: Thread = { ...thread, id: 'thread-2' };
+    const view = (shownOther: Thread) => (
       <RuntimeProvider runtime={runtime}>
         <ThreadConversation thread={thread} instance={claude} />
-        <ThreadConversation thread={other} instance={claude} compact />
+        <ThreadConversation thread={shownOther} instance={claude} compact />
       </RuntimeProvider>
     );
-    const { rerender } = render(view(step));
+    const { rerender } = render(view(other));
     const bars = screen.getAllByTestId('model-bar');
     for (const shown of bars) expect(await within(shown).findByText('Opus')).toBeTruthy();
     const [first] = screen.getAllByRole('combobox', { name: 'Message' });
@@ -456,9 +454,9 @@ describe('two conversations on screen (agent workbench spec 6)', () => {
     const stop = modelBarStore.subscribe(() => {
       writes += 1;
     });
-    // A streamed item gives the step thread a new row each time.
-    rerender(view({ ...step, updatedAt: '2026-11-02T08:01:00.000Z' }));
-    rerender(view({ ...step, updatedAt: '2026-11-02T08:02:00.000Z' }));
+    // A streamed item gives the other thread a new row each time.
+    rerender(view({ ...other, updatedAt: '2026-11-02T08:01:00.000Z' }));
+    rerender(view({ ...other, updatedAt: '2026-11-02T08:02:00.000Z' }));
     stop();
     expect(writes).toBe(0);
     act(() => activeModelBar(modelBarStore.getState())?.apply({ permissionMode: 'plan' }));

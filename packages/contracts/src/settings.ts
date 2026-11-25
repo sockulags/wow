@@ -10,10 +10,7 @@ import {
   defaultSecretPatterns,
 } from './assistant.js';
 import { defaultModelGuidance } from './models.js';
-import {
-  alwaysStopSkillDefaults,
-  WorkingCopyStart,
-} from './workflow.js';
+import { alwaysStopSkillDefaults, WorkingCopyStart } from './workflow.js';
 
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
@@ -1485,15 +1482,6 @@ export const settingsRegistry = {
     description:
       'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
     default: 200,
-    scope: 'global',
-  }),
-  'hosts.listFallbackCount': defineSetting({
-    schema: z.number().int().min(1).max(100),
-    group: 'hosts',
-    label: 'Pull requests read without search',
-    description:
-      "On a host without search, how many of the repository's newest pull requests are read to find a plan's own.",
-    default: 30,
     scope: 'global',
   }),
   'hosts.longestWaitMinutes': defineSetting({

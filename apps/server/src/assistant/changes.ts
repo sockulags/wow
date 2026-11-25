@@ -25,7 +25,6 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { type DecideContext, type ReadModel } from '../core/orchestrator.js';
-import { triggersPath } from '../core/triggers.js';
 import { resolveStored } from '../settings/service.js';
 
 // What the server keeps about a command of the assistant: for an ordinary change, what changed,

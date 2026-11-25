@@ -42,11 +42,7 @@ import {
   Workflow,
 } from './projections.js';
 import { HostItemData, HostItemRead, HostItemRef } from './host-links.js';
-import {
-  ChangeRequest,
-  HostError,
-  HostKind,
-} from './hosts.js';
+import { HostError } from './hosts.js';
 import {
   ApprovalDecision,
   BackgroundTask,
@@ -946,7 +942,6 @@ export const BacklogChanges = BacklogItem.pick({
   body: true,
   tags: true,
   state: true,
-
 }).partial();
 export type BacklogChanges = z.infer<typeof BacklogChanges>;
 

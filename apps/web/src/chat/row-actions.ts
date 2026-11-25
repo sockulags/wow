@@ -33,7 +33,7 @@ export function refusal(thread: Thread, action: BulkAction): string | undefined 
       return thread.state === 'done' ? undefined : 'is not done';
     case 'archive':
       if (isArchived(thread)) return 'is archived already';
-      return thread.runId === null ? undefined : "is a workflow step's";
+      return undefined;
     case 'unarchive':
       return isArchived(thread) ? undefined : 'is not archived';
   }

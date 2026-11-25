@@ -13,7 +13,6 @@ import {
   type SubscriptionTopic,
   type Trigger,
   type Workflow,
-  type WorkflowRun,
   type WorkflowStep,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
@@ -290,7 +289,7 @@ describe('the assistant endpoint', () => {
 });
 
 describe('read tools', () => {
-  it('return settings, projects, providers, workflows, templates, skills, the calendar, the backlog, runs, triggers, notifications and connection tests (spec 4)', async () => {
+  it('return settings, projects, providers, workflows, skills, the calendar, the backlog, triggers, notifications and connection tests (spec 4)', async () => {
     asUser({
       type: 'card.create',
       cardId: 'card-1',
@@ -349,20 +348,11 @@ describe('read tools', () => {
       ],
     });
     asUser({
-      type: 'trigger.create',
-      triggerId: 'on-merge',
-      projectId: 'tea',
-      event: 'merged',
-      workflowId: 'delivery',
-    });
-    asUser({
       type: 'workflow.create',
       workflowId: 'gated',
       name: 'Gated',
       steps: [step('s1', { gateBefore: true })],
     });
-    asUser({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'gated', projectId: 'tea' });
-    asUser({ type: 'workflowRun.stop', runId: 'run-1' });
     asUser({
       type: 'providerInstance.recordTest',
       providerInstanceId: 'claude-work',
@@ -419,7 +409,6 @@ describe('read tools', () => {
       },
       { id: 'gated', name: 'Gated' },
     ]);
-    expect((await list('read_templates')).length).toBeGreaterThan(0);
     // wow's built-in skills are listed too (wow skills spec 1).
     expect((await list('read_skills')).filter((skill) => skill['source'] !== 'wow')).toEqual([
       {
@@ -454,23 +443,11 @@ describe('read tools', () => {
     expect(await list('read_backlog')).toMatchObject([
       { id: 'b1', title: 'A quieter kettle', state: 'idea', tags: ['kettle'] },
     ]);
-    const runs = (await call('read_runs')).content;
-    expect(runs['runs']).toMatchObject([
-      { id: 'run-1', workflow: 'Gated', state: 'stopped', path: '/workflows/runs/run-1' },
+    expect(await list('read_triggers')).toEqual([
+      expect.objectContaining({ cardId: 'card-1', card: 'Brew the plan', state: 'scheduled' }),
     ]);
-    expect(runs['planRuns']).toEqual([]);
-    expect((await call('read_runs', { live: true })).content['runs']).toEqual([]);
-    expect(await list('read_triggers')).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'card',
-          cardId: 'card-1',
-          card: 'Brew the plan',
-          state: 'scheduled',
-        }),
-        expect.objectContaining({ id: 'on-merge', kind: 'event', event: 'merged', enabled: true }),
-      ]),
-    );
+    workflowFiles('Delivery');
+    asUser({ type: 'card.runNow', cardId: 'card-1', threadId: 'thread-of-card-1' });
     expect((await list('read_notifications')).length).toBeGreaterThan(0);
     expect((await call('read_connections')).content['providers']).toEqual([
       {
@@ -600,17 +577,6 @@ describe('read tools', () => {
       permissionMode: 'default',
     });
     asUser({ type: 'thread.sendMessage', threadId: 'thread-1', text: threadMarker });
-    asUser({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'delivery', projectId: 'tea' });
-    const run = rows<WorkflowRun>('workflowRuns')[0];
-    asUser({
-      type: 'workflowRun.stepCompleted',
-      runId: 'run-1',
-      stepId: run?.steps[0]?.stepId ?? '',
-      finalMessage: `The agent wrote: ${threadMarker}`,
-      artifactsFound: [],
-    });
-    expect(JSON.stringify(rows('workflowRuns'))).toContain(threadMarker);
-
     // Only the readers of what agents produced (chief of staff spec 1) return an agent's words;
     // every other tool still leaves them out.
     const names = server.assistant.tools.list().map((tool) => tool.name);
@@ -889,7 +855,7 @@ describe('undo', () => {
     expect(item(backlogItemId)).toMatchObject({ state: 'idea' });
   });
 
-  it('puts back a deleted card, a deleted trigger that was off, a deleted backlog item and a renamed project', async () => {
+  it('puts back a deleted card, a deleted backlog item and a renamed project', async () => {
     asUser({
       type: 'card.create',
       cardId: 'card-1',
@@ -902,42 +868,23 @@ describe('undo', () => {
       workflowId: 'delivery',
     });
     asUser({
-      type: 'trigger.create',
-      triggerId: 'on-merge',
-      projectId: 'tea',
-      event: 'merged',
-      workflowId: 'delivery',
-    });
-    asUser({ type: 'trigger.setEnabled', triggerId: 'on-merge', enabled: false });
-    asUser({
       type: 'backlog.create',
       backlogItemId: 'b1',
       title: 'A quieter kettle',
       body: 'It whistles too loudly.',
       tags: ['kettle'],
     });
-    const kept = {
-      card: card('card-1'),
-      trigger: rows<Trigger>('triggers').find((row) => row.id === 'on-merge'),
-      item: item('b1'),
-    };
+    const kept = { card: card('card-1'), item: item('b1') };
 
     await call('delete_card', { cardId: 'card-1' });
-    await call('delete_trigger', { triggerId: 'on-merge' });
     await call('delete_backlog_item', { backlogItemId: 'b1' });
     await call('update_project', { projectId: 'tea', name: 'Tea house', defaultModel: 'opus' });
     expect(card('card-1')).toBeUndefined();
-    expect(rows<Trigger>('triggers').filter((row) => row.kind === 'event')).toEqual([]);
     expect(item('b1')).toBeUndefined();
     expect(changes().map(({ what, from, to }) => ({ what, from, to }))).toEqual([
       {
         what: 'Card "Brew the plan"',
         from: 'title: Brew the plan; start: 2026-11-11T12:00:00.000Z; end: 2026-11-11T13:00:00.000Z; projectId: Tea; workflowId: Delivery',
-        to: null,
-      },
-      {
-        what: 'Trigger "Pull request merged"',
-        from: 'event: merged; workflowId: Delivery; projectId: Tea',
         to: null,
       },
       { what: 'Backlog item "A quieter kettle"', from: 'A quieter kettle', to: null },
@@ -950,7 +897,6 @@ describe('undo', () => {
 
     for (const change of changes()) asUser({ type: 'assistant.undo', changeId: change.id });
     expect(card('card-1')).toEqual(kept.card);
-    expect(rows<Trigger>('triggers').find((row) => row.id === 'on-merge')).toEqual(kept.trigger);
     expect(rows<Trigger>('triggers').some((row) => row.id === 'card-1:trigger')).toBe(true);
     expect(item('b1')).toEqual(kept.item);
     expect(await list('read_projects')).toMatchObject([{ name: 'Tea', defaultModel: null }]);
@@ -1013,17 +959,8 @@ describe('undo', () => {
 const before = () => JSON.stringify([rows('workflows'), rows('settings'), rows('triggers')]);
 
 describe('proposals', () => {
-  it("change nothing until the user's yes: a permission mode, a gate condition, step rules, an event trigger, for units, own working copy and the settings of spec 9", async () => {
+  it("change nothing until the user's yes: a permission mode, a gate condition, step rules, for units, own working copy and the settings of spec 9", async () => {
     asUser({ type: 'setting.set', key: 'scheduler.paused', scope: 'global', value: true });
-    asUser({ type: 'setting.set', key: 'hosts.polling', scope: 'global', value: false });
-    asUser({
-      type: 'trigger.create',
-      triggerId: 'on-comment',
-      projectId: 'tea',
-      event: 'commentAdded',
-      workflowId: 'delivery',
-    });
-    asUser({ type: 'trigger.setEnabled', triggerId: 'on-comment', enabled: false });
     const untouched = before();
 
     const steps = (extra: Partial<WorkflowStep>) => [step('s1'), step('s2', extra)];
@@ -1051,8 +988,6 @@ describe('proposals', () => {
         },
       ],
       ['update_workflow', { workflowId: 'delivery', steps: steps({ gateAfter: false }) }],
-      ['create_trigger', { projectId: 'tea', event: 'merged', workflowId: 'delivery' }],
-      ['set_trigger_enabled', { triggerId: 'on-comment', enabled: true }],
       ['update_workflow', { workflowId: 'delivery', forUnits: true }],
       ['update_workflow', { workflowId: 'delivery', ownWorkingCopy: true }],
       [
@@ -1062,7 +997,6 @@ describe('proposals', () => {
       ['set_setting', { key: 'scheduler.paused', scope: 'global', value: false }],
       ['reset_setting', { key: 'scheduler.paused', scope: 'global' }],
       ['set_setting', { key: 'scheduler.missedPolicy', scope: 'global', value: 'run' }],
-      ['set_setting', { key: 'hosts.polling', scope: 'global', value: true }],
       ['set_setting', { key: 'viewer.htmlScripts', scope: 'global', value: true }],
       [
         'set_setting',
@@ -1104,7 +1038,7 @@ describe('proposals', () => {
     expect(
       proposals()
         .map(({ title, lines }) => ({ title, lines }))
-        .slice(0, 5),
+        .slice(0, 4),
     ).toEqual([
       {
         title: 'Change workflow "Delivery"',
@@ -1140,12 +1074,8 @@ describe('proposals', () => {
         title: 'Change workflow "Delivery"',
         lines: [{ what: 'Step 2 (check-work) gate after', from: 'stops', to: 'does not stop' }],
       },
-      {
-        title: 'New event trigger in Tea',
-        lines: [{ what: 'When "Pull request merged"', from: null, to: 'start Delivery' }],
-      },
     ]);
-    expect(proposals().at(9)).toMatchObject({
+    expect(proposals().at(7)).toMatchObject({
       title: 'Change Paused',
       lines: [{ what: 'Paused', from: 'On', to: 'Off' }],
       place: { label: 'Settings → Scheduler', path: '/settings/scheduler' },
@@ -1227,11 +1157,11 @@ describe('proposals', () => {
     const [line] = proposals().at(-1)?.lines ?? [];
     expect(line?.to).toBe(`${patterns.join(', ').slice(0, 19)}…`);
     await call('set_setting', {
-      key: 'workflows.handoverTemplate',
+      key: 'workflows.verdictApprovedLine',
       scope: 'global',
-      value: 'A handover longer than twenty characters.',
+      value: 'A verdict line longer than twenty characters.',
     });
-    expect(changes().at(-1)?.to).toBe('A handover longer t…');
+    expect(changes().at(-1)?.to).toBe('A verdict line long…');
   });
 
   it('ask before a tracker address changes at any scope while a project holds its own token: the token is never sent to the new host first', async () => {
@@ -1303,7 +1233,6 @@ describe('proposals', () => {
     });
     expect((await call('create_card', lid(0))).content.outcome).toBe('proposed');
     expect((await call('create_card', lid(10))).content.outcome).toBe('proposed');
-    expect(rows('workflowRuns')).toEqual([]);
     // Further ahead it is scheduling: made at once, and it can be undone.
     const later = await call('create_card', lid(120));
     expect(later.content.outcome).toBe('changed');
@@ -1422,53 +1351,13 @@ describe('proposals', () => {
     );
   });
 
-  it('word a trigger of a GitLab project as a merge request', async () => {
-    server.database.db
-      .insert(hostReads)
-      .values({
-        id: 'plan:tea:kettle',
-        projectId: 'tea',
-        scope: 'plan',
-        host: 'gitlab',
-        hostName: 'gitlab.example.invalid',
-        branch: null,
-        changeRequestIds: [],
-        fetchedAt: '2026-11-10T08:00:00.000Z',
-        error: null,
-      })
-      .run();
-    await call('create_trigger', { projectId: 'tea', event: 'merged', workflowId: 'delivery' });
-    asUser({
-      type: 'trigger.create',
-      triggerId: 'on-merge',
-      projectId: 'tea',
-      event: 'merged',
-      workflowId: 'delivery',
-    });
-    asUser({ type: 'trigger.setEnabled', triggerId: 'on-merge', enabled: false });
-    await call('set_trigger_enabled', { triggerId: 'on-merge', enabled: true });
-    expect(proposals().map(({ title, lines }) => ({ title, what: lines[0]?.what }))).toEqual([
-      { title: 'New event trigger in Tea', what: 'When "Merge request merged"' },
-      { title: 'Turn on the trigger "Merge request merged"', what: 'Start Delivery in Tea' },
-    ]);
-    await call('delete_trigger', { triggerId: 'on-merge' });
-    expect(changes().map(({ what }) => what)).toEqual(['Trigger "Merge request merged"']);
-  });
-
   it("fail at Yes with the app's reason when the app refuses the command by then, and stay open", async () => {
-    const proposed = await call('create_trigger', {
-      projectId: 'tea',
-      event: 'merged',
-      workflowId: 'delivery',
+    const proposed = await call('create_workflow', {
+      name: 'Bold',
+      steps: [step('s1', { permissionMode: 'bypassPermissions' })],
     });
-    const triggerId = String(proposed.content['triggerId']);
-    asUser({
-      type: 'trigger.create',
-      triggerId,
-      projectId: 'tea',
-      event: 'checksFailed',
-      workflowId: 'delivery',
-    });
+    const workflowId = String(proposed.content['workflowId']);
+    asUser({ type: 'workflow.create', workflowId, name: 'Bold', steps: [step('s1')] });
     expect(
       refusal(() =>
         asUser({
@@ -1476,7 +1365,7 @@ describe('proposals', () => {
           proposalId: proposed.content.proposal?.id ?? '',
         }),
       ),
-    ).toBe(`Trigger ${triggerId} already exists`);
+    ).toBe(`Workflow ${workflowId} already exists`);
     expect(proposals()[0]).toMatchObject({ state: 'pending' });
   });
 
@@ -1524,36 +1413,21 @@ describe('proposals', () => {
       { title: 'Brew the plan · 2026-11-11', projectId: 'tea' },
     ]);
 
-    // The same for a start by name, a trigger and a setting.
-    const start = await call('start_run', { workflowId: 'delivery', projectId: 'tea' });
-    const trigger = await call('create_trigger', {
-      projectId: 'tea',
-      event: 'merged',
-      workflowId: 'other',
-    });
+    // The same for a setting.
     const scripts = await call('set_setting', {
       key: 'viewer.htmlScripts',
       scope: 'global',
       value: true,
     });
-    await call('update_workflow', { workflowId: 'delivery', name: 'Delivery, quickly' });
-    asUser({ type: 'workflow.update', workflowId: 'other', name: 'Another' });
     asUser({ type: 'setting.set', key: 'viewer.htmlScripts', scope: 'global', value: false });
-    for (const [result, changed] of [
-      [start, 'workflow'],
-      [trigger, 'workflow'],
-      [scripts, 'setting'],
-    ] as const) {
-      expect(
-        refusal(() =>
-          asUser({
-            type: 'assistant.proposal.accept',
-            proposalId: result.content.proposal?.id ?? '',
-          }),
-        ),
-      ).toContain(`and the ${changed} changed since`);
-    }
-    expect(rows('workflowRuns')).toEqual([]);
+    expect(
+      refusal(() =>
+        asUser({
+          type: 'assistant.proposal.accept',
+          proposalId: scripts.content.proposal?.id ?? '',
+        }),
+      ),
+    ).toContain('and the setting changed since');
     expect(setting('viewer.htmlScripts')).toBe(false);
   });
 
@@ -1583,36 +1457,7 @@ describe('proposals', () => {
     expect(proposals()[0]).toMatchObject({ state: 'declined' });
   });
 
-  it('for the start-run tool say "Start <workflow> in <project>", and the run starts only on the user\'s accept (spec 10)', async () => {
-    const proposed = await call('start_run', { workflowId: 'delivery', projectId: 'tea' });
-    expect(proposed.content).toMatchObject({
-      outcome: 'proposed',
-      proposal: { title: 'Start Delivery in Tea' },
-    });
-    const runId = String(proposed.content['runId']);
-    expect(rows('workflowRuns')).toEqual([]);
-
-    expect(
-      refusal(() =>
-        asAssistant({
-          type: 'workflowRun.start',
-          runId: 'direct',
-          workflowId: 'delivery',
-          projectId: 'tea',
-        }),
-      ),
-    ).toBeUndefined();
-    // Sent straight to the engine as the assistant, it is held all the same.
-    expect(rows('workflowRuns')).toEqual([]);
-    expect(proposals()).toHaveLength(2);
-
-    asUser({ type: 'assistant.proposal.accept', proposalId: proposed.content.proposal?.id ?? '' });
-    expect(rows<WorkflowRun>('workflowRuns')).toMatchObject([
-      { id: runId, workflowId: 'delivery', projectId: 'tea', state: 'running' },
-    ]);
-  });
-
-  it("hold a card's run, a plan run and an event trigger the same way", async () => {
+  it("hold a card's start until the user's yes", async () => {
     workflowFiles('Delivery');
     asUser({
       type: 'card.create',
@@ -1631,63 +1476,11 @@ describe('proposals', () => {
         lines: [{ what: 'Card', from: null, to: 'Brew the plan' }],
       },
     });
-    const trigger = await call('create_trigger', {
-      projectId: 'tea',
-      event: 'merged',
-      workflowId: 'delivery',
-    });
-    expect(rows<Trigger>('triggers').filter((row) => row.kind === 'event')).toEqual([]);
-    asUser({ type: 'assistant.proposal.accept', proposalId: trigger.content.proposal?.id ?? '' });
-    expect(rows<Trigger>('triggers').filter((row) => row.kind === 'event')).toMatchObject([
-      { id: trigger.content['triggerId'], event: 'merged', enabled: true },
-    ]);
-    expect(rows('workflowRuns')).toEqual([]);
+    expect(rows('threads')).toEqual([]);
   });
 });
 
-const waiting = () => rows<WorkflowRun>('workflowRuns')[0]?.state;
-
 describe('what the assistant may not do', () => {
-  it('answer a gate: continue, send back and stop are refused from its origin, and no tool offers them (spec 11)', async () => {
-    asUser({
-      type: 'workflow.create',
-      workflowId: 'gated',
-      name: 'Gated',
-      steps: [step('s1', { gateBefore: true })],
-    });
-    asUser({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'gated', projectId: 'tea' });
-    expect(waiting()).toBe('waiting');
-
-    const link =
-      'Only the user approves, sends back or stops a run. The run is at /workflows/runs/run-1.';
-    expect(refusal(() => asAssistant({ type: 'workflowRun.continue', runId: 'run-1' }))).toBe(link);
-    expect(
-      refusal(() => asAssistant({ type: 'workflowRun.sendBack', runId: 'run-1', note: 'Again' })),
-    ).toBe(link);
-    expect(refusal(() => asAssistant({ type: 'workflowRun.stop', runId: 'run-1' }))).toBe(link);
-    expect(waiting()).toBe('waiting');
-    expect(proposals()).toEqual([]);
-
-    const offered = new Set<string>(Object.values(changeTools).map((tool) => tool.type));
-    for (const type of [
-      'workflowRun.continue',
-      'workflowRun.sendBack',
-      'workflowRun.stop',
-      'planRun.stop',
-    ]) {
-      expect(offered.has(type)).toBe(false);
-    }
-    expect(
-      server.assistant.tools
-        .list()
-        .filter((tool) => /continue|approve|send_?back|stop/i.test(tool.name)),
-    ).toEqual([]);
-
-    // The user still can.
-    asUser({ type: 'workflowRun.continue', runId: 'run-1' });
-    expect(waiting()).not.toBe('waiting');
-  });
-
   it('set or clear a secret, work in threads, change providers or send what only the server sends', async () => {
     expect(
       await call('set_setting', {
@@ -1753,18 +1546,11 @@ describe('a command the app refuses', () => {
         ],
       }),
     ).toContain('goes to a step that no longer exists');
-    // A live run.
-    asUser({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'delivery', projectId: 'tea' });
-    expect(await refusedWith('delete_workflow', { workflowId: 'delivery' })).toBe(
-      'Workflow Delivery has a run in progress; stop it first',
-    );
     // Something that is not there, for a change and for a proposal.
     expect(await refusedWith('update_backlog_item', { backlogItemId: 'nope', title: 'x' })).toBe(
       'No backlog item nope',
     );
-    expect(await refusedWith('start_run', { workflowId: 'nope', projectId: 'tea' })).toBe(
-      'No workflow nope',
-    );
+    expect(await refusedWith('start_card_run', { cardId: 'nope' })).toBe('No card nope');
     // A folder that does not exist, which the app checks before the command.
     expect(
       await refusedWith('create_project', { name: 'Cups', cwd: path.join(root, 'cups') }),

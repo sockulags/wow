@@ -57,10 +57,9 @@ export function RemoteLink({ remote }: { remote: BacklogRemote }) {
 const projectSources: Readonly<Record<PublishProject['source'], string | undefined>> = {
   chosen: undefined,
   card: "From the item's card",
-  run: "From the item's run",
 };
 
-// Undefined: the item's card or run decides; null: no project, the defaults in Settings →
+// Undefined: the item's card decides; null: no project, the defaults in Settings →
 // Trackers; else the chosen project.
 type ProjectChoice = string | null | undefined;
 
@@ -86,7 +85,7 @@ function ProjectPicker({
       source={preview.project ? projectSources[preview.project.source] : undefined}
       help={
         preview.needsProject
-          ? 'This item has no card or run in a project. Choose the project the issue is for; wow uses its repository and Jira project.'
+          ? 'This item has no card in a project. Choose the project the issue is for; wow uses its repository and Jira project.'
           : undefined
       }
     >

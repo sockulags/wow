@@ -349,12 +349,6 @@ describe('helper tools in a chat session (orchestration spec 1)', () => {
     create('t1');
     expect((await turnOf('t1')).helperTools).toMatchObject({ name: 'wow' });
   });
-
-  it("gives a workflow step's thread none", async () => {
-    create('t1', 'tea');
-    server.database.db.update(threads).set({ runId: 'run-1' }).where(eq(threads.id, 't1')).run();
-    expect((await turnOf('t1')).helperTools).toBeUndefined();
-  });
 });
 
 // A main thread on Claude in Accept edits, and a client of its helper tools.

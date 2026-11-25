@@ -4,7 +4,7 @@ import {
   type Decision,
   type DecisionKind,
 } from '@wow/contracts';
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
 

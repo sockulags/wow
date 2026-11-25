@@ -38,8 +38,6 @@ const thread = (id: string, title: string, overrides: Partial<Thread> = {}): Thr
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
   ...overrides,

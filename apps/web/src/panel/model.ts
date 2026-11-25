@@ -29,7 +29,7 @@ export function panelSelection(pathname: string, search: Record<string, unknown>
 }
 
 // What a view's panel tabs are kept under (agent workbench spec 11): its path, and in the
-// calendar the selected card too, whose step thread the panel shows, so each card has its own.
+// calendar the selected card too, so each card has its own.
 export function panelRoute(pathname: string, search: Record<string, unknown>): string {
   const selection = panelSelection(pathname, search);
   return selection.view === 'calendar' && selection.itemId !== undefined

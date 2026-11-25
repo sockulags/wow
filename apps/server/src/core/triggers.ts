@@ -39,11 +39,7 @@ import { notificationsEnabled } from './workflows.js';
 type TriggerCommand = Extract<
   ServerCommand,
   {
-    type:
-      | 'trigger.fire'
-      | 'trigger.applyMissed'
-      | 'card.runNow'
-      | 'card.followThread';
+    type: 'trigger.fire' | 'trigger.applyMissed' | 'card.runNow' | 'card.followThread';
   }
 >;
 
@@ -143,7 +139,12 @@ export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: 
       .cardOccurrences(card.id)
       .find((occurrence) => occurrence.threadId === card.threadId);
     return [
-      triggerSet({ ...existing, state: 'fired', runAt: ran?.start ?? card.start, offerRunNow: false }),
+      triggerSet({
+        ...existing,
+        state: 'fired',
+        runAt: ran?.start ?? card.start,
+        offerRunNow: false,
+      }),
     ];
   }
   const events: DomainEvent[] = [];

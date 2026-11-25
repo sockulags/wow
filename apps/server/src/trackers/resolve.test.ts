@@ -183,13 +183,12 @@ describe('publishTarget', () => {
     { id: 'p1', name: 'Widgets' },
     { id: 'p2', name: 'Billing' },
   ];
-  const none = { cards: [], runs: [] };
 
-  it('uses the chosen project, then the card, then the run', () => {
+  it('uses the chosen project, then the card', () => {
     expect(
       publishTarget({
         requested: 'p2',
-        links: { cards: [{ projectId: 'p1' }], runs: [] },
+        cards: [{ projectId: 'p1' }],
         projects,
       }),
     ).toEqual({
@@ -197,35 +196,24 @@ describe('publishTarget', () => {
       needsProject: false,
     });
     expect(
-      publishTarget({
-        requested: undefined,
-        links: { cards: [{ projectId: 'p1' }], runs: [{ projectId: 'p2' }] },
-        projects,
-      }).project,
+      publishTarget({ requested: undefined, cards: [{ projectId: 'p1' }], projects }).project,
     ).toEqual({ id: 'p1', name: 'Widgets', source: 'card' });
-    expect(
-      publishTarget({
-        requested: undefined,
-        links: { cards: [], runs: [{ projectId: 'p2' }] },
-        projects,
-      }).project,
-    ).toEqual({ id: 'p2', name: 'Billing', source: 'run' });
     // A card whose project was removed does not count.
     expect(
       publishTarget({
         requested: undefined,
-        links: { cards: [{ projectId: 'gone' }], runs: [{ projectId: 'p2' }] },
+        cards: [{ projectId: 'gone' }, { projectId: 'p2' }],
         projects,
       }).project?.id,
     ).toBe('p2');
   });
 
   it('asks for a project when the item has none and projects exist', () => {
-    expect(publishTarget({ requested: undefined, links: none, projects })).toEqual({
+    expect(publishTarget({ requested: undefined, cards: [], projects })).toEqual({
       project: null,
       needsProject: true,
     });
-    expect(publishTarget({ requested: undefined, links: none, projects: [] })).toEqual({
+    expect(publishTarget({ requested: undefined, cards: [], projects: [] })).toEqual({
       project: null,
       needsProject: false,
     });
@@ -233,7 +221,7 @@ describe('publishTarget', () => {
     expect(
       publishTarget({
         requested: null,
-        links: { cards: [{ projectId: 'p1' }], runs: [] },
+        cards: [{ projectId: 'p1' }],
         projects,
       }),
     ).toEqual({

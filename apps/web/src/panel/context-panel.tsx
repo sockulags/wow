@@ -17,7 +17,6 @@ import { BacklogPanel } from './backlog-panel';
 import { CalendarPanel, useCalendarPanelTitle } from './calendar-panel';
 import { FileViewer } from './file-viewer';
 import { HostTab } from './host-tab';
-import { PageViewer } from './page-viewer';
 import {
   effectivePanelWidth,
   hasSelection,
@@ -193,13 +192,12 @@ export function ContextPanel() {
   const setPreview = (next: number | undefined) => layout.setState({ contextPanelPreview: next });
   const ref = useRef<HTMLElement>(null);
   const selection = panelSelection(pathname, search);
-  // This view's tabs (spec 11, 13): a file or page tab, when selected, takes the place of the
+  // This view's tabs (spec 11, 13): a file or other tab, when selected, takes the place of the
   // panel's own body.
   const route = panelRoute(pathname, search);
   const tabs = useLayout((state) => panelTabsOf(state, route));
   const tab = selectedTab(tabs);
   const file = tab?.kind === 'file' ? tab.file : undefined;
-  const page = tab?.kind === 'page' ? tab.page : undefined;
   const hostItem = tab?.kind === 'host' ? tab.host : undefined;
   // A chat thread's Changes (agent workbench spec 34) are one of its tabs.
   const changes = tab?.kind === 'changes' ? tab.changes : undefined;
@@ -212,10 +210,8 @@ export function ContextPanel() {
   const { width, cap } = useShownPanelWidth();
   const baseLabel = baseTabLabel(selection);
   const threads = useTopic('threads');
-  // A step thread's run view shows the conversation, not a thread's details.
   const backLabel =
-    selection.view === 'chat' &&
-    threads?.some((thread) => thread.id === selection.threadId && thread.runId === null)
+    selection.view === 'chat' && threads?.some((thread) => thread.id === selection.threadId)
       ? 'Back to details'
       : 'Back to conversation';
 
@@ -313,8 +309,6 @@ export function ContextPanel() {
             'Session tools'
           ) : otherThread ? (
             'Thread'
-          ) : page ? (
-            'Page'
           ) : hostItem ? (
             'Linked item'
           ) : selection.view === 'calendar' && selection.itemId ? (
@@ -340,8 +334,6 @@ export function ContextPanel() {
       >
         {file && tab ? (
           <FileViewer key={tab.id} file={file} backLabel={backLabel} />
-        ) : page && tab ? (
-          <PageViewer key={tab.id} page={page} />
         ) : hostItem && tab ? (
           <HostTab key={tab.id} host={hostItem} />
         ) : changes && tab ? (

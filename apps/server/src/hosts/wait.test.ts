@@ -35,7 +35,6 @@ const answering =
 
 const options = (answer: typeof fetch) => ({
   timeoutMs: 1000,
-  listFallbackCount: 5,
   clock,
   longestWaitMs,
   fetch: answer,

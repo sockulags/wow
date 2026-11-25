@@ -1,5 +1,4 @@
 import {
-  BookOpenIcon,
   FileCodeIcon,
   FileIcon,
   FileTextIcon,
@@ -16,18 +15,16 @@ import { hostItemIcon, hostItemLabel, readOf } from '@/chat/host-links';
 import { DETAILS_TAB, useRuntime, type PanelTab, type PanelTabs } from '@/app/runtime';
 import { useTopic } from '@/chat/data';
 import { cn } from '@/lib/utils';
-import { pageTitle, runPageRead } from '@/workflows/pages-tab';
 import { closeTab, fileLanguage, selectTab, tabName } from './viewer';
 
-// The panel's tab strip (agent workbench spec 11): the panel's own body first ("Details", or a
-// run's "Conversation"), then one tab per open file or page, each with an icon and a short name.
+// The panel's tab strip (agent workbench spec 11): the panel's own body first ("Details"),
+// then one tab per open file or other item, each with an icon and a short name.
 // The keys (close, next, previous, back) are the panel's, see context-panel.tsx.
 
 const pictures = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
 const prose = new Set(['md', 'markdown', 'txt']);
 
 function tabIcon(tab: Exclude<PanelTab, { kind: 'host' }>): LucideIcon {
-  if (tab.kind === 'page') return BookOpenIcon;
   if (tab.kind === 'changes') return GitCompareIcon;
   if (tab.kind === 'tools') return WrenchIcon;
   if (tab.kind === 'outline') return ListTreeIcon;
@@ -134,22 +131,16 @@ export function PanelTabStrip({
 }: {
   readonly route: string;
   readonly tabs: PanelTabs;
-  // "Details", or "Conversation" in a run view (spec 14).
   readonly baseLabel: string;
 }) {
   const { layout } = useRuntime();
-  const pageReads = useTopic('pageReads') ?? [];
   const threads = useTopic('threads');
   const nameOf = (tab: Exclude<PanelTab, { kind: 'host' }>): string => {
     // A thread renamed since it was opened shows its name now.
     if (tab.kind === 'thread') {
       return threads?.find((thread) => thread.id === tab.thread.threadId)?.title ?? tabName(tab);
     }
-    if (tab.kind !== 'page') return tabName(tab);
-    const link = runPageRead(pageReads, tab.page.runId)?.pages.find(
-      (entry) => entry.ref === tab.page.ref,
-    );
-    return link ? pageTitle(link) : tabName(tab);
+    return tabName(tab);
   };
   return (
     <div
@@ -162,7 +153,7 @@ export function PanelTabStrip({
         id={DETAILS_TAB}
         name={baseLabel}
         title={baseLabel}
-        icon={baseLabel === 'Conversation' ? MessagesSquareIcon : InfoIcon}
+        icon={InfoIcon}
         selected={tabs.selected === DETAILS_TAB}
       />
       {tabs.tabs.map((tab) =>

@@ -1,23 +1,17 @@
-import type { PageRead, ProviderInstance, ServerCommand } from '@wow/contracts';
+import type { ServerCommand } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
-import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { snapshot } from '../core/subscriptions.js';
-import { events, providerInstances } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
 import { confluenceLinksIn, confluencePageOf } from './confluence.js';
 import { MockConfluence, type MockPage } from './mock-confluence.js';
 import { MockGitHub } from './mock-github.js';
 import { MockJira } from './mock-jira.js';
 
-// U13 ground truth: the Confluence pages a run's ticket description, pull request body and intent
-// link to (review loop spec 35), what happens when Confluence refuses or does not answer (spec 31
-// and 32), and that nothing else is read. Everything is invented: an Enterprise GitHub, a Jira
-// Server and a Confluence Server that live in this file. Nothing sleeps: a round runs when the
-// test calls it, and the clock is the test's.
+// Links to Confluence pages as wow reads them, and Test connection to Confluence. Everything is
+// invented: an Enterprise GitHub, a Jira Server and a Confluence Server that live in this file.
 
 const api = 'https://ghe.example.invalid/api/v3';
 const jiraUrl = 'https://jira.example.invalid';
@@ -38,12 +32,6 @@ let ids = 0;
 const dispatch = (command: ServerCommand) => server.engine.dispatch(`t${++ids}`, command);
 const set = (key: string, value: unknown, scope = 'global') =>
   dispatch({ type: 'setting.set', key, scope, value });
-const pageRead = (runId = 'r1') =>
-  (snapshot(server.database.db, { topic: 'pageReads' }) as PageRead[]).find(
-    (row) => row.runId === runId,
-  );
-const wikiAsked = () => confluence.requests.map((request) => request.path);
-const expand = 'expand=body.view,version,space';
 
 const design: MockPage = {
   id: '123',
@@ -66,95 +54,6 @@ const runbook: MockPage = {
   version: 1,
   body: '<p>Ship it.</p>',
 };
-
-const instance: ProviderInstance = {
-  id: 'claude-work',
-  kind: 'claude',
-  name: 'Work',
-  binaryPath: 'claude',
-  configDir: '',
-  env: {},
-  launchArgs: [],
-  defaultModel: 'opus',
-  defaultEffort: 'high',
-  defaultPermissionMode: 'default',
-  status: 'ready',
-  account: null,
-  version: null,
-  statusMessage: null,
-  update: null,
-  updateRun: null,
-};
-
-// A run that waits before its only step: live, without a provider turn.
-async function startRun(runId = 'r1', backlogItemId?: string): Promise<void> {
-  if (!server.database.db.select().from(providerInstances).get()) {
-    server.database.db.insert(providerInstances).values(instance).run();
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'gated',
-      name: 'Gated',
-      steps: [
-        {
-          id: 'only',
-          skillName: 'deliver-work',
-          providerInstanceId: instance.id,
-          gateBefore: true,
-          gateAfter: false,
-          expectedArtifacts: [],
-        },
-      ],
-    });
-  }
-  dispatch({
-    type: 'workflowRun.start',
-    runId,
-    workflowId: 'gated',
-    projectId: 'tea',
-    ...(backlogItemId ? { backlogItemId } : {}),
-  });
-  await server.hosts.idle();
-}
-
-function onBranch(branch: string): void {
-  execFileSync('git', ['-C', path.join(root, 'tea'), 'init', '--quiet', '-b', branch], {
-    env: { ...process.env, GIT_CONFIG_GLOBAL: path.join(root, 'none'), GIT_CONFIG_NOSYSTEM: '1' },
-  });
-}
-
-// A backlog item published to Jira as ABC-12, whose description is `description` (wiki markup).
-function ticketWith(description: string): string {
-  jira.issues = [
-    {
-      key: 'ABC-12',
-      summary: 'Fix the kettle whistle',
-      status: 'In Progress',
-      assignee: null,
-      type: 'Bug',
-      description,
-    },
-  ];
-  dispatch({ type: 'backlog.create', backlogItemId: 'b1', title: 'Whistle', body: '', tags: [] });
-  dispatch({
-    type: 'backlog.published',
-    backlogItemId: 'b1',
-    remote: { service: 'jira', key: 'ABC-12', url: `${jiraUrl}/browse/ABC-12` },
-  });
-  return 'b1';
-}
-
-// The run's pull request, on the branch the project folder is on.
-function pullRequestWith(body: string): void {
-  onBranch('agent/whistle');
-  github.pulls = [
-    { number: 3, title: 'Fix it', body, state: 'open', branch: 'agent/whistle', sha: 'c3' },
-  ];
-}
-
-async function intentWith(intentId: string, text: string): Promise<void> {
-  await mkdir(path.join(root, 'tea', 'intents', intentId), { recursive: true });
-  await writeFile(path.join(root, 'tea', 'intents', intentId, 'intent.md'), text);
-}
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'wow-pages-'));
@@ -181,10 +80,8 @@ beforeEach(async () => {
     logSink: (line) => logged.push(JSON.stringify(line)),
     userHome: root,
     watchSkills: () => ({ close: () => Promise.resolve() }),
-    watchPlans: () => ({ close: () => Promise.resolve() }),
     clock: () => now,
     schedulerTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
-    hostTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
     fetch: (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.startsWith(jiraUrl)) return askJira(input, init);
@@ -278,227 +175,6 @@ describe('links to pages on the Confluence site', () => {
       'id:456',
       'id:789',
     ]);
-  });
-});
-
-describe('the pages a run links to (spec 35)', () => {
-  it('lists the pages its ticket description and its intent link to, with title and time', async () => {
-    const item = ticketWith(`See [the design|${wiki}/pages/viewpage.action?pageId=123].`);
-    pullRequestWith('Fixes the whistle.\n\nIntent-Unit: kettle/U1');
-    await intentWith('kettle', `# Kettle\n\nBackground: ${wiki}/display/ENG/Design+notes\n`);
-    await startRun('r1', item);
-    const read = pageRead();
-    expect(read).toMatchObject({
-      id: 'run:r1',
-      projectId: 'tea',
-      host: 'confluence',
-      hostName: 'wiki.example.invalid',
-      fetchedAt: now.toISOString(),
-      error: null,
-    });
-    expect(
-      read?.pages.map(({ ref, source, page, fetchedAt }) => [ref, source, page?.title, fetchedAt]),
-    ).toEqual([
-      ['id:123', 'ticket', 'Kettle design', now.toISOString()],
-      ['title:ENG/Design notes', 'intent', 'Design notes', now.toISOString()],
-    ]);
-    expect(read?.pages[0]?.page).toEqual({
-      id: '123',
-      title: 'Kettle design',
-      space: 'ENG',
-      version: 4,
-      // Stored as the host renders it; only the sandboxed viewer frame ever shows it.
-      body: design.body,
-      url: `${wiki}/spaces/ENG/pages/123`,
-    });
-    expect(wikiAsked()).toEqual([
-      `/rest/api/content/123?${expand}`,
-      `/rest/api/content?spaceKey=ENG&title=Design%20notes&${expand}`,
-    ]);
-  });
-
-  it('lists a page its pull request body links to', async () => {
-    pullRequestWith(`Runbook: ${wiki}/spaces/OPS/pages/789/Release+runbook`);
-    await startRun();
-    expect(pageRead()?.pages).toMatchObject([
-      { ref: 'id:789', source: 'pullRequest', page: { title: 'Release runbook' }, error: null },
-    ]);
-  });
-
-  it('never reads a link to another site', async () => {
-    pullRequestWith(
-      'https://other.example.invalid/confluence/pages/viewpage.action?pageId=123 and https://ghe.example.invalid/acme/tea',
-    );
-    await startRun();
-    expect(pageRead()).toMatchObject({ pages: [], error: null });
-    expect(confluence.requests).toEqual([]);
-  });
-
-  it('says there are no pages when nothing links to one, without asking Confluence', async () => {
-    pullRequestWith('No links here.');
-    await startRun();
-    expect(pageRead()).toMatchObject({ pages: [], fetchedAt: now.toISOString(), error: null });
-    expect(confluence.requests).toEqual([]);
-  });
-
-  it('says which settings are missing when Confluence is not set up', async () => {
-    dispatch({ type: 'setting.reset', key: 'trackers.confluence.token', scope: 'global' });
-    pullRequestWith(`${wiki}/pages/viewpage.action?pageId=123`);
-    await startRun();
-    expect(pageRead()?.error).toMatchObject({
-      kind: 'notSetUp',
-      setting: 'trackers.confluence.token',
-    });
-    expect(pageRead()?.error?.message).toContain('Confluence token');
-    expect(confluence.requests).toEqual([]);
-
-    dispatch({ type: 'setting.reset', key: 'trackers.confluence.baseUrl', scope: 'global' });
-    await server.hosts.poll();
-    expect(pageRead()?.error).toMatchObject({
-      kind: 'notSetUp',
-      setting: 'trackers.confluence.baseUrl',
-    });
-    expect(confluence.requests).toEqual([]);
-  });
-
-  it('reads a page once a round however many runs link to it', async () => {
-    pullRequestWith(`${wiki}/pages/viewpage.action?pageId=123`);
-    await startRun('r1');
-    await startRun('r2');
-    confluence.requests.length = 0;
-    await server.hosts.poll();
-    expect(wikiAsked()).toEqual([`/rest/api/content/123?${expand}`]);
-    expect(pageRead('r2')?.pages[0]?.page?.title).toBe('Kettle design');
-  });
-
-  it('signs in with a bearer token, or with email and token on Cloud, and only on the site', async () => {
-    pullRequestWith(`${wiki}/pages/viewpage.action?pageId=123`);
-    await startRun();
-    expect(confluence.requests.map((request) => request.authorization)).toEqual([
-      `Bearer ${WIKI_TOKEN}`,
-    ]);
-    expect(github.requests.some((request) => request.authorization?.includes(WIKI_TOKEN))).toBe(
-      false,
-    );
-
-    set('trackers.confluence.authMode', 'cloud-basic');
-    set('trackers.confluence.email', 'mira@example.invalid');
-    const basic = `Basic ${Buffer.from(`mira@example.invalid:${WIKI_TOKEN}`).toString('base64')}`;
-    confluence.authorization = basic;
-    await server.hosts.poll();
-    expect(confluence.requests.at(-1)?.authorization).toBe(basic);
-    expect(pageRead()?.error).toBeNull();
-  });
-});
-
-describe('when Confluence refuses or does not answer (spec 31, 32)', () => {
-  beforeEach(async () => {
-    pullRequestWith(`${wiki}/pages/viewpage.action?pageId=123\n${wiki}/display/ENG/Design+notes`);
-    await startRun();
-    now = new Date('2026-11-03T09:10:00.000Z');
-  });
-
-  const lastFetched = '2026-11-03T09:00:00.000Z';
-
-  it('keeps the last pages and points to the token setting on 401, never showing the token', async () => {
-    confluence.authorization = 'Bearer another-token';
-    await server.hosts.poll();
-    const read = pageRead();
-    expect(read?.fetchedAt).toBe(lastFetched);
-    expect(read?.error).toMatchObject({ kind: 'refused', setting: 'trackers.confluence.token' });
-    expect(read?.error?.message).toContain('wiki.example.invalid refused the Confluence token');
-    expect(read?.pages.map((page) => [page.page?.title, page.fetchedAt])).toEqual([
-      ['Kettle design', lastFetched],
-      ['Design notes', lastFetched],
-    ]);
-    // After the refusal the site is not asked again this round.
-    expect(wikiAsked().filter((asked) => asked.includes('123'))).toHaveLength(2);
-    expect(wikiAsked()).toHaveLength(3);
-    expect(JSON.stringify(read)).not.toContain(WIKI_TOKEN);
-    expect(logged.join('\n')).not.toContain(WIKI_TOKEN);
-  });
-
-  it('keeps the last page on 404 and points to the link, not the token, reading the other pages', async () => {
-    confluence.pages = [notes];
-    await server.hosts.poll();
-    const [gone, kept] = pageRead()?.pages ?? [];
-    expect(gone).toMatchObject({ fetchedAt: lastFetched, page: { title: 'Kettle design' } });
-    // The token works, so a deleted page is no reason to send the user to the token setting.
-    expect(gone?.error).toMatchObject({ kind: 'refused', setting: null });
-    expect(gone?.error?.message).toContain('shows no page 123');
-    expect(gone?.error?.message).toContain('may have been deleted or moved');
-    expect(kept).toMatchObject({ fetchedAt: now.toISOString(), error: null });
-    expect(pageRead()?.error).toBeNull();
-  });
-
-  it('writes a round that read the same pages as a time only, not the bodies again', async () => {
-    const synced = () =>
-      server.database.db
-        .select()
-        .from(events)
-        .all()
-        .filter((event) => event.kind === 'pages.synced');
-    const before = synced().length;
-    const stored = pageRead();
-    await server.hosts.poll();
-    const [round] = synced().slice(before);
-    expect(synced()).toHaveLength(before + 1);
-    expect(round?.payload).toEqual({
-      projectId: 'tea',
-      reads: [],
-      fetched: { at: now.toISOString(), ids: ['run:r1'] },
-    });
-    expect(JSON.stringify(round?.payload)).not.toContain('whistle');
-    expect(pageRead()).toEqual({
-      ...stored,
-      fetchedAt: now.toISOString(),
-      pages: stored?.pages.map((page) => ({ ...page, fetchedAt: now.toISOString() })),
-    });
-
-    // A page that changed is written whole again.
-    confluence.pages = [{ ...design, version: 5, body: '<p>New whistle.</p>' }, notes];
-    now = new Date('2026-11-03T09:20:00.000Z');
-    await server.hosts.poll();
-    expect(synced().at(-1)?.payload).toMatchObject({ reads: [{ id: 'run:r1' }] });
-    expect(pageRead()?.pages[0]?.page?.body).toBe('<p>New whistle.</p>');
-  });
-
-  it('keeps no page larger than hosts.pageMaxBytes and names that setting', async () => {
-    set('hosts.pageMaxBytes', 1000);
-    confluence.pages = [{ ...design, body: `<p>${'tea '.repeat(400)}</p>` }, notes];
-    await server.hosts.poll();
-    const [large, kept] = pageRead()?.pages ?? [];
-    expect(large?.page?.body).toBe(design.body);
-    expect(large?.error).toMatchObject({ kind: 'failed', setting: 'hosts.pageMaxBytes' });
-    expect(large?.error?.message).toContain('more than the 1000 wow keeps');
-    expect(kept).toMatchObject({ fetchedAt: now.toISOString(), error: null });
-    expect(pageRead()?.error).toBeNull();
-  });
-
-  it('keeps the last pages on a timeout and tries again at the next interval', async () => {
-    confluence.slow = true;
-    await server.hosts.poll();
-    expect(pageRead()).toMatchObject({ fetchedAt: lastFetched });
-    expect(pageRead()?.error).toMatchObject({ kind: 'failed', at: now.toISOString() });
-    expect(pageRead()?.error?.message).toContain('no answer within');
-    expect(pageRead()?.pages[0]).toMatchObject({ page: { title: 'Kettle design' } });
-
-    confluence.slow = false;
-    confluence.pages = [{ ...design, title: 'Kettle design, take two' }, notes];
-    now = new Date('2026-11-03T09:20:00.000Z');
-    await server.hosts.poll();
-    expect(pageRead()).toMatchObject({ fetchedAt: now.toISOString(), error: null });
-    expect(pageRead()?.pages[0]?.page?.title).toBe('Kettle design, take two');
-  });
-
-  it('keeps the time an error was first seen while it repeats', async () => {
-    confluence.failure = { status: 500, message: 'Invented outage' };
-    await server.hosts.poll();
-    const first = pageRead()?.error?.at;
-    now = new Date('2026-11-03T09:30:00.000Z');
-    await server.hosts.poll();
-    expect(pageRead()?.error?.at).toBe(first);
-    expect(pageRead()?.error?.message).toContain('Invented outage');
   });
 });
 

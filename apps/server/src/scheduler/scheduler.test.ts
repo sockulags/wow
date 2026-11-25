@@ -191,7 +191,6 @@ describe('triggers follow their card', () => {
       runAt: iso(60),
       zone: 'Europe/Stockholm',
       state: 'scheduled',
-      runId: null,
       offerRunNow: false,
     });
     expect(card()).toMatchObject({ state: 'scheduled', threadMode: 'new', workflowName: 'Bug' });
@@ -247,12 +246,10 @@ describe('the tick', () => {
       effort: 'high',
       permissionMode: 'default',
       parentThreadId: null,
-      runId: null,
     });
     const threadId = started?.id ?? '';
-    expect(trigger()).toMatchObject({ state: 'fired', runId: threadId });
-    expect(card()).toMatchObject({ state: 'running', threadId, runId: null });
-    expect(runs()).toEqual([]);
+    expect(trigger()).toMatchObject({ state: 'fired' });
+    expect(card()).toMatchObject({ state: 'running', threadId });
 
     await cardBecomes((current) => current.state === 'done');
     await server.providerService.idle();
@@ -311,7 +308,7 @@ describe('the tick', () => {
     now = at(60);
     server.scheduler.tick();
     expect(allThreads()).toEqual([]);
-    expect(trigger()).toMatchObject({ state: 'fired', runId: null });
+    expect(trigger()).toMatchObject({ state: 'fired' });
     expect(card().state).toBe('failed');
     expect(notices()).toEqual([['failed', 'Trigger failed']]);
   });
@@ -336,7 +333,6 @@ describe('the tick', () => {
     now = at(60);
     server.scheduler.tick();
     expect(allThreads()).toHaveLength(1);
-    expect(runs()).toEqual([]);
     await cardBecomes((current) => current.state === 'done');
   });
 
@@ -354,8 +350,6 @@ describe('the tick', () => {
     expect(notices()).toEqual([]);
   });
 });
-
-const runs = () => db().select().from(workflowRuns).all();
 
 // What the user's messages in a thread said, and the workflow each one sent.
 const sentIn = (threadId: string) =>
@@ -447,7 +441,7 @@ describe('missed triggers at startup (behavior 12)', () => {
     await restart(600);
     const [started] = allThreads();
     expect(started?.title).toBe('Fix the login bug · 2026-11-02');
-    expect(trigger()).toMatchObject({ state: 'fired', runId: started?.id });
+    expect(trigger()).toMatchObject({ state: 'fired' });
     expect(card()).toMatchObject({ threadId: started?.id });
   });
 
@@ -459,10 +453,10 @@ describe('missed triggers at startup (behavior 12)', () => {
     expect(trigger()).toMatchObject({ state: 'missed', offerRunNow: true });
     expect(card().state).toBe('missed');
 
-    dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'now' });
+    dispatch({ type: 'card.runNow', cardId: 'c1', threadId: 'now' });
     expect(card()).toMatchObject({ state: 'running', threadId: 'now' });
     expect(thread('now')).toMatchObject({ title: 'Fix the login bug · 2026-11-02' });
-    expect(trigger()).toMatchObject({ state: 'fired', runId: 'now', offerRunNow: false });
+    expect(trigger()).toMatchObject({ state: 'fired', offerRunNow: false });
     await cardBecomes((current) => current.state === 'done');
   });
 

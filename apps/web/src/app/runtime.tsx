@@ -65,14 +65,6 @@ export interface ViewerFile {
   readonly fullSize: boolean;
 }
 
-// A linked Confluence page in a tab of the context panel (review loop spec 35), by the run and
-// the link's `ref`. The page itself is the server's last read of it.
-export interface ViewerPage {
-  readonly runId: string;
-  readonly ref: string;
-  readonly from: string;
-}
-
 // An item a chat thread links to on one of the user's hosts (agent workbench spec 21): a pull or
 // merge request, an issue, a ticket or a page. What it shows is the thread's stored read of it.
 export interface ViewerHostItem {
@@ -109,7 +101,6 @@ export interface ViewerThread {
 
 export type PanelTab =
   | { readonly kind: 'file'; readonly id: string; readonly file: ViewerFile }
-  | { readonly kind: 'page'; readonly id: string; readonly page: ViewerPage }
   | { readonly kind: 'host'; readonly id: string; readonly host: ViewerHostItem }
   | { readonly kind: 'changes'; readonly id: string; readonly changes: ViewerChanges }
   | { readonly kind: 'tools'; readonly id: string; readonly tools: ViewerTools }

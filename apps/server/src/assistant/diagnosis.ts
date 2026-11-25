@@ -15,19 +15,7 @@ import {
   type DiagnosisProblem,
   type TrackerConnection,
 } from '@wow/contracts';
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  not,
-  or,
-  sql,
-  type SQL,
-} from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, not, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import * as t from '../db/schema.js';
 import { skillInstalled, type Reader, type ReaderDeps } from './readers.js';
@@ -48,8 +36,6 @@ const trackersPlace: AssistantPlace = {
   label: `Settings → ${settingGroupTitles.trackers}`,
   path: '/settings/trackers',
 };
-// A trigger is a card on the calendar now (orchestrator threads spec 27, 34).
-const triggersPlace: AssistantPlace = { label: 'Calendar', path: '/calendar' };
 const projectPlace = (name: string): AssistantPlace => ({
   label: `Settings → Projects → ${name}`,
   path: '/settings/projects',
@@ -59,15 +45,6 @@ const workflowPlace = (_id: string, name: string): AssistantPlace => ({
   label: `Settings → Workflows → ${name}`,
   path: '/settings/workflows',
 });
-
-function settingPlace(key: string): AssistantPlace {
-  const group = Object.hasOwn(settingsRegistry, key)
-    ? settingsRegistry[key as keyof typeof settingsRegistry].group
-    : undefined;
-  return group
-    ? { label: `Settings → ${settingGroupTitles[group]}`, path: `/settings/${group}` }
-    : trackersPlace;
-}
 
 const reasonOf = (error: unknown) =>
   error instanceof Error ? error.message : 'It failed without saying why.';

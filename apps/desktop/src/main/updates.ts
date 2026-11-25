@@ -1,4 +1,4 @@
-import type { ThreadState, UpdateState, WorkflowRunState } from '@wow/contracts';
+import type { ThreadState, UpdateState } from '@wow/contracts';
 
 // Auto-update from GitHub Releases (behavior 35). `UpdateManager` holds the state the web app and
 // the tray show and decides when to check; `Updater` is the part electron-updater does (see
@@ -160,19 +160,13 @@ export class UpdateManager {
 }
 
 // Open risk in the plan: an update installed while an agent works. Restarting stops the server, so
-// a running turn fails and a workflow step with it; the user is told and decides.
+// a running turn fails; the user is told and decides.
 export function restartWarning(
   threads: readonly { readonly state: ThreadState }[],
-  runs: readonly { readonly state: WorkflowRunState }[],
 ): string | undefined {
   const turns = threads.filter(
     (thread) => thread.state === 'working' || thread.state === 'needs_you',
   ).length;
-  const steps = runs.filter((run) => run.state === 'running').length;
-  if (turns === 0 && steps === 0) return undefined;
-  const parts = [
-    turns > 0 ? `${turns} ${turns === 1 ? 'thread has a turn' : 'threads have turns'} running` : '',
-    steps > 0 ? `${steps} workflow ${steps === 1 ? 'run is' : 'runs are'} running` : '',
-  ].filter((part) => part !== '');
-  return `${parts.join(' and ')}. Restarting to update stops the server, and running turns end as failed. Restart and update now?`;
+  if (turns === 0) return undefined;
+  return `${turns} ${turns === 1 ? 'thread has a turn' : 'threads have turns'} running. Restarting to update stops the server, and running turns end as failed. Restart and update now?`;
 }

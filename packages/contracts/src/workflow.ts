@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { ThreadState } from './provider.js';
-import { BuiltInSkillName, SentSkill, SkillRef, WowSkillSource } from './skills.js';
+import { BuiltInSkillName, SkillRef, WowSkillSource } from './skills.js';
 
 // One part of a gate's condition (review loop spec 54): the step's final message ends with the
 // approved verdict line, the run's pull request has every check successful, or a file was found

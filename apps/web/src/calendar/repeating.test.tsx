@@ -4,7 +4,6 @@ import {
   type CalendarOccurrence,
   type CalendarRange,
   type Command,
-  type WorkflowRun,
 } from '@wow/contracts';
 import {
   createMemorySettingsSource,
@@ -24,7 +23,7 @@ import { calendarCommands } from './commands';
 import { occurrenceBlocks, occurrenceId } from './occurrences';
 
 // Repeating cards in the calendar (recurring cards spec 11 to 17, plan U2). The calendar draws
-// what the server's range read answers; the card, its run and the range here are invented.
+// what the server's range read answers; the card and the range here are invented.
 
 const zone = 'Europe/Stockholm';
 
@@ -44,7 +43,6 @@ const card: CalendarItem = {
   projectId: 'demo',
   backlogItemId: null,
   workflowId: 'notes',
-  runId: 'run-16',
   threadId: 'thread-16',
   state: 'done',
   updatedAt: '2026-11-10T09:00:00.000Z',
@@ -56,20 +54,6 @@ const card: CalendarItem = {
   },
   skippedDates: ['2026-11-13'],
   nextAt: '2026-11-17T07:30:00.000Z',
-};
-
-const run: WorkflowRun = {
-  id: 'run-16',
-  workflowId: 'notes',
-  projectId: 'demo',
-  calendarItemId: 'standup-notes',
-  backlogItemId: null,
-  state: 'done',
-  currentStep: 0,
-  steps: [],
-  startedAt: '2026-11-16T07:30:00.000Z',
-  endedAt: '2026-11-16T07:40:00.000Z',
-  occurrence: { date: '2026-11-16', start: '2026-11-16T07:30:00.000Z' },
 };
 
 const at = (day: number, hour: number, minute = 30) =>
@@ -94,7 +78,6 @@ const fired = occurrence(16, {
     start: at(16, 7),
     end: at(16, 7, 45),
     outcome: 'fired',
-    runId: null,
     threadId: 'thread-16',
     reason: null,
     offerRunNow: false,
@@ -132,7 +115,6 @@ const single: CalendarItem = {
   end: '2026-11-18T10:00:00.000Z',
   projectId: null,
   workflowId: null,
-  runId: null,
   state: 'scheduled',
   repeat: null,
   skippedDates: [],
@@ -145,7 +127,6 @@ const pushes = new Map<string, Set<(rows: unknown[]) => void>>();
 function runtimeWith(answer: Answer, box: Outbox<Sent>, refuseSave?: string): Runtime {
   const topics: Readonly<Record<string, unknown[]>> = {
     calendarItems: [card, single],
-    workflowRuns: [run],
     triggers: [],
   };
   const connection = {
@@ -521,7 +502,7 @@ describe('the new actions', () => {
   });
 
   it('name each occurrence by its card and day', () => {
-    const blocks = occurrenceBlocks([card], range(), [run]);
+    const blocks = occurrenceBlocks([card], range());
     expect([...blocks.shown.keys()]).toEqual(
       [16, 17, 18, 19, 20].map((day) => occurrenceId(card.id, `2026-11-${day}`)),
     );
@@ -530,7 +511,7 @@ describe('the new actions', () => {
       threadId: 'thread-16',
     });
     // A single card is drawn from its own row, not from the range.
-    expect(occurrenceBlocks([{ ...card, repeat: null }], range(), [run]).items).toEqual([]);
+    expect(occurrenceBlocks([{ ...card, repeat: null }], range()).items).toEqual([]);
   });
 });
 

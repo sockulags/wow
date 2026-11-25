@@ -151,7 +151,6 @@ export class HostLookup {
     const { settings } = this.#deps;
     const options = {
       timeoutMs: settings.get('trackers.requestTimeoutMs'),
-      listFallbackCount: settings.get('hosts.listFallbackCount'),
       longestWaitMs: settings.get('hosts.longestWaitMinutes') * 60_000,
       pageMaxBytes: settings.get('hosts.pageMaxBytes'),
       clock: this.#clock,
@@ -240,7 +239,6 @@ const unread = (number: number, url: string): FoundChangeRequest => ({
   state: 'open',
   draft: false,
   mergedAt: null,
-  units: [],
 });
 
 // The rules only name sites with a token, so a site is missing here only when the settings

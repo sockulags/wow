@@ -6,7 +6,7 @@ import {
   type WorkingCopyPlan,
 } from '@wow/contracts';
 import { stat } from 'node:fs/promises';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';

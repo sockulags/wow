@@ -236,10 +236,10 @@ export function decide(
       ];
     case 'decision.dismiss': {
       const kind = command.decisionId.split(':')[0];
-      if (kind !== 'failedRun' && kind !== 'missedCard') {
+      if (kind !== 'missedCard') {
         throw new CommandRejected(
           'rejected',
-          'Only a failed run or a missed card is dismissed; anything else is answered where it waits.',
+          'Only a missed card is dismissed; anything else is answered where it waits.',
         );
       }
       return [

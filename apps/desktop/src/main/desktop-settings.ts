@@ -12,7 +12,6 @@ export const desktopSettingKeys = {
   closeToTray: 'desktop.closeToTray',
   startMinimized: 'desktop.startMinimized',
   schedulerPaused: 'scheduler.paused',
-  notifications: 'scheduler.notifications',
   updatesEnabled: 'updates.enabled',
   updateCheckIntervalMinutes: 'updates.checkIntervalMinutes',
 } as const satisfies Record<string, SettingKey>;
@@ -33,7 +32,6 @@ export function readDesktopSettings(resolved: readonly ResolvedSetting[]): Deskt
     closeToTray: read(desktopSettingKeys.closeToTray),
     startMinimized: read(desktopSettingKeys.startMinimized),
     schedulerPaused: read(desktopSettingKeys.schedulerPaused),
-    notifications: read(desktopSettingKeys.notifications),
     updatesEnabled: read(desktopSettingKeys.updatesEnabled),
     updateCheckIntervalMinutes: read(desktopSettingKeys.updateCheckIntervalMinutes),
   };

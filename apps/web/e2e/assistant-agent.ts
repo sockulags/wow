@@ -264,16 +264,6 @@ function scenario(text: string, trackerUrl: string): Scenario {
       },
     };
   }
-  const approve = /approve the run (\S+)/i.exec(text);
-  if (approve?.[1]) {
-    // wow offers no tool for a gate (spec 11); even the real command, sent as the assistant's,
-    // is refused, and the run keeps waiting.
-    return {
-      steps: [{ command: { type: 'workflowRun.continue', runId: approve[1] } }],
-      answer:
-        'Only you approve a run at its gate, send it back or stop it; wow gives me no tool for that and refuses it from me. Open the run from Workflows → Runs and answer the gate there.',
-    };
-  }
   return { steps: [], answer: `You said: ${text}` };
 }
 

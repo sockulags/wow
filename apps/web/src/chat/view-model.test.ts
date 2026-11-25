@@ -9,7 +9,6 @@ import {
   lastErrorId,
   lastUsedThread,
   lastUserSent,
-  listTitle,
   providerLabel,
   recentFolders,
   skillGroup,
@@ -31,8 +30,6 @@ const thread = (id: string, overrides: Partial<Thread> = {}): Thread => ({
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
   ...overrides,
@@ -76,14 +73,6 @@ describe('chat labels', () => {
     expect(providerLabel(twin, [work, twin])).toBe('Work (Codex)');
   });
 
-  it('drops the workflow prefix from a run thread in the list (C-06)', () => {
-    expect(listTitle({ title: 'Feature: search: capture-intent' }, 'Feature: search')).toBe(
-      'capture-intent',
-    );
-    expect(listTitle({ title: 'Plain thread' }, undefined)).toBe('Plain thread');
-    expect(listTitle({ title: '' }, undefined)).toBe('New thread');
-  });
-
   it('labels effort one way (C-15) and turn time as a clock (C-09)', () => {
     expect(['default', 'low', 'high'].map(effortLabel)).toEqual(['Default', 'Low', 'High']);
     expect(formatElapsed(42_000)).toBe('0:42');
@@ -114,11 +103,10 @@ describe('chat labels', () => {
 });
 
 describe('new thread defaults (owner decision F-5)', () => {
-  it('starts from the thread the user started last, ignoring workflow threads', () => {
+  it('starts from the thread the user started last', () => {
     const threads = [
       thread('old', { createdAt: '2026-11-01T08:00:00.000Z' }),
       thread('new', { createdAt: '2026-11-02T09:00:00.000Z', providerInstanceId: 'codex' }),
-      thread('run', { createdAt: '2026-11-02T10:00:00.000Z', runId: 'r1' }),
     ];
     expect(lastUsedThread(threads)?.id).toBe('new');
     expect(lastUsedThread([])).toBeUndefined();

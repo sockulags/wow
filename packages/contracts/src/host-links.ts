@@ -1,12 +1,5 @@
 import { z } from 'zod';
-import {
-  ChangeRequest,
-  HostError,
-  HostKind,
-  Issue,
-  Page,
-  Ticket,
-} from './hosts.js';
+import { ChangeRequest, HostError, HostKind, Issue, Page, Ticket } from './hosts.js';
 
 // Links and references to the user's own hosts in chat messages (agent workbench spec 19 to
 // 26). A link is recognised only against a site wow has settings and a token for: the server

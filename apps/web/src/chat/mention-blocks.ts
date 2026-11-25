@@ -29,11 +29,7 @@ export function threadMatches(
 ): Thread[] {
   return threads
     .filter(
-      (thread) =>
-        thread.id !== self &&
-        thread.runId === null &&
-        thread.kind !== 'assistant' &&
-        matches(thread.title, query),
+      (thread) => thread.id !== self && thread.kind !== 'assistant' && matches(thread.title, query),
     )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, max);

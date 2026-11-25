@@ -1,6 +1,12 @@
-import type { ChangeRequest, HostCheck, HostRead } from '@wow/contracts';
+import type { ChangeRequest, HostCheck } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
-import { changeRequestStateLabel, checksLabel, failingChecks, lastFetchedLabel } from './labels';
+import {
+  changeRequestStateLabel,
+  checksLabel,
+  failingChecks,
+  lastFetchedLabel,
+  type HostReadFacts,
+} from './labels';
 
 // The words for what a host said. All invented.
 
@@ -45,7 +51,7 @@ describe('what the host said, in words', () => {
   });
 
   it('says when a read was last fetched and from where, with the time it is given', () => {
-    const read: Pick<HostRead, 'fetchedAt' | 'host' | 'hostName'> = {
+    const read: Pick<HostReadFacts, 'fetchedAt' | 'host' | 'hostName'> = {
       host: 'github',
       hostName: 'ghe.example.invalid',
       fetchedAt: '2026-11-03T09:00:00.000Z',
