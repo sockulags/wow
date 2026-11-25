@@ -107,7 +107,9 @@ test.describe('setup file', () => {
     await expect(row).toHaveAttribute('data-state', 'undone');
     await expect(row).toContainText('Undone');
     await page.goto('/settings/hosts');
-    await expect(page.getByLabel('Interval', { exact: true })).toHaveValue('60');
+    await expect(page.getByLabel('Longest wait for a request limit', { exact: true })).toHaveValue(
+      '60',
+    );
   });
 
   test('a setup file that is wrong is refused with the line and the reason @app-assistant-23', async ({
