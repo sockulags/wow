@@ -1,6 +1,6 @@
 ---
 id: 2026-11-orchestrator-threads
-status: accepted
+status: done
 rev: 1
 supersedes: null
 ---

@@ -2,7 +2,7 @@
 intent: 2026-11-orchestrator-threads
 rev: 3
 built_on: spec@3
-status: accepted
+status: done
 source: files
 ---
 
