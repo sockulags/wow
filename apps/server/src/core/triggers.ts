@@ -114,12 +114,19 @@ const cardState = (
       ];
 
 // Whether the card has started work yet: a thread, or, for a card that ran before cards started
-// threads, a run that migration 0051 removed. Such a card has no thread but a fired occurrence, or
-// a fired trigger without the failure of a thread that could not start.
+// threads, a run that migration 0051 removed. Such a card has no thread, but an occurrence that
+// fired without one, or a fired trigger and the end state its run left (`done` or `stopped`). A
+// card made again with the same id (Undo of a delete) is `scheduled` and its occurrences that
+// fired name their threads, so it is armed again.
 const hasStarted = (card: CalendarItem, read: ReadModel): boolean =>
   (card.threadId ?? null) !== null ||
-  read.cardOccurrences(card.id).some((occurrence) => occurrence.outcome === 'fired') ||
-  (read.trigger(triggerIdFor(card.id))?.state === 'fired' && card.state !== 'failed');
+  read
+    .cardOccurrences(card.id)
+    .some(
+      (occurrence) => occurrence.outcome === 'fired' && (occurrence.threadId ?? null) === null,
+    ) ||
+  (read.trigger(triggerIdFor(card.id))?.state === 'fired' &&
+    (card.state === 'done' || card.state === 'stopped'));
 
 // What the card's trigger row names as its workflow.
 const workflowRef = (card: CalendarItem): string => card.workflowName ?? card.workflowId ?? '';

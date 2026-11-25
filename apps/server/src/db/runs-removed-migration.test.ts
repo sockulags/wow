@@ -394,6 +394,16 @@ describe('what a run left behind (migration 0051)', () => {
       state: 'fired',
       run_id: 'run-folder',
     });
+    // The trigger of a card deleted after its thread fired stays; Undo makes the card again.
+    insert(old, 'triggers', {
+      id: 'card-gone:trigger',
+      kind: 'card',
+      calendar_item_id: 'card-gone',
+      workflow_id: 'delivery',
+      run_at: '2026-11-18T09:00:00.000Z',
+      zone: 'Europe/Stockholm',
+      state: 'fired',
+    });
     old.close();
 
     server = await launch(home);
@@ -422,5 +432,22 @@ describe('what a run left behind (migration 0051)', () => {
         .prepare("SELECT state FROM calendar_items WHERE id = 'card-ran'")
         .get(),
     ).toEqual({ state: 'done' });
+
+    // A card made again with that id is armed again, as before.
+    server.engine.dispatch('restore-card-gone', {
+      type: 'card.create',
+      cardId: 'card-gone',
+      title: 'Pour the tea',
+      start: '2099-01-06T09:00:00.000Z',
+      end: '2099-01-06T10:00:00.000Z',
+      zone: 'Europe/Stockholm',
+      projectId: 'tea',
+      workflowId: 'delivery',
+    });
+    expect(
+      server.database.sqlite
+        .prepare("SELECT state, run_at FROM triggers WHERE id = 'card-gone:trigger'")
+        .get(),
+    ).toEqual({ state: 'scheduled', run_at: '2099-01-06T09:00:00.000Z' });
   });
 });
