@@ -1921,9 +1921,10 @@ log 2026-11-23). Events are never replayed, so the migration leaves only what it
 the assistant started keeps its conversation as an ordinary chat thread (`startedBy` back to
 null, `follow_turns` dropped); a question it answered keeps its answer without the quoted words
 (`answered_because` dropped); the notifications of kind `briefing` and `reminder`, the events
-of the removed kinds, and the assistant's changes and proposals of the removed settings (and of the
-settings 0051 removed, whose records it left) are deleted with those settings' rows; and the tables `assistant_permission_uses`, `briefings`,
-`decision_briefs`, `decision_dismissals` and `decision_reminders` are dropped. The web app no
+of the removed kinds, and the assistant's changes and proposals of the removed settings (and of
+the settings 0051 removed, whose records it left) are deleted with those settings' rows; and the
+tables `assistant_permission_uses`, `briefings`, `decision_briefs`, `decision_dismissals` and
+`decision_reminders` are dropped. The web app no
 longer sends `presence.back`. A missed card counts in `diagnose_setup` until it starts a thread.
 
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
