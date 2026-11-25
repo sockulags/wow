@@ -266,22 +266,4 @@ describe('the diagnosis (spec 19, 20)', () => {
       'Its start time passed without starting its thread: it was put in the past, or wow was closed or the scheduler paused then. Missed triggers are set to "Mark as missed" in Settings → Scheduler. Run now on the card starts it.',
     );
   });
-
-  it('drops a missed card the user dismissed from the decision queue', async () => {
-    dispatch({
-      type: 'card.create',
-      cardId: 'late',
-      title: 'Brew yesterday',
-      start: at(-24 * 60),
-      end: at(-23 * 60),
-      zone: 'Europe/Stockholm',
-      projectId: 'tea',
-      workflowId: 'brew',
-    });
-    const before = (await diagnose()).diagnosis.problems;
-    expect(ofKind(before, 'card')).toHaveLength(1);
-    dispatch({ type: 'decision.dismiss', decisionId: 'missedCard:late' });
-    const after = (await diagnose()).diagnosis.problems;
-    expect(ofKind(after, 'card')).toEqual([]);
-  });
 });

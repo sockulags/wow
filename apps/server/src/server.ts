@@ -11,9 +11,6 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { BriefRequester } from './assistant/briefs.js';
-import { Chief } from './assistant/chief.js';
-import { DelegationFollower } from './assistant/follow.js';
 import { assistantMcpPath, createMcpHandler, type AssistantEndpoint } from './assistant/mcp.js';
 import { HelperEndpoint, helperMcpPath } from './helpers/endpoint.js';
 import { HelperTools } from './helpers/helper-tools.js';
@@ -112,12 +109,9 @@ export interface RunningServer {
   readonly secrets: SecretStore;
   readonly providers: ProviderAdapters;
   readonly skills: SkillsService;
-  readonly follower: DelegationFollower;
   // Tells a main thread when its helper ends a turn or asks (agent orchestration spec 3).
   readonly helperFollower: HelperFollower;
   readonly cardFollower: CardFollower;
-  readonly briefs: BriefRequester;
-  readonly chief: Chief;
   readonly workspaces: Workspaces;
   readonly providerService: ProviderService;
   // Snapshots of chat threads' folders and restores from them (thread work spec 19 to 26).
@@ -270,12 +264,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     toolImages: (threadId, list) => images.keepToolImages(threadId, list),
   });
   modelLabel = (model, providerInstanceId) => providerService.modelLabel(model, providerInstanceId);
-  // Gives the assistant a turn when a thread it started ends a turn or asks something.
-  const follower = new DelegationFollower({ db: database.db, engine, logger });
   const helperFollower = new HelperFollower({ db: database.db, engine, logger });
   const cardFollower = new CardFollower({ db: database.db, engine, logger });
-  // Asks the assistant for the brief of each new decision (chief of staff spec 18).
-  const briefs = new BriefRequester({ db: database.db, engine, logger });
   const providerUpdates = new ProviderUpdates({
     db: database.db,
     engine,
@@ -460,10 +450,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
       http.listen(options.port ?? settings.get('advanced.port'), '127.0.0.1');
     });
   } catch (error) {
-    follower.stop();
     helperFollower.stop();
     cardFollower.stop();
-    briefs.stop();
     await workspaces.stop();
     await providerService.stop();
     database.close();
@@ -523,15 +511,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.schedulerTimers ? { timers: options.schedulerTimers } : {}),
   });
-  // Briefings, reminders and cards moved around meetings, on the scheduler's clock.
-  const chief = new Chief({
-    db: database.db,
-    engine,
-    settings,
-    logger,
-    clock: options.clock ?? (() => new Date()),
-  });
-  scheduler.onTick(() => chief.tick());
   scheduler.onTick(() =>
     archiveDoneByAge({
       db: database.db,
@@ -579,15 +558,10 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   let stopped: Promise<void> | undefined;
   const stop = () =>
     (stopped ??= (async () => {
-      follower.stop();
       helperFollower.stop();
       cardFollower.stop();
-      briefs.stop();
-      chief.stop();
-      await follower.settled();
       await helperFollower.settled();
       await cardFollower.settled();
-      await briefs.settled();
       await stopServices();
       await providerUpdates.stop();
       await providerService.stop();
@@ -615,11 +589,8 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
     secrets,
     providers,
     skills,
-    follower,
     helperFollower,
     cardFollower,
-    briefs,
-    chief,
     workspaces,
     providerService,
     snapshots,

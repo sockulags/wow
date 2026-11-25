@@ -190,20 +190,6 @@ describe('the Assistant thread (orchestrator threads spec 25)', () => {
     expect(startTurns('claude-home')[0]?.resumeId).toBeUndefined();
   });
 
-  it("is not asked for a decision's brief, which it has no tool to write", async () => {
-    await instance('claude-work', 'claude', 'Claude at work');
-    await greet();
-    const before = startTurns('claude-work').length;
-    const items = rows<ThreadItem>('threadItems', assistantThreadId).length;
-    dispatch({
-      type: 'assistant.requestBrief',
-      decisionId: 'approval:a1',
-      summary: 'Kettle wants to run pnpm test',
-    });
-    expect(startTurns('claude-work')).toHaveLength(before);
-    expect(rows<ThreadItem>('threadItems', assistantThreadId)).toHaveLength(items);
-  });
-
   it('keeps its id for wow alone', () => {
     expect(
       refusal(() =>

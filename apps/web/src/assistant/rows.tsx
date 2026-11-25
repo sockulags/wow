@@ -1,11 +1,9 @@
 import { useNeedsYouFocus } from '@/chat/needs-you';
 import {
-  assistantPermissionLabels,
   findSecret,
   heldSecretSentence,
   secretPatterns as compiled,
   type AssistantChange,
-  type AssistantPermissionUse,
   type AssistantPlace,
   type AssistantProposal,
   type AssistantProposalLine,
@@ -17,7 +15,6 @@ import {
   PencilLineIcon,
   ShieldQuestionIcon,
   XIcon,
-  ZapIcon,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useStore } from 'zustand';
@@ -89,12 +86,9 @@ function Refusal({ children }: { children: ReactNode }) {
 // marked "Undone" after. A refused Undo shows the server's reason under it (spec 8).
 export function ChangeRow({
   change,
-  under,
   onUndo,
 }: {
   change: AssistantChange;
-  // The standing permission the change was made under, when it was (chief of staff spec 5).
-  under?: string;
   onUndo(): Promise<unknown>;
 }) {
   const { busy, error, run } = useAction();
@@ -121,12 +115,6 @@ export function ChangeRow({
           <span className="text-muted-foreground">
             <PlaceLink place={change.place} />
           </span>
-          {under && (
-            <span className="text-muted-foreground" data-testid="assistant-change-under">
-              {' · under '}
-              {under}
-            </span>
-          )}
         </p>
         {undone ? (
           <Badge variant="outline" className="text-muted-foreground">
@@ -338,30 +326,5 @@ export function WaitingLine({
       </div>
       {error && <Refusal>{error}</Refusal>}
     </div>
-  );
-}
-
-// Something the assistant did under a standing permission that has no Undo of its own, such as
-// a run it started (chief of staff spec 5). Stopping the run is the user's, at the run.
-export function PermissionUseRow({ use }: { use: AssistantPermissionUse }) {
-  return (
-    <section
-      aria-label={`Done: ${use.what}`}
-      data-testid="assistant-permission-use"
-      className="flex min-w-0 items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs"
-    >
-      <ZapIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-      <p className="min-w-0 flex-1">
-        <span className="font-medium">{use.what}</span>
-        <span aria-hidden className="text-muted-foreground">
-          {' · '}
-        </span>
-        <span className="text-muted-foreground">
-          <PlaceLink place={use.place} />
-          {' · under '}
-          {assistantPermissionLabels[use.kind]}
-        </span>
-      </p>
-    </section>
   );
 }

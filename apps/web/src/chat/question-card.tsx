@@ -27,8 +27,6 @@ export type QuestionStatus =
   | {
       readonly kind: 'answered';
       readonly reply: QuestionReply | string;
-      // The assistant answered it from the user's words (chief of staff spec 12): the quote.
-      readonly because?: string | undefined;
     }
   | { readonly kind: 'closed' };
 
@@ -311,17 +309,8 @@ export function QuestionCard<H>({
             </div>
             {question.status.kind === 'answered' && (
               <p data-testid="question-answer" className="text-xs text-muted-foreground">
-                {question.status.because === undefined
-                  ? 'Answered: '
-                  : 'Answered by the assistant: '}
+                {'Answered: '}
                 {answerLine(question.status.reply)}
-                {question.status.because !== undefined && (
-                  <span data-testid="question-because">
-                    {' · because you said: “'}
-                    {question.status.because}
-                    {'”'}
-                  </span>
-                )}
               </p>
             )}
             {question.status.kind === 'closed' && (

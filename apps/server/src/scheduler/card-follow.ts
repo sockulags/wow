@@ -15,7 +15,6 @@ const moves = new Set<DomainEvent['kind']>([
   'approval.answered',
   'question.asked',
   'question.answered',
-  'question.answeredByAssistant',
   'threadItem.added',
   'thread.stateChanged',
 ]);

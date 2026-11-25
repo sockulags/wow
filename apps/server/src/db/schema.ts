@@ -3,12 +3,9 @@ import type {
   ChangeCount,
   ReportedLimit,
   AssistantChangeState,
-  AssistantPermissionKind,
   AssistantPlace,
   AssistantProposalLine,
   AssistantProposalState,
-  BriefingLine,
-  BriefingMoment,
   AssistantTarget,
   ApprovalDecision,
   ApprovalKind,
@@ -127,11 +124,9 @@ export const threads = sqliteTable(
     forkedFrom: json<ForkOrigin>(),
     // A chat thread's own working copy (thread work spec 11); null for a thread in its folder.
     workingCopy: json<WorkingCopy>(),
-    // The assistant started it (chief of staff spec 10), and the turns it had to follow it.
-    startedBy: text().$type<'assistant' | 'helper'>(),
-    // A helper thread's main thread (agent orchestration spec 4).
+    // A helper thread, and its main thread (agent orchestration spec 4).
+    startedBy: text().$type<'helper'>(),
     parentThreadId: text(),
-    followTurns: integer().notNull().default(0),
     // What the thread changed as of its last turn's end (chat overview spec 4); null when not
     // measured.
     changeCount: json<ChangeCount>(),
@@ -225,7 +220,6 @@ export const questions = sqliteTable(
     request: json<unknown>().notNull(),
     answer: text(),
     answeredAt: text(),
-    answeredBecause: text(),
   },
   (table) => [index('questions_thread_idx').on(table.threadId)],
 );
@@ -356,55 +350,6 @@ export const assistantChanges = sqliteTable('assistant_changes', {
   inverse: json<Command[]>().notNull(),
   state: text().$type<AssistantChangeState>().notNull(),
   undoneAt: text(),
-});
-
-// What the assistant did under a standing permission (chief of staff spec 5), in the order it
-// happened; the daily limit counts these.
-export const assistantPermissionUses = sqliteTable(
-  'assistant_permission_uses',
-  {
-    id: text().primaryKey(),
-    at: text().notNull(),
-    permissionId: text().notNull(),
-    kind: text().$type<AssistantPermissionKind>().notNull(),
-    commandType: text().notNull(),
-    what: text().notNull(),
-    place: json<AssistantPlace>().notNull(),
-  },
-  (table) => [index('assistant_permission_uses_at_idx').on(table.permissionId, table.at)],
-);
-
-// The assistant's brief of a decision (chief of staff spec 18): asked once, written once.
-export const decisionBriefs = sqliteTable('decision_briefs', {
-  decisionId: text().primaryKey(),
-  requestedAt: text().notNull(),
-  text: text(),
-  recommendation: text(),
-  writtenAt: text(),
-});
-
-// The assistant's briefings (chief of staff spec 20 to 23), newest last.
-export const briefings = sqliteTable('briefings', {
-  id: text().primaryKey(),
-  at: text().notNull(),
-  moment: text().$type<BriefingMoment>().notNull(),
-  since: text().notNull(),
-  lines: json<BriefingLine[]>().notNull(),
-  summary: text(),
-  summaryPending: bool().notNull().default(false),
-  notified: bool().notNull().default(false),
-});
-
-// Decisions that got their one reminder (spec 26).
-export const decisionReminders = sqliteTable('decision_reminders', {
-  decisionId: text().primaryKey(),
-  at: text().notNull(),
-});
-
-// Failed runs and missed cards the user is done with: they leave the decision queue.
-export const decisionDismissals = sqliteTable('decision_dismissals', {
-  decisionId: text().primaryKey(),
-  at: text().notNull(),
 });
 
 // Commands of the assistant that wait for the user's yes.

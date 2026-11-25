@@ -365,6 +365,13 @@
       "when": 1795549744616,
       "tag": "0051_runs_plans_and_event_triggers_removed",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1795625214178,
+      "tag": "0052_chief_of_staff_removed",
+      "breakpoints": true
     }
   ]
 }

@@ -69,8 +69,7 @@ export class Scheduler implements BackgroundService {
     return this.#paused;
   }
 
-  // Runs on every tick, paused or not (the assistant's briefings and reminders, chief of staff
-  // spec 20 to 27), before the triggers fire.
+  // Runs on every tick, paused or not (archiving done threads by age), before the triggers fire.
   readonly #tickers = new Set<() => void>();
 
   onTick(listener: () => void): () => void {

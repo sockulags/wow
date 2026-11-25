@@ -1658,13 +1658,9 @@ const seedSettings: Record<string, unknown> = {
     'confluence-e2e-token',
   ),
 };
-// The assistant's own rhythm runs on the real clock here, so it is off unless a case turns it on:
-// a briefing or a brief arriving in the middle of another case would be a turn it did not expect.
 // A workflow is sent as its own text here: the default follow template's words (questions,
 // waiting) would steer the mock agent's replies, which match on words in the prompt.
 for (const [key, value] of Object.entries({
-  'assistant.briefings': false,
-  'assistant.briefsPerDay': 0,
   'workflows.followTemplate': '{{workflow}}',
 })) {
   server.engine.dispatch(`seed-${key}`, { type: 'setting.set', key, scope: 'global', value });

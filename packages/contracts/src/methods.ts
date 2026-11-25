@@ -1,12 +1,6 @@
 import { z } from 'zod';
 import { CalendarRange, CalendarRangeParams } from './repeat.js';
-import {
-  AssistantChange,
-  AssistantPermissionUse,
-  AssistantProposal,
-  Briefing,
-  Decision,
-} from './assistant.js';
+import { AssistantChange, AssistantProposal } from './assistant.js';
 import {
   AttachmentPutParams,
   AttachmentPutResult,
@@ -108,16 +102,10 @@ export const subscriptionTopics = {
   settings: { row: SettingRow, threadScoped: false },
   assistantChanges: { row: AssistantChange, threadScoped: false },
   assistantProposals: { row: AssistantProposal, threadScoped: false },
-  // What the assistant did under a standing permission, in the order it happened.
-  assistantPermissionUses: { row: AssistantPermissionUse, threadScoped: false },
-  // Everything that waits for the user, in the server's order (chief of staff spec 16, 17).
-  decisions: { row: Decision, threadScoped: false },
   // What each thread at work does now (parallel threads spec 11, 12).
   threadActivity: { row: ThreadActivity, threadScoped: false },
   // The plan limits each provider instance last reported (chat overview spec 26).
   providerLimits: { row: ProviderLimits, threadScoped: false },
-  // The assistant's briefings, newest first (chief of staff spec 20 to 23).
-  briefings: { row: Briefing, threadScoped: false },
   // Setup files applied here, in the order applied, with their Undo state.
   setupApplications: { row: SetupApplication, threadScoped: false },
 } as const;

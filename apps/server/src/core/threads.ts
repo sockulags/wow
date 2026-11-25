@@ -50,7 +50,7 @@ import {
   type RestoreConfirmed,
 } from '@wow/contracts';
 import { z } from 'zod';
-import { resolveStored } from '../settings/service.js';
+import { settingValue } from './setting-value.js';
 import {
   assistantAnswersNote,
   assistantThreadEvents,
@@ -1452,12 +1452,6 @@ const seenChanged = (threadId: string, seen: boolean, through?: number): DomainE
   aggregate: threadId,
   payload: through === undefined ? { threadId, seen } : { threadId, seen, through },
 });
-
-const settingValue = (key: string, read: ReadModel, context: DecideContext): unknown => {
-  const definition = context.registry[key];
-  if (!definition) return undefined;
-  return resolveStored(key, definition, {}, (scope) => read.setting(key, scope)).value;
-};
 
 // What the user asked to hear about chat threads (spec 65).
 const chatNotifications = (read: ReadModel, context: DecideContext): ChatNotifications => {

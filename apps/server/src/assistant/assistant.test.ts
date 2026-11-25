@@ -32,11 +32,8 @@ import { readers } from './readers.js';
 import { asks } from './asks.js';
 import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
-import { memoryReaders } from './memory.js';
 import { modelReaders } from './models.js';
-import { delegationTools } from './delegation-tools.js';
 import { outputReaders } from './outputs.js';
-import { permissionReaders } from './permission-readers.js';
 
 // The assistant's tools on the server (app assistant plan U1): every acceptance line of the
 // unit has a case here that names it.
@@ -262,8 +259,6 @@ describe('the assistant endpoint', () => {
           ...Object.keys(diagnosisReaders),
           ...Object.keys(modelReaders),
           ...Object.keys(outputReaders),
-          ...Object.keys(memoryReaders),
-          ...Object.keys(permissionReaders),
           ...Object.keys(asks),
           ...Object.keys(changeTools),
           ...Object.keys(builtTools),
@@ -582,17 +577,13 @@ describe('read tools', () => {
     const names = server.assistant.tools.list().map((tool) => tool.name);
     expect(
       names.filter(
-        (name) =>
-          /thread|message|file|content|chat/i.test(name) &&
-          !(name in outputReaders) &&
-          !(name in delegationTools),
+        (name) => /thread|message|file|content|chat/i.test(name) && !(name in outputReaders),
       ),
     ).toEqual([]);
     for (const name of [
       ...Object.keys(readers),
       ...Object.keys(guideReaders),
       ...Object.keys(diagnosisReaders),
-      ...Object.keys(memoryReaders),
     ]) {
       const needsService = name === 'test_connection' || name === 'read_token_guide';
       const { text } = await call(name, needsService ? { service: 'github' } : {});

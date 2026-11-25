@@ -1231,42 +1231,6 @@ Each main thread's agent is told **Instructions for main threads** (`chat.instru
 Chat) after its provider's own instructions: how to use wow's tools, and never to ask for a
 secret. A changed text applies from the next start of a thread's session.
 
-### Permissions
-
-By default the assistant asks before it starts a run or puts a card with a workflow on the
-calendar that starts within minutes. If you want it to just do such things, turn on **Let the
-assistant act under its permissions** (`assistant.delegation`) in Settings → Assistant and add
-permissions under **Permissions** (`assistant.permissions`):
-
-- **Plan runs**: cards with the workflows you pick, in the projects you pick, also ones that start
-  soon, inside your work hours.
-- **Start runs**: start a run of those workflows now.
-- **Start threads**: start chat threads in the projects you pick. Say "fix the failing fixture in
-  Tea" and the assistant starts a thread there with a brief written from your words, at the
-  permission's widest mode, in the thread's own working copy when the project is a Git
-  repository, so your folder is untouched. The thread is yours like any other: it shows "Started
-  by the assistant" in its header and a sparkle in the list, and you can open it, write in it or
-  stop it. At most `assistant.maxDelegatedLive` (3) of its threads work at once; past that it
-  plans the work for a free slot instead. Without the permission it offers the thread with the
-  brief filled in, as before.
-- **Drive threads**: when a thread it started ends a turn or asks something, the assistant gets a
-  turn to look at it (at most `assistant.followTurns`, 3, a thread) and reports back to you. With
-  this permission it may also write a follow-up that stays within what you asked, and answer the
-  agent's question when your own words already answer it; the question card then says "Answered
-  by the assistant: … · because you said: …". Approvals always wait for you.
-- **Move cards**: move cards with a workflow off a meeting that comes to overlap them (see
-  "Briefings").
-- **Retry** is listed already, but nothing uses it yet: wow cannot yet tell a provider's hiccup
-  from an agent's own failure.
-
-Each permission can end on a day (**Until**), have a limit (**Times a day**) and be **Paused**.
-What the assistant does under one shows in the conversation as usual, marked "under Start runs";
-a card it put on the calendar has Undo, a run it started is stopped by you at the run. When a
-permission would cover something but may not now (paused, ended, its limit reached, outside work
-hours) the assistant asks as before, and the card's last line says why. No permission lets it
-answer a gate or an approval, change what agents may do on their own, or turn delegation and
-permissions on or wider: it can propose those, and only you say yes.
-
 **Focus** on a card makes it time kept free: it carries no workflow, shows as a dashed block,
 and the assistant plans nothing over it.
 

@@ -1278,12 +1278,7 @@ until that unit removes the mark. `group.*` covers every key of the group.
 - assistant: `assistant.greeting`,
   `assistant.startSoonMinutes`, `assistant.diagnosisLimit`, `assistant.valueLength`,
   `assistant.secretPatterns`, `assistant.askRefusedWords`, `assistant.modelGuidance`,
-  `assistant.notes`, `assistant.excludedProjects`, `assistant.readMaxBytes`,
-  `assistant.readMaxMessages`, `assistant.delegation`,
-  `assistant.permissions`, `assistant.followTurns`, `assistant.maxDelegatedLive`,
-  `assistant.briefsPerDay`, `assistant.briefings`, `assistant.briefingsPerDay`,
-  `assistant.briefAfterMeetingMinutes`, `assistant.briefAfterIdleMinutes`,
-  `assistant.remindAfterMinutes` (see
+  `assistant.excludedProjects`, `assistant.readMaxBytes`, `assistant.readMaxMessages` (see
   "Assistant", "Question card" and "Models for steps")
 - appearance: `appearance.theme`, `appearance.uiFont`, `appearance.codeFont`, `appearance.density`,
   `appearance.paletteRecent`, `appearance.contextPanel`, `appearance.contextPanelWidth`
@@ -1724,13 +1719,7 @@ and a changed text opens a new session on the same conversation (it is part of t
 with the helper tools); Codex gets it as `developerInstructions` on `thread/start` and
 `thread/resume`, read when the thread loads.
 
-**What wow no longer asks of it.** Briefs of decisions, briefing summaries and follow-up turns on
-threads the assistant started needed the assistant's own tools (`write_brief`,
-`write_briefing_summary`, `read_thread`), which a main thread does not have. `assistantAsked` in
-`assistant/briefs.ts` is false, so `decideBriefRequest`, `decideBriefing` and `decideFollow` send
-it nothing; a briefing keeps wow's own lines. They go with the rest of the assistant's own
-machinery in U8's second part. Migration 0050 moved the stored value
-of the assistant's old instructions setting here.
+Migration 0050 moved the stored value of the assistant's old instructions setting here.
 
 **Tools-only turns in the adapters.** A `startTurn` with a `toolset` is handled inside each
 adapter, and a session started with one never becomes an ordinary session or the other way
@@ -1807,12 +1796,6 @@ three kinds and nothing else.
   `read_free_slots {minutes, from?, days?, limit?}` answers the gaps of `freeSlots`
   (`packages/contracts/src/free-slots.ts`, shared with the plan dialog's `nextFreeSlot`) inside
   the calendar's work hours, around Outlook meetings and the occurrences of cards.
-- Notes (`assistant/memory.ts`, spec 29, 30). The notes are the global setting `assistant.notes`
-  (`AssistantNote[]`: id, text, addedAt, until, by). `remember {text, until?}` and `forget
-{noteId}` are built tools that write the whole list with `setting.set`, so a note is an
-  ordinary change with its row ("Memory: … → …") and Undo, and `read_notes` lists them.
-  The notes were appended to the assistant's tools-only turns, which no thread runs since the
-  Assistant thread became a main thread; they go with the assistant's own tools. Settings → Assistant shows them as a list (`settings/memory-section.tsx`).
 - Change tools (`changeTools`) each name one command type of `Command`. The tool's input is
   that command's own schema without `type`, without the id of the thing it makes (the tool
   makes one up, as a view does) and without fields the assistant never fills in (`stopRun`).
@@ -1927,92 +1910,28 @@ An entry is a word, a refusal, or a function of the command and the projections 
 class depends on what the command says. No tool exists for a type that is always refused, and
 `AssistantTools` refuses to start with one.
 
-**Standing permissions** (`assistant/permissions.ts`, chief of staff spec 4 to 8). The settings
-`assistant.delegation` (off by default) and `assistant.permissions` (`AssistantPermission[]`:
-kind, projects, workflows, widest permission mode, end date, daily limit, paused) are both in
-`guardSettings`, so the assistant can only propose them. `coverage(command, read, context)`
-answers for a command the class table holds as a proposal: `covered` with the permission, `held`
-with the reason a permission that would cover it may not now (paused, ended, its daily limit of
-uses since midnight in the calendar's zone reached, a card outside work hours), or nothing. It
-looks only at four commands and only at what makes them proposals: `card.create`, `card.update`
-and `backlog.plan` for Plan runs (a card with a workflow that starts soon, inside work hours) and
-`card.runNow` for Start runs, each for a workflow and project the permission names. Every
-other command, every refused one and every proposal of another kind (autonomy in a workflow,
-guarded settings, skills) is untouched; a test walks every
-command type. The kinds for threads, retries and moving cards are stored here and acted on by
-later units. Focus cards (`focus` on a card, migration `0038_card_focus`) carry no workflow:
-`card.create` and `card.update` refuse one, and as cards they are busy for `read_free_slots`.
+Focus cards (`focus` on a card, migration `0038_card_focus`) carry no workflow: `card.create`
+and `card.update` refuse one, and as cards they are busy for `read_free_slots`.
 
-**Delegated work** (`assistant/delegation.ts`, `assistant/delegation-tools.ts`, chief of staff
-spec 9 to 15). `assistant.startThread`, `assistant.sendToThread` and `assistant.answerQuestion`
-are commands only the assistant sends (anyone else is refused), settled by the standing
-permissions before the class table is read; the table lists them as refused, so no change tool
-offers them. The tools `start_thread`, `write_to_thread` and `answer_agent_question` build them.
-`start_thread` asks the trackers whether the project folder is a Git repository and then sets
-`ownWorkingCopy`; the thread is created with the project's provider, model and effort (or the
-tool's) and the permission's widest mode, `thread.delegated` marks it `startedBy: 'assistant'`
-(migration `0039_delegated_threads`), and the brief goes out as its first message, all as the
-user's commands, so it is an ordinary chat thread from then on. More than
-`assistant.maxDelegatedLive` working threads of the assistant refuse a new one with "plan it for
-a free slot". Writing and answering need Drive threads and a thread the assistant started; an
-answer goes through `question.answer` and `question.answeredByAssistant` keeps the user's words it
-came from (`answeredBecause`), which the question card shows. Approvals are never answered.
-`DelegationFollower` (`assistant/follow.ts`) listens for `turn.ended`, `question.asked` and
-`approval.requested` of such a thread and dispatches `assistant.follow` (an internal command),
-which sends the assistant a "From wow: …" message (queued if its turn runs) and counts
-`followTurns`, until `assistant.followTurns`. Every delegated act is an
-`assistant.permissionUsed` row.
-
-**The decision queue** (`assistant/decisions.ts`, chief of staff spec 16 to 19). The topic
-`decisions` is built on the server from the stored rows each time it is read: approvals and
-questions that hold a thread's running turn (`approval:<id>`, `question:<id>`), pending
-assistant proposals and missed cards until `decision.dismiss` (table `decision_dismissals`;
-runs, with their gates, limits and failures, went in U8 part 2). `decisionOrder` puts what holds
-a turn first, then proposals and missed cards; inside each the one blocking the soonest card,
-then the oldest. `Subscriptions` pushes `decisions` with any of the topics it is read from. Each
-row carries `fixed` lines wow writes itself and the assistant's `brief` (table `decision_briefs`,
-migration `0040_decision_briefs`). `BriefRequester` (`assistant/briefs.ts`) dispatches the
-internal `assistant.requestBrief` for each new decision;
-within `assistant.briefsPerDay` since midnight in the calendar's zone it marks the brief asked
-and sends the assistant a "From wow: …" message naming the decision. The assistant writes it with
-`write_brief` (`assistant.writeBrief`), which is refused for a decision wow did not ask about and
-for one already written. No page shows the queue any more (orchestrator threads spec 34); the
-tray lists its first three rows and opens the Assistant thread.
-
-**The assistant's rhythm** (`assistant/chief.ts`, chief of staff spec 20 to 27). `Chief.tick`
-runs on every scheduler tick (`Scheduler.onTick`, also while the scheduler is paused) once the
-assistant's conversation exists. Briefings (`assistant.briefings`): `morning:<date>` when work
-hours start, `evening:<date>` when they end, `afterMeeting:<meetingId>` when an Outlook meeting
-of at least `assistant.briefAfterMeetingMinutes` ended since the last tick and something
-happened while it ran, and `back:<id>` when the web app's `presence.back` (sent on
-`visibilitychange` with since when it was hidden, `app/presence.ts`) reports at least
-`assistant.briefAfterIdleMinutes` away. The internal `assistant.brief` stores wow's lines (runs
-started, finished and failed since the previous briefing, what the assistant did under its
-permissions, the queue's count and first rows, the rest of today's cards and free minutes) in
-`briefings` (topic `briefings`, migration `0041_briefings`) and, within
-`assistant.briefingsPerDay`, asks the assistant for a summary that it writes with
-`write_briefing_summary`. The summary is written on the assistant's own model; the spec's
-separate briefing model is not built. A briefing's notification (kind `briefing`) and a
-reminder (kind `reminder`, one per decision after `assistant.remindAfterMinutes`, table
-`decision_reminders`) go out only when `Chief.quiet` is false: inside work hours, not in a
-non-all-day Outlook meeting and not inside a focus card; a held briefing is released on a later
-tick. Both follow `scheduler.notifications`. Cards with a workflow and a scheduled trigger that an
-Outlook meeting now overlaps get `assistant.moveCard` with the next free slot of the same length
-after the meeting: under Move cards it is applied as the user's `card.update` with a permission
-use, else it is a proposal. The Retry kind is stored but nothing acts on it yet: a step's failed
-turn carries no sign of whether the provider or the agent failed.
+**What the chief of staff left** (migration `0052_chief_of_staff_removed`, orchestrator threads
+spec 35). The assistant's standing permissions, the threads it started and followed under them,
+the decision queue with its briefs and reminders, the briefings and its notes are gone ("Waits
+for you" on the thread list replaces the queue and helpers replace delegation, intent decision
+log 2026-11-23). Events are never replayed, so the migration leaves only what it keeps: a thread
+the assistant started keeps its conversation as an ordinary chat thread (`startedBy` back to
+null, `follow_turns` dropped); a question it answered keeps its answer without the quoted words
+(`answered_because` dropped); the notifications of kind `briefing` and `reminder`, the events
+of the removed kinds, and the assistant's changes and proposals of the removed settings (and of
+the settings 0051 removed, whose records it left) are deleted with those settings' rows; and the
+tables `assistant_permission_uses`, `briefings`, `decision_briefs`, `decision_dismissals` and
+`decision_reminders` are dropped. The web app no
+longer sends `presence.back`. A missed card counts in `diagnose_setup` until it starts a thread.
 
 **Deciding as the assistant** (`core/assistant.ts`, `decideInSteps`). For the origin
 `assistant` the class comes first. A refused command is rejected with its sentence. An
 ordinary command is decided by the same `decide` the user's command goes through; its events
 are stored, then the thing it changed is read again and an `assistant.changed` event is added
-in the same transaction. A proposal that a standing permission covers is decided as an ordinary command instead, with
-its change row when it has a target, and an `assistant.permissionUsed` event in the same commit
-(`assistant_permission_uses`, topic `assistantPermissionUses`, migration
-`0037_assistant_permission_uses`), worded as its proposal would have been; the tool answers
-`underPermission` and `useId`, and the view marks the change "under <permission>" or, for a
-started run, shows the use as a row of its own. A proposal a permission holds back gets a last
-line "Why this asks". A proposal is decided once and the result thrown away, so that a
+in the same transaction. A proposal is decided once and the result thrown away, so that a
 command the app would refuse fails now with the app's reason and a command that would change
 nothing asks no question; then only `assistant.proposed` is stored. A command the app refuses
 is a `CommandRejected` either way, and the tool hands its message to the assistant (spec 12).
@@ -2251,9 +2170,10 @@ update with the old text, or the create. The event `setup.applied` stores them a
 the `SetupApplicationRecord`; the `setupApplications` topic row (`SetupApplication`) leaves them
 out. Undo checks every part with `undoRefusal` first and is refused, changing nothing, with what
 changed when any thing the file set changed again; otherwise it decides every inverse, newest
-part first, and `setup.undone` marks the row. A step that refuses rolls back the whole
-transaction. Both commands are refused from the assistant in the class table: the user reads the
-preview and presses Apply.
+part first, and `setup.undone` marks the row. A part that set a setting wow no longer has (its
+row deleted by the migration that removed it, such as 0051 or 0052) is passed over: there is
+nothing to put back. A step that refuses rolls back the whole transaction. Both commands are
+refused from the assistant in the class table: the user reads the preview and presses Apply.
 
 **The view** (`apps/web/src/settings/setup.ts`, `setup-section.tsx`). Settings → Advanced has a
 "Setup file" section: "Save setup to a file" (download through a blob link, a toast that says
@@ -3473,7 +3393,7 @@ is no row. A row has the title, the project's name or "No project" under it
 (`ThreadListStatus`), which the server adds to each main thread when it sends the `threads`
 topic (`core/thread-list.ts`, read in `core/subscriptions.ts`): `waits_for_you` when the
 thread needs the user itself or holds a gate card whose approval or question is still open
-(unanswered, and the turn that asked it still running, as in the decision queue; every request
+(unanswered, and the turn that asked it still running; every request
 for the user from any depth is drawn there), `working` when it or any helper under it works,
 `unread` when `seen` is false, else `done`. A change to approvals or questions sends
 the `threads` topic again, since answering a gate card changes no thread row by itself. The
@@ -3704,16 +3624,12 @@ by default), before the project's, the last thread's and the instance's own; the
 them before the first message. A new thread does not carry over the folder wow gave the last
 thread, nor one its helpers or forks work in (`givenFolder`). The helper endpoint's provider in `server.ts` adds
 `AssistantTools.forThread(threadId)` to the helper tools of a thread with no parent: every
-assistant tool but the delegation, brief and memory tools (`mainThreadLeavesOut`), with the
-readers' `threadId` set so `ask_questions` looks at that thread's running turn. The commands go to
+assistant tool, with the readers' `threadId` set so `ask_questions` looks at that thread's running turn. The commands go to
 the engine with the `assistant` origin, so the class table decides them exactly as for the
 assistant: ordinary changes apply and record a change, changes that let the app do more on its
-own become proposals. `thread.answerQuestions` takes a main thread's ask card as well as the
-assistant's: the answer starts the next turn in that main thread, without the assistant's notes.
-Standing permissions the user gave the assistant also cover a main thread's agent, and the
-assistant's note about answered proposals and undone changes reads every record until U8 moves
-the assistant thread. In the web app, `ThreadConversation` of a main thread uses `useAppToolRows`
-(`assistant/app-tool-rows.tsx`, shared with the Assistant view): `placeRows` reads the record
+own become proposals. `thread.answerQuestions` takes a main thread's ask card: the answer starts
+the next turn in that main thread. In the web app, `ThreadConversation` of a main thread uses
+`useAppToolRows` (`assistant/app-tool-rows.tsx`): `placeRows` reads the record
 ids out of the thread's own tool calls, and the change rows with Undo, proposals with Yes and No,
 question cards and secret fields are drawn right after the call that made them.
 **Helper threads** (agent orchestration U2, spec 2 to 8). `helpers/helper-tools.ts`
@@ -3726,7 +3642,7 @@ name, checks with `readSnapshotRepository` that the project is in Git for `isola
 and dispatches `helper.start`; `write_to_helper` and `stop_helper` dispatch `helper.write` and
 `helper.stop`. They go to the engine with the origin `helper` (`CommandOrigin`), and
 `decideInSteps` refuses `helper.*` from any other origin. `helpers/decide.ts` (`decideHelper`)
-decides them in steps, as the assistant's delegation does: the starting thread must be a chat
+decides them in steps: the starting thread must be a chat
 thread (a helper below `chat.helperDepth` counts, see above); `chat.helpersPerThread` and `chat.helpersLive` count
 helpers that work (state `working` or a running turn). `helper.start` decides the user's
 `thread.create` on the named instance (refused unless its last test passed), with the main
@@ -4437,11 +4353,6 @@ left side is the thread list (see "Thread list, unread and chat notifications");
 it narrows to a 3rem rail of status marks while none of it is in use.
 
 ## Testing strategy
-
-The e2e servers seed `assistant.briefings` off and `assistant.briefsPerDay` 0: their scheduler runs
-on the real clock, and a briefing or a brief arriving in the middle of a case would be an
-assistant turn the case did not expect. `e2e/chief-of-staff.spec.ts` turns briefings on itself
-and moves the page's clock to come back "after a while away".
 
 - Contracts and engine: Vitest unit tests, including engine state tables for gates and missed
   policies.

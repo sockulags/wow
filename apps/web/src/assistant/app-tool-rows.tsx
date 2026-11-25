@@ -1,11 +1,9 @@
 import {
   ToolCallItemPayload,
   askedQuestionsOf,
-  assistantPermissionLabels,
   assistantToolOf,
   assistantToolText,
   type AssistantChange,
-  type AssistantPermissionUse,
   type AssistantProposal,
   type ThreadItem,
   type Turn,
@@ -16,16 +14,14 @@ import { useDispatch, useTopic } from '@/chat/data';
 import { ProjectWorkCard, SecretFieldCard, SecretVariableCard } from './cards';
 import { askOf, placeRows, type Placed } from './model';
 import { AssistantQuestions, askState } from './questions';
-import { ChangeRow, PermissionUseRow, ProposalCard } from './rows';
+import { ChangeRow, ProposalCard } from './rows';
 
 // What wow's app tools show the user, right after the call that showed it: a change row with
-// Undo, what a standing permission did, a proposal with Yes and No (app assistant spec 7 to 11),
-// a question card or a secret field. The Assistant view draws them in the assistant's thread, and
-// every main thread draws them for its own agent's calls (orchestrator threads spec 24).
+// Undo, a proposal with Yes and No (app assistant spec 7 to 11), a question card or a secret
+// field. Every main thread draws them for its own agent's calls (orchestrator threads spec 24).
 
 const noChanges: AssistantChange[] = [];
 const noProposals: AssistantProposal[] = [];
-const noUses: AssistantPermissionUse[] = [];
 
 export function PlacedRows({
   placed,
@@ -35,28 +31,16 @@ export function PlacedRows({
   readonly patterns: readonly string[];
 }) {
   const send = useDispatch();
-  if (placed.changes.length === 0 && placed.proposals.length === 0 && placed.uses.length === 0)
-    return null;
-  const usedFor = new Map(placed.uses.map((use) => [use.id, use]));
-  const changed = new Set(placed.changes.map((change) => change.id));
+  if (placed.changes.length === 0 && placed.proposals.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
-      {placed.changes.map((change) => {
-        const use = usedFor.get(change.id);
-        return (
-          <ChangeRow
-            key={change.id}
-            change={change}
-            {...(use ? { under: assistantPermissionLabels[use.kind] } : {})}
-            onUndo={() => send({ type: 'assistant.undo', changeId: change.id })}
-          />
-        );
-      })}
-      {placed.uses
-        .filter((use) => !changed.has(use.id))
-        .map((use) => (
-          <PermissionUseRow key={use.id} use={use} />
-        ))}
+      {placed.changes.map((change) => (
+        <ChangeRow
+          key={change.id}
+          change={change}
+          onUndo={() => send({ type: 'assistant.undo', changeId: change.id })}
+        />
+      ))}
       {placed.proposals.map((proposal) => (
         <ProposalCard
           key={proposal.id}
@@ -93,11 +77,10 @@ export function useAppToolRows(
 ): AppToolRows | undefined {
   const changes = useTopic('assistantChanges') ?? noChanges;
   const proposals = useTopic('assistantProposals') ?? noProposals;
-  const uses = useTopic('assistantPermissionUses') ?? noUses;
   const patterns = useSetting('assistant.secretPatterns');
   const { after } = useMemo(
-    () => placeRows(on ? (items ?? []) : [], changes, proposals, uses),
-    [on, items, changes, proposals, uses],
+    () => placeRows(on ? (items ?? []) : [], changes, proposals),
+    [on, items, changes, proposals],
   );
   const toolWords = useCallback(
     (item: ThreadItem): string | null | undefined => {

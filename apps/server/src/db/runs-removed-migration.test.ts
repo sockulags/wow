@@ -1,22 +1,16 @@
-import { plainProtector } from '@wow/secrets';
-import Sqlite from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import type Sqlite from 'better-sqlite3';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { MockProviderAdapter } from '../hooks/index.js';
-import { databaseFileName, startServer, type RunningServer } from '../server.js';
-import { migrationsFolder } from './database.js';
+import type { RunningServer } from '../server.js';
+import { insert, launchOn, oldStore, tablesOf, threadRow } from './old-store.js';
 
 // Workflow runs, plan runs, plans, the host poller's reads and event triggers are gone
 // (orchestrator threads spec 35): the migration deletes their rows and the events that made
 // them, keeps step threads as done chat threads, and keeps usage and provider limits. The store
-// is built with the migrations up to the one before, filled with invented rows through plain
-// SQL (the removed tables are no longer in the schema), and then opened by the server, twice.
+// is built with the migrations up to the one before and then opened by the server, twice.
 
-const previous = '0050_assistant_is_a_main_thread';
 const at = '2026-11-20T08:00:00.000Z';
 
 let root: string;
@@ -32,74 +26,10 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-async function previousMigrations(): Promise<string> {
-  const folder = path.join(root, 'previous migrations');
-  await cp(migrationsFolder, folder, { recursive: true });
-  const journalFile = path.join(folder, 'meta', '_journal.json');
-  const journal = JSON.parse(await readFile(journalFile, 'utf8')) as {
-    entries: { tag: string }[];
-  };
-  const last = journal.entries.findIndex((entry) => entry.tag === previous);
-  expect(last).toBeGreaterThan(-1);
-  expect(journal.entries[last + 1]?.tag).toBe('0051_runs_plans_and_event_triggers_removed');
-  journal.entries = journal.entries.slice(0, last + 1);
-  await writeFile(journalFile, JSON.stringify(journal));
-  return folder;
-}
-
-// A row with the given values; every other column that must have a value gets '[]', which is
-// valid text and valid JSON alike. An id the table numbers itself is left to it.
-function insert(db: Sqlite.Database, table: string, values: Record<string, unknown>): void {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as {
-    name: string;
-    notnull: number;
-    dflt_value: unknown;
-    pk: number;
-  }[];
-  const row: Record<string, unknown> = {};
-  for (const column of columns) {
-    if (column.notnull === 1 && column.dflt_value === null && column.pk === 0) {
-      row[column.name] = '[]';
-    }
-  }
-  for (const [key, value] of Object.entries(values)) {
-    row[key] = typeof value === 'object' && value !== null ? JSON.stringify(value) : value;
-  }
-  const names = Object.keys(row);
-  db.prepare(
-    `INSERT INTO ${table} (${names.map((name) => `"${name}"`).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`,
-  ).run(...Object.values(row));
-}
-
-const thread = (id: string, values: Record<string, unknown>) => ({
-  id,
-  kind: 'chat',
-  cwd: '/home/me/tea',
-  provider_instance_id: 'claude-work',
-  title: id,
-  model: 'opus',
-  effort: 'high',
-  permission_mode: 'default',
-  state: 'idle',
-  pinned: 0,
-  created_at: at,
-  updated_at: at,
-  ...values,
-});
-
-const launch = (home: string) =>
-  startServer({
-    home,
-    env: {},
-    platform: 'linux',
-    port: 0,
-    protector: plainProtector,
-    logSink: () => undefined,
-    userHome: path.join(root, 'user'),
-    watchSkills: () => ({ close: () => Promise.resolve() }),
-    schedulerTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
-    hooks: { providers: { claude: (row) => new MockProviderAdapter(row.kind) } },
-  });
+const before = () =>
+  oldStore(root, '0050_assistant_is_a_main_thread', '0051_runs_plans_and_event_triggers_removed');
+const thread = (id: string, values: Record<string, unknown>) => threadRow(id, at, values);
+const launch = (home: string) => launchOn(root, home);
 
 const removedTables = [
   'workflow_runs',
@@ -114,12 +44,7 @@ const removedTables = [
 
 describe('migration 0051_runs_plans_and_event_triggers_removed', () => {
   it('deletes runs, plans, host reads and event triggers, keeps step threads as done chat threads, and keeps usage and limits', async () => {
-    const home = path.join(root, 'before');
-    await mkdir(home, { recursive: true });
-    const old = new Sqlite(path.join(home, databaseFileName));
-    migrate(drizzle({ client: old, casing: 'snake_case' }), {
-      migrationsFolder: await previousMigrations(),
-    });
+    const { home, db: old } = await before();
     insert(old, 'threads', thread('step', { run_id: 'run-1', step_id: 'build', state: 'working' }));
     insert(old, 'threads', thread('chat', {}));
     insert(old, 'turns', {
@@ -243,13 +168,7 @@ describe('migration 0051_runs_plans_and_event_triggers_removed', () => {
     old.close();
 
     const check = (db: Sqlite.Database) => {
-      const tables = new Set(
-        (
-          db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
-            name: string;
-          }[]
-        ).map((row) => row.name),
-      );
+      const tables = tablesOf(db);
       for (const table of removedTables) expect(tables.has(table)).toBe(false);
       expect(db.prepare('SELECT id, kind, state FROM threads ORDER BY id').all()).toEqual([
         { id: 'chat', kind: 'chat', state: 'idle' },
@@ -312,12 +231,7 @@ describe('migration 0051_runs_plans_and_event_triggers_removed', () => {
 
 describe('what a run left behind (migration 0051)', () => {
   it('moves the step threads of a run with its own copy to the project folder, and a card that ran keeps its fired trigger when moved', async () => {
-    const home = path.join(root, 'before');
-    await mkdir(home, { recursive: true });
-    const old = new Sqlite(path.join(home, databaseFileName));
-    migrate(drizzle({ client: old, casing: 'snake_case' }), {
-      migrationsFolder: await previousMigrations(),
-    });
+    const { home, db: old } = await before();
     insert(old, 'projects', { id: 'tea', name: 'Tea', cwd: '/home/me/tea', created_at: at });
     insert(old, 'workflows', {
       id: 'delivery',

@@ -1,7 +1,6 @@
 import {
   AlwaysAllowRuleRequest,
   Command,
-  assistantPermissionLabels,
   assistantRuleTool,
   hideSecrets,
   prefixRuleable,
@@ -19,12 +18,7 @@ import type { Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import { readModel } from '../core/projector.js';
 import { projectRules } from '../core/threads.js';
-import {
-  assistantChanges,
-  assistantPermissionUses,
-  assistantProposals,
-  projects,
-} from '../db/schema.js';
+import { assistantChanges, assistantProposals, projects } from '../db/schema.js';
 import type { Logger } from '../logger.js';
 import { checkProjectFolder } from '../rpc/handlers.js';
 import { RpcFault } from '../rpc/router.js';
@@ -34,10 +28,7 @@ import { diagnosisReaders } from './diagnosis.js';
 import { guideReaders } from './guides.js';
 import { checkStepModels, modelReaders } from './models.js';
 import { built, type BuiltTool } from './built.js';
-import { delegationTools } from './delegation-tools.js';
-import { memoryReaders, memoryTools } from './memory.js';
 import { outputReaders } from './outputs.js';
-import { permissionReaders } from './permission-readers.js';
 import { readers, type Reader, type ReaderDeps } from './readers.js';
 
 // The assistant's tools (app assistant spec 4 to 13). A read tool is a reader. A change tool
@@ -55,8 +46,6 @@ interface ChangeTool {
 }
 
 const waits = 'This waits for the user: it becomes a proposal with Yes and No.';
-const waitsUnlessPermitted =
-  'This waits for the user as a proposal with Yes and No, unless a standing permission the person gave covers it (read_permissions); then it is done at once and reported.';
 
 export const changeTools = {
   set_setting: {
@@ -102,7 +91,7 @@ export const changeTools = {
   start_card_run: {
     type: 'card.runNow',
     newId: 'threadId',
-    description: `Starts a card's workflow now. ${waitsUnlessPermitted}`,
+    description: `Starts a card's workflow now. ${waits}`,
   },
   create_workflow: {
     type: 'workflow.create',
@@ -158,8 +147,6 @@ export type ChangeToolName = keyof typeof changeTools;
 // spec 41): the project's list with the rule added goes in a `setting.set`, which the class
 // table always holds as a proposal (classes.ts, `moreOnItsOwn`).
 export const builtTools: Readonly<Record<string, BuiltTool>> = {
-  ...memoryTools,
-  ...delegationTools,
   [assistantRuleTool]: built({
     description: `Proposes an "always allow" rule for a project: rule is {kind: "command", prefix} for commands that start with those words (such as "pnpm test"), or {kind: "tool", server, tool} for one tool (server null for the provider's own tools). Requests the rule covers are then allowed without asking in every thread of the project. A prefix that runs another program (a shell, sudo, npx, an interpreter given code) or that chains, pipes or quotes is refused. ${waits}`,
     input: AlwaysAllowRuleRequest,
@@ -186,14 +173,6 @@ export const builtTools: Readonly<Record<string, BuiltTool>> = {
   }),
 };
 
-// What a main thread's agent does not get (orchestrator threads spec 24, 26): the assistant's
-// delegation and brief tools, which helpers replace, and its notes about the person.
-const mainThreadLeavesOut: Readonly<Record<string, unknown>> = {
-  ...delegationTools,
-  ...memoryTools,
-  ...memoryReaders,
-};
-const offeredInMainThread = (name: string) => !Object.hasOwn(mainThreadLeavesOut, name);
 function commandShape(type: CommandType) {
   const option = Command.options.find((candidate) => candidate.shape.type.value === type);
   if (!option) throw new Error(`No command ${type}`);
@@ -251,8 +230,6 @@ const problems = (error: z.ZodError): string =>
 const looks: Readonly<Record<string, Reader>> = {
   ...readers,
   ...outputReaders,
-  ...memoryReaders,
-  ...permissionReaders,
   ...guideReaders,
   ...diagnosisReaders,
   ...modelReaders,
@@ -298,26 +275,13 @@ export class AssistantTools {
     }));
   }
 
-  // The app tools for a main thread's agent (orchestrator threads spec 24, 26): every tool but
-  // the assistant's delegation, brief and memory tools, which helpers and the thread itself
-  // replace, with the ask tools reading that thread.
+  // The app tools for a main thread's agent (orchestrator threads spec 24), with the ask tools
+  // reading that thread.
   forThread(threadId: string): {
     list(): ToolDescription[];
     call(name: string, args: unknown): Promise<ToolResult>;
   } {
-    return {
-      list: () => this.list().filter((tool) => offeredInMainThread(tool.name)),
-      call: (name, args) =>
-        offeredInMainThread(name)
-          ? this.call(name, args, threadId)
-          : Promise.resolve({
-              text: JSON.stringify({
-                outcome: 'unknown tool',
-                reason: `There is no tool ${name}.`,
-              }),
-              isError: true,
-            }),
-    };
+    return { list: () => this.list(), call: (name, args) => this.call(name, args, threadId) };
   }
 
   async call(name: string, args: unknown, threadId?: string): Promise<ToolResult> {
@@ -401,36 +365,9 @@ export class AssistantTools {
       .from(assistantChanges)
       .where(eq(assistantChanges.id, commandId))
       .get();
-    const used = db
-      .select()
-      .from(assistantPermissionUses)
-      .where(eq(assistantPermissionUses.id, commandId))
-      .get();
-    const under = used
-      ? {
-          useId: used.id,
-          underPermission: assistantPermissionLabels[used.kind],
-          note: 'Done at once under a standing permission; the conversation shows it.',
-        }
-      : {};
     if (change) {
       return {
-        content: { outcome: 'changed', ...made, change: changeRow(change), ...under },
-        isError: false,
-      };
-    }
-    if (used) {
-      return {
-        content: { outcome: 'done', ...made, what: used.what, place: used.place, ...under },
-        isError: false,
-      };
-    }
-    if (
-      command.type === 'assistant.writeBrief' ||
-      command.type === 'assistant.writeBriefingSummary'
-    ) {
-      return {
-        content: { outcome: 'written', note: 'The person sees it in their decision queue.' },
+        content: { outcome: 'changed', ...made, change: changeRow(change) },
         isError: false,
       };
     }

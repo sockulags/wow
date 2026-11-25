@@ -7,7 +7,7 @@ import {
   type ServerCommand,
 } from '@wow/contracts';
 import path from 'node:path';
-import { settingValue } from '../assistant/permissions.js';
+import { settingValue } from './setting-value.js';
 import { backlogFollowsCard } from './backlog.js';
 import { CommandRejected, type DecideContext, type ReadModel } from './orchestrator.js';
 
