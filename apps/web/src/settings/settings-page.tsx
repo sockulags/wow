@@ -12,8 +12,6 @@ import { UpdateStatusPanel } from '@/app/update-banner';
 import { KeybindingsTable } from './keybindings-table';
 import { SettingsForm } from './setting-row';
 import { AlwaysAllowSection } from './always-allow-section';
-import { MemorySection } from './memory-section';
-import { PermissionsSection } from './permissions-section';
 import { SetupSection } from './setup-section';
 import { SkillsSection } from './skills-section';
 import { WorkflowFilesSection } from './workflow-files-section';
@@ -178,8 +176,6 @@ export function SettingsPage() {
       {current === 'advanced' && <SetupSection />}
       {current === 'skills' && <SkillsSection />}
       {current === 'workflows' && <WorkflowFilesSection />}
-      {current === 'assistant' && <PermissionsSection />}
-      {current === 'assistant' && <MemorySection />}
       {/* Remount per group so drafts never leak between pages. */}
       {current === 'approvals' ? (
         <AlwaysAllowSection />

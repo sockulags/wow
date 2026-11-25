@@ -2,8 +2,6 @@ import { z } from 'zod';
 import { AlwaysAllowRule } from './approvals.js';
 import { BuiltInSkillName } from './skills.js';
 import {
-  AssistantNote,
-  AssistantPermission,
   SecretPattern,
   defaultAskRefusedWords,
   defaultChatInstructions,
@@ -1690,106 +1688,6 @@ export const settingsRegistry = {
     description:
       "The assistant's question tool refuses a question whose text, header or choices hold one of these words or phrases (whole words, without regard to case), and tells the assistant to show the secret's field instead. A net for mistakes: a question never collects a secret.",
     default: [...defaultAskRefusedWords],
-    scope: 'global',
-  }),
-  'assistant.delegation': defineSetting({
-    schema: z.boolean(),
-    group: 'assistant',
-    label: 'Let the assistant act under its permissions',
-    description:
-      'Off: the assistant asks before it starts runs or threads, as always. On: what a permission below covers it does at once and reports, with Undo where a change can be undone. The assistant can ask to turn this on, but only you can say yes.',
-    default: false,
-    scope: 'global',
-  }),
-  'assistant.permissions': defineSetting({
-    schema: z.array(AssistantPermission),
-    group: 'assistant',
-    label: 'Permissions',
-    description:
-      'What the assistant may do without asking while it may act under its permissions: plan or start runs of named workflows, start and drive threads in named projects, retry a failed step once, move cards around meetings. Each can end on a day, have a daily limit, or be paused. Answering a gate or an approval is never among them.',
-    default: [],
-    scope: 'global',
-  }),
-  'assistant.followTurns': defineSetting({
-    schema: z.number().int().min(0).max(20),
-    group: 'assistant',
-    label: 'Turns to follow a thread it started',
-    description:
-      'How many times the assistant is given a turn to look at a thread it started, when the thread ends a turn or asks something. After that the thread goes on as yours and the assistant only reports it in the briefing. 0 never follows.',
-    default: 3,
-    scope: 'global',
-  }),
-  'assistant.maxDelegatedLive': defineSetting({
-    schema: z.number().int().min(1).max(20),
-    group: 'assistant',
-    label: 'Work the assistant has going at once',
-    description:
-      'How many threads and runs started by the assistant may work at the same time. When that many are going, the assistant plans the next one for a free slot instead of starting it.',
-    default: 3,
-    scope: 'global',
-  }),
-  'assistant.briefsPerDay': defineSetting({
-    schema: z.number().int().min(0).max(200),
-    group: 'assistant',
-    label: 'Decisions the assistant briefs a day',
-    description:
-      'When a gate, an approval, a question or a failure starts to wait for you, the assistant reads it and writes a few sentences with its recommendation, once. Past this many a day the queue shows what wow says itself. 0 writes none.',
-    default: 10,
-    scope: 'global',
-  }),
-  'assistant.briefings': defineSetting({
-    schema: z.boolean(),
-    group: 'assistant',
-    label: 'Briefings',
-    description:
-      'A short briefing in the Assistant when your work hours start, after a long meeting in which something happened, when you come back after a while away, and when your work hours end: what ran, finished and failed, what the assistant did under its permissions, what waits for you, and the rest of the day.',
-    default: true,
-    scope: 'global',
-  }),
-  'assistant.briefingsPerDay': defineSetting({
-    schema: z.number().int().min(0).max(50),
-    group: 'assistant',
-    label: 'Briefings the assistant sums up a day',
-    description:
-      "How many briefings a day the assistant adds a few sentences to. After that a briefing has wow's own lines only, so it costs no turn. 0 never asks the assistant.",
-    default: 4,
-    scope: 'global',
-  }),
-  'assistant.briefAfterMeetingMinutes': defineSetting({
-    schema: z.number().int().min(5).max(480),
-    group: 'assistant',
-    label: 'Meeting long enough for a briefing',
-    description:
-      'An Outlook meeting at least this many minutes long brings a briefing when it ends, if something happened while it ran.',
-    default: 30,
-    scope: 'global',
-  }),
-  'assistant.briefAfterIdleMinutes': defineSetting({
-    schema: z.number().int().min(5).max(1440),
-    group: 'assistant',
-    label: 'Away long enough for a briefing',
-    description:
-      'Coming back to wow after this many minutes away (the window hidden or the computer idle) brings a briefing.',
-    default: 60,
-    scope: 'global',
-  }),
-  'assistant.remindAfterMinutes': defineSetting({
-    schema: z.number().int().min(5).max(1440),
-    group: 'assistant',
-    label: 'Remind about a decision after',
-    description:
-      'A decision that has waited this many minutes gets one reminder, sent when you are not in a meeting, in focus time or outside your work hours. Never a second.',
-    default: 60,
-    scope: 'global',
-  }),
-  'assistant.notes': defineSetting({
-    personal: 'person',
-    schema: z.array(AssistantNote),
-    group: 'assistant',
-    label: 'Memory',
-    description:
-      'Notes the assistant keeps about how you work, such as "never plan anything before nine". It writes one only when you say it, reads them at the start of every answer, and a note with an end date stops applying after that day. Edit or remove them here.',
-    default: [],
     scope: 'global',
   }),
   'assistant.excludedProjects': defineSetting({

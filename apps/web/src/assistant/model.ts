@@ -12,7 +12,6 @@ import {
   findSecret,
   secretPatterns,
   type AssistantChange,
-  type AssistantPermissionUse,
   type AssistantProposal,
   type SecretMatch,
   type SettingDefinition,
@@ -30,16 +29,12 @@ export const registry: Readonly<Record<string, SettingDefinition>> = settingsReg
 export interface Placed {
   readonly changes: readonly AssistantChange[];
   readonly proposals: readonly AssistantProposal[];
-  // What the assistant did under a standing permission (chief of staff spec 5). A use with a
-  // change of the same id marks that change; one without (a started run) is a row of its own.
-  readonly uses: readonly AssistantPermissionUse[];
 }
 
 // What a change tool answered: the id of the row it made, if any.
 const ToolAnswer = z.object({
   change: z.object({ id: z.string() }).optional(),
   proposal: z.object({ id: z.string() }).optional(),
-  useId: z.string().optional(),
 });
 
 function answerIds(item: ThreadItem): string[] {
@@ -54,7 +49,7 @@ function answerIds(item: ThreadItem): string[] {
   }
   const answer = ToolAnswer.safeParse(output);
   if (!answer.success) return [];
-  return [answer.data.change?.id, answer.data.proposal?.id, answer.data.useId].filter(
+  return [answer.data.change?.id, answer.data.proposal?.id].filter(
     (id): id is string => id !== undefined,
   );
 }
@@ -66,30 +61,27 @@ export function placeRows(
   items: readonly ThreadItem[],
   changes: readonly AssistantChange[],
   proposals: readonly AssistantProposal[],
-  uses: readonly AssistantPermissionUse[] = [],
 ): { readonly after: ReadonlyMap<string, Placed>; readonly rest: Placed } {
   const itemOf = new Map<string, string>();
   for (const item of items) for (const id of answerIds(item)) itemOf.set(id, item.id);
   interface Slot {
     changes: AssistantChange[];
     proposals: AssistantProposal[];
-    uses: AssistantPermissionUse[];
   }
   const after = new Map<string, Slot>();
-  const rest: Slot = { changes: [], proposals: [], uses: [] };
+  const rest: Slot = { changes: [], proposals: [] };
   const slot = (id: string) => {
     const itemId = itemOf.get(id);
     if (itemId === undefined) return rest;
     let placed = after.get(itemId);
     if (!placed) {
-      placed = { changes: [], proposals: [], uses: [] };
+      placed = { changes: [], proposals: [] };
       after.set(itemId, placed);
     }
     return placed;
   };
   for (const change of changes) slot(change.id).changes.push(change);
   for (const proposal of proposals) slot(proposal.id).proposals.push(proposal);
-  for (const use of uses) slot(use.id).uses.push(use);
   return { after, rest };
 }
 

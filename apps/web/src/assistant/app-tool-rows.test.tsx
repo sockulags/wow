@@ -137,7 +137,6 @@ function setup(thread: Thread = main) {
     threads: [thread],
     assistantChanges: [change],
     assistantProposals: [proposal],
-    assistantPermissionUses: [],
   };
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),

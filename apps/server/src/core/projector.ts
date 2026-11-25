@@ -13,30 +13,11 @@ import {
   type SubscriptionTopic,
   assistantThreadId,
 } from '@wow/contracts';
-import {
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  max,
-  ne,
-  sql,
-} from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNull, max, ne, sql } from 'drizzle-orm';
 import type { DbOrTx } from '../db/database.js';
 import {
   approvals,
   assistantChanges,
-  assistantPermissionUses,
-  briefings,
-  decisionBriefs,
-  decisionReminders,
-  decisionDismissals,
   assistantProposals,
   setupApplications,
   assistantGreeting,
@@ -633,87 +614,12 @@ export function project(tx: DbOrTx, event: DomainEvent): SubscriptionTopic[] {
     case 'assistant.changed':
       tx.insert(assistantChanges).values(event.payload).run();
       return ['assistantChanges'];
-    case 'briefing.made':
-      tx.insert(briefings).values(event.payload).onConflictDoNothing().run();
-      return ['briefings'];
-    case 'briefing.summaryWritten':
-      tx.update(briefings)
-        .set({ summary: event.payload.text, summaryPending: false })
-        .where(eq(briefings.id, event.payload.briefingId))
-        .run();
-      return ['briefings'];
-    case 'briefing.notified':
-      tx.update(briefings)
-        .set({ notified: true })
-        .where(eq(briefings.id, event.payload.briefingId))
-        .run();
-      return ['briefings'];
-    case 'decision.reminded':
-      tx.insert(decisionReminders)
-        .values({ decisionId: event.payload.decisionId, at: event.payload.at })
-        .onConflictDoNothing()
-        .run();
-      return [];
-    case 'presence.returned':
-      return [];
-    case 'decision.briefRequested':
-      tx.insert(decisionBriefs)
-        .values({ decisionId: event.payload.decisionId, requestedAt: event.payload.at })
-        .onConflictDoNothing()
-        .run();
-      return ['decisions'];
-    case 'decision.briefWritten':
-      tx.insert(decisionBriefs)
-        .values({
-          decisionId: event.payload.decisionId,
-          requestedAt: event.payload.at,
-          text: event.payload.text,
-          recommendation: event.payload.recommendation,
-          writtenAt: event.payload.at,
-        })
-        .onConflictDoUpdate({
-          target: decisionBriefs.decisionId,
-          set: {
-            text: event.payload.text,
-            recommendation: event.payload.recommendation,
-            writtenAt: event.payload.at,
-          },
-        })
-        .run();
-      return ['decisions'];
-    case 'decision.dismissed':
-      tx.insert(decisionDismissals)
-        .values({ decisionId: event.payload.decisionId, at: event.payload.at })
-        .onConflictDoNothing()
-        .run();
-      return ['decisions'];
     case 'thread.helperStarted':
       tx.update(threads)
         .set({ startedBy: 'helper', parentThreadId: event.payload.parentThreadId })
         .where(eq(threads.id, event.payload.threadId))
         .run();
       return ['threads'];
-    case 'thread.delegated':
-      tx.update(threads)
-        .set({ startedBy: 'assistant' })
-        .where(eq(threads.id, event.payload.threadId))
-        .run();
-      return ['threads'];
-    case 'thread.followed':
-      tx.update(threads)
-        .set({ followTurns: sql`${threads.followTurns} + 1` })
-        .where(eq(threads.id, event.payload.threadId))
-        .run();
-      return ['threads'];
-    case 'question.answeredByAssistant':
-      tx.update(questions)
-        .set({ answeredBecause: event.payload.because })
-        .where(eq(questions.id, event.payload.questionId))
-        .run();
-      return ['questions'];
-    case 'assistant.permissionUsed':
-      tx.insert(assistantPermissionUses).values(event.payload).run();
-      return ['assistantPermissionUses'];
     case 'assistant.changeUndone':
       tx.update(assistantChanges)
         .set({ state: 'undone', undoneAt: event.payload.at })
@@ -921,41 +827,6 @@ export function readModel(tx: DbOrTx): ReadModel {
     backlogItem: (id) => tx.select().from(backlogItems).where(eq(backlogItems.id, id)).get(),
     assistantChange: (id) =>
       tx.select().from(assistantChanges).where(eq(assistantChanges.id, id)).get(),
-    briefing: (id) => tx.select().from(briefings).where(eq(briefings.id, id)).get(),
-    briefingSummariesSince: (since) =>
-      tx
-        .select({ id: briefings.id })
-        .from(briefings)
-        .where(and(gte(briefings.at, since), eq(briefings.summaryPending, true)))
-        .all().length +
-      tx
-        .select({ id: briefings.id })
-        .from(briefings)
-        .where(and(gte(briefings.at, since), isNotNull(briefings.summary)))
-        .all().length,
-    decisionBrief: (decisionId) =>
-      tx
-        .select({ text: decisionBriefs.text })
-        .from(decisionBriefs)
-        .where(eq(decisionBriefs.decisionId, decisionId))
-        .get(),
-    briefsRequestedSince: (since) =>
-      tx
-        .select({ id: decisionBriefs.decisionId })
-        .from(decisionBriefs)
-        .where(gte(decisionBriefs.requestedAt, since))
-        .all().length,
-    permissionUses: (permissionId, since) =>
-      tx
-        .select({ id: assistantPermissionUses.id })
-        .from(assistantPermissionUses)
-        .where(
-          and(
-            eq(assistantPermissionUses.permissionId, permissionId),
-            gte(assistantPermissionUses.at, since),
-          ),
-        )
-        .all().length,
     setupApplication: (id) =>
       tx.select().from(setupApplications).where(eq(setupApplications.id, id)).get(),
     lastSetupApplication: () =>

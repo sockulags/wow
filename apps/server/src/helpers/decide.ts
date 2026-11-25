@@ -14,10 +14,10 @@ import {
   type DecideContext,
   type ReadModel,
 } from '../core/orchestrator.js';
-import { settingValue } from '../assistant/permissions.js';
+import { settingValue } from '../core/setting-value.js';
 
-// Helper threads (agent orchestration spec 2 to 8), decided in steps like the assistant's
-// delegation: the helper is made with the user's own `thread.create` and gets its brief with
+// Helper threads (agent orchestration spec 2 to 8), decided in steps: the helper is made with the
+// user's own `thread.create` and gets its brief with
 // `thread.sendMessage`, so it is an ordinary chat thread from then on. Only wow's helper tools
 // send these, with the `helper` origin, for the main thread whose token called them.
 

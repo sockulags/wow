@@ -1,7 +1,7 @@
 import type { Thread, ThreadListStatus } from '@wow/contracts';
 import { settingValue } from '@wow/client-runtime';
 import { Link, useRouterState } from '@tanstack/react-router';
-import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon, SparklesIcon } from 'lucide-react';
+import { MessagesSquareIcon, PinIcon, PlusIcon, SearchIcon } from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useBelow } from '@/lib/use-breakpoint';
 import { useStore } from 'zustand';
@@ -279,13 +279,6 @@ export function ThreadList({
               >
                 {threadTitle(thread)}
               </span>
-              {thread.startedBy === 'assistant' && (
-                <SparklesIcon
-                  aria-label="Started by the assistant"
-                  data-testid="thread-row-assistant"
-                  className={cn('size-3.5 shrink-0 text-muted-foreground', rail && 'sr-only')}
-                />
-              )}
               {thread.pinned && (
                 <PinIcon
                   aria-label="Pinned"

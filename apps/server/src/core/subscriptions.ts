@@ -11,7 +11,6 @@ import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
 import type { Engine } from './engine.js';
 import { readOutlookStatus, skillOf } from './projector.js';
-import { decisionRows, decisionSources } from '../assistant/decisions.js';
 import { activitySources, threadActivityRows } from './thread-activity.js';
 import { threadListStatuses } from './thread-list.js';
 
@@ -29,8 +28,8 @@ function threadRows(db: Db) {
 // answered it, and the turn that asked still runs. A turn that ends leaves its request unanswered,
 // as the gate card says, but nobody can answer it any more.
 function openGates(db: Db): Set<string> {
-  // Each thread's running turn: a request counts only while the turn that asked it runs, as in
-  // the decision queue, so a new turn in the same thread does not bring an old request back.
+  // Each thread's running turn: a request counts only while the turn that asked it runs,
+  // so a new turn in the same thread does not bring an old request back.
   const running = new Map(
     db
       .select({ threadId: t.turns.threadId, id: t.turns.id })
@@ -198,20 +197,10 @@ export function snapshot(db: Db, params: SubscribeParams): unknown[] {
           .orderBy(sql`rowid`)
           .all();
       }
-      case 'decisions':
-        return decisionRows(db);
       case 'threadActivity':
         return threadActivityRows(db);
       case 'providerLimits':
         return db.select().from(t.providerLimits).all();
-      case 'briefings':
-        return db.select().from(t.briefings).orderBy(desc(t.briefings.at)).limit(20).all();
-      case 'assistantPermissionUses':
-        return db
-          .select()
-          .from(t.assistantPermissionUses)
-          .orderBy(sql`rowid`)
-          .all();
       case 'setupApplications': {
         // Without what Undo puts back: it holds real values and is the server's alone.
         const { parts: _parts, ...shown } = getTableColumns(t.setupApplications);
@@ -266,10 +255,8 @@ export class Subscriptions {
   }
 
   #changed(changed: ReadonlySet<SubscriptionTopic>): void {
-    // The decision queue and the activity of threads at work are read from other topics, so they
-    // change with them.
+    // The activity of threads at work is read from other topics, so it changes with them.
     const topics = new Set(changed);
-    if ([...changed].some((topic) => decisionSources.has(topic as never))) topics.add('decisions');
     // A gate card is answered in the approvals or questions of the thread that asked.
     if (changed.has('approvals') || changed.has('questions')) topics.add('threads');
     if ([...changed].some((topic) => activitySources.has(topic as never))) {

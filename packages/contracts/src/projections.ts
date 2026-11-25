@@ -172,12 +172,10 @@ export const Thread = z.object({
   // on the branch `branch` holds, which is also the thread's `cwd`. A fork shares its origin's.
   // Null or absent for a thread in its folder, as every thread stored before is (spec 18).
   workingCopy: WorkingCopy.nullable().optional(),
-  // A thread the assistant started (chief of staff spec 10), and how many turns the assistant has
-  // had to follow it (spec 11). Null or absent for every other thread.
-  startedBy: z.enum(['assistant', 'helper']).nullable().optional(),
-  // A helper thread's main thread (agent orchestration spec 4); null or absent for every other.
+  // A helper thread, and its main thread (agent orchestration spec 4); null or absent for every
+  // other thread.
+  startedBy: z.literal('helper').nullable().optional(),
   parentThreadId: Id.nullable().optional(),
-  followTurns: z.number().int().nonnegative().optional(),
   // A main thread's place in the thread list, computed by the server when it sends the row; absent
   // on helpers.
   listStatus: ThreadListStatus.optional(),
@@ -440,9 +438,6 @@ export const Question = z.object({
   request: z.unknown(),
   answer: z.string().nullable(),
   answeredAt: Timestamp.nullable(),
-  // The assistant answered it from the user's words (chief of staff spec 12): what it quoted.
-  // Null or absent for a question the user answered.
-  answeredBecause: z.string().nullable().optional(),
 });
 export type Question = z.infer<typeof Question>;
 
@@ -609,16 +604,12 @@ export type Trigger = z.infer<typeof Trigger>;
 // run was still going; it is not a failure. A chat thread that needs the user is `waiting` too,
 // and `finished` is a chat turn that ran long and ended (agent workbench spec 64); those are
 // stored by the `chat.notifications` setting instead.
-// `briefing` and `reminder` come from the assistant (chief of staff spec 23, 26) and wait while
-// the user is busy (spec 27).
 export const NotificationKind = z.enum([
   'started',
   'waiting',
   'failed',
   'skipped',
   'finished',
-  'briefing',
-  'reminder',
   // A plan limit crossed the warning or was reached (chat overview spec 29).
   'limit',
 ]);

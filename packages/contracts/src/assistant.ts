@@ -298,19 +298,8 @@ export const assistantToolWords: Readonly<Record<string, string>> = {
   read_skill: 'Read a skill',
   read_calendar: 'Read your calendar',
   read_backlog: 'Read your backlog',
-  read_runs: 'Read your runs',
-  read_run: "Read what a run's agents produced",
   read_thread: "Read a thread's latest messages",
   read_free_slots: 'Looked for free time',
-  read_notes: 'Read its notes',
-  read_permissions: 'Read its permissions',
-  start_thread: 'Started a thread',
-  write_to_thread: 'Wrote in a thread',
-  answer_agent_question: "Answered an agent's question",
-  write_brief: 'Wrote a brief',
-  write_briefing_summary: 'Summed up a briefing',
-  remember: 'Kept a note',
-  forget: 'Removed a note',
   read_triggers: 'Read your triggers',
   read_notifications: 'Read your notifications',
   read_connections: 'Read your connections',
@@ -335,16 +324,10 @@ export const assistantToolWords: Readonly<Record<string, string>> = {
   create_workflow: 'Created a workflow',
   update_workflow: 'Changed a workflow',
   delete_workflow: 'Deleted a workflow',
-  start_run: 'Started a workflow',
   create_backlog_item: 'Added a backlog item',
   update_backlog_item: 'Changed a backlog item',
   delete_backlog_item: 'Deleted a backlog item',
   plan_backlog_item: 'Planned a backlog item',
-  follow_plan: 'Followed a plan',
-  start_plan_run: "Ran a plan's ready units",
-  create_trigger: 'Made an event trigger',
-  set_trigger_enabled: 'Turned a trigger on or off',
-  delete_trigger: 'Deleted a trigger',
   create_skill: 'Wrote a skill',
   update_skill: 'Changed a skill',
   delete_skill: 'Removed a skill',
@@ -482,177 +465,3 @@ export const Diagnosis = z.object({
   checked: z.array(z.string().min(1)),
 });
 export type Diagnosis = z.infer<typeof Diagnosis>;
-
-// A note the assistant keeps about how the person works (chief of staff spec 29, 30), stored in
-// the `assistant.notes` setting so it is shown, edited and undone like any setting.
-export const AssistantNote = z.object({
-  id: z.string().min(1),
-  text: z.string().trim().min(1).max(500),
-  addedAt: z.iso.datetime(),
-  // The last day the note applies, in the calendar's zone; absent for a note without end.
-  until: z.iso.date().optional(),
-  // Who wrote it: the assistant from what the person said, or the person in Settings.
-  by: z.enum(['assistant', 'you']),
-});
-export type AssistantNote = z.infer<typeof AssistantNote>;
-
-export const assistantRememberTool = 'remember';
-export const assistantForgetTool = 'forget';
-
-// The notes that still apply on `today` (YYYY-MM-DD), as the lines appended to the instructions.
-export function notesForInstructions(notes: readonly AssistantNote[], today: string): string {
-  const live = notes.filter((note) => note.until === undefined || note.until >= today);
-  if (live.length === 0) return '';
-  return [
-    '',
-    '',
-    'Notes you keep about how the person works (they asked you to remember these):',
-    ...live.map((note) => `- ${note.text}${note.until ? ` (until ${note.until})` : ''}`),
-  ].join('\n');
-}
-
-// Standing permissions (chief of staff spec 4 to 8). The server reads them in the class table:
-// a command a permission covers is applied at once instead of waiting as a proposal. Nothing the
-// table refuses, and nothing that lets agents do more on their own, is ever covered.
-export const AssistantPermissionKind = z.enum([
-  // Cards with a workflow that start soon, and planned backlog items.
-  'planRuns',
-  // A run of a named workflow started now.
-  'startRuns',
-  // Chat threads in named projects, in their own working copy (U3).
-  'startThreads',
-  // Follow-ups and answers to questions in threads the assistant started (U3).
-  'driveThreads',
-  // A step's turn sent again once after a provider error (U5).
-  'retry',
-  // Cards moved around a meeting that comes to overlap them (U5).
-  'moveCards',
-]);
-export type AssistantPermissionKind = z.infer<typeof AssistantPermissionKind>;
-
-export const assistantPermissionLabels: Readonly<Record<AssistantPermissionKind, string>> = {
-  planRuns: 'Plan runs',
-  startRuns: 'Start runs',
-  startThreads: 'Start threads',
-  driveThreads: 'Drive threads',
-  retry: 'Retry',
-  moveCards: 'Move cards',
-};
-
-export const assistantPermissionDescriptions: Readonly<Record<AssistantPermissionKind, string>> = {
-  planRuns:
-    'Put cards with one of these workflows on the calendar, also ones that start within minutes, and plan backlog items, inside work hours.',
-  startRuns: 'Start a run of one of these workflows now.',
-  startThreads:
-    'Start chat threads in these projects, in their own working copy, with at most this permission mode.',
-  driveThreads:
-    'Send follow-ups to threads it started and answer their questions where your words already answer them.',
-  retry: "Send a step's failed turn again once when the provider failed.",
-  moveCards:
-    'Move cards with a workflow to the next free slot when a meeting comes to overlap them.',
-};
-
-export const AssistantPermission = z.object({
-  id: z.string().min(1),
-  kind: AssistantPermissionKind,
-  // The projects it covers; every kind names at least one.
-  projectIds: z.array(z.string().min(1)).min(1),
-  // The workflows it covers, for planRuns and startRuns; empty for the other kinds.
-  workflowIds: z.array(z.string().min(1)),
-  // For startThreads: the widest permission mode a started thread gets.
-  maxPermissionMode: z.string().min(1).optional(),
-  // The last day it applies (YYYY-MM-DD, the calendar's zone); absent for no end.
-  until: z.iso.date().optional(),
-  // How many times a day it may be used; absent for no limit.
-  dailyLimit: z.number().int().min(1).max(1000).optional(),
-  paused: z.boolean(),
-  addedAt: z.iso.datetime(),
-});
-export type AssistantPermission = z.infer<typeof AssistantPermission>;
-
-// One time the assistant acted under a permission, in the order it happened. A change it made
-// has its own row with Undo too (same id); a started run has only this row.
-export const AssistantPermissionUse = z.object({
-  id: Id,
-  at: Timestamp,
-  permissionId: z.string().min(1),
-  kind: AssistantPermissionKind,
-  commandType: z.string().min(1),
-  what: z.string().min(1),
-  place: AssistantPlace,
-});
-export type AssistantPermissionUse = z.infer<typeof AssistantPermissionUse>;
-
-// The decision queue (chief of staff spec 16 to 19): everything that waits for the user, in the
-// server's order, each with a brief. `fixed` is what wow says itself; `brief` is what the
-// assistant wrote once when the row appeared, within `assistant.briefsPerDay`.
-export const DecisionKind = z.enum(['approval', 'question', 'limit', 'proposal', 'missedCard']);
-export type DecisionKind = z.infer<typeof DecisionKind>;
-
-export const DecisionBrief = z.object({
-  text: z.string().min(1),
-  recommendation: z.string().min(1),
-  at: Timestamp,
-});
-export type DecisionBrief = z.infer<typeof DecisionBrief>;
-
-export const Decision = z.object({
-  // `<kind>:<id of what waits>`, stable while it waits.
-  id: z.string().min(1),
-  kind: DecisionKind,
-  // Since when it waits.
-  at: Timestamp,
-  title: z.string().min(1),
-  // The project, workflow or thread it belongs to, in words; null when none.
-  where: z.string().nullable(),
-  // Where the app shows it.
-  path: z.string().min(1),
-  threadId: Id.nullable(),
-  proposalId: Id.nullable(),
-  approvalId: Id.nullable(),
-  questionId: Id.nullable(),
-  cardId: Id.nullable(),
-  // An approval or question that holds a running turn (it comes first).
-  holdsTurn: z.boolean(),
-  // When the card it blocks starts, for the order; null when none.
-  cardStart: Timestamp.nullable(),
-  fixed: z.array(z.string()),
-  brief: DecisionBrief.nullable(),
-  // A brief was asked of the assistant and is not written yet.
-  briefPending: z.boolean(),
-});
-export type Decision = z.infer<typeof Decision>;
-
-// A briefing (chief of staff spec 20 to 23): what wow says itself since the last one, and the
-// assistant's summary when one was written within `assistant.briefingsPerDay`.
-export const BriefingMoment = z.enum(['morning', 'afterMeeting', 'back', 'evening']);
-export type BriefingMoment = z.infer<typeof BriefingMoment>;
-
-export const briefingMomentLabels: Readonly<Record<BriefingMoment, string>> = {
-  morning: 'Good morning',
-  afterMeeting: 'After your meeting',
-  back: 'Welcome back',
-  evening: 'End of the day',
-};
-
-export const BriefingLine = z.object({
-  text: z.string().min(1),
-  // Where the line leads in the app; null for a line without a place.
-  path: z.string().min(1).nullable(),
-});
-export type BriefingLine = z.infer<typeof BriefingLine>;
-
-export const Briefing = z.object({
-  id: Id,
-  at: Timestamp,
-  moment: BriefingMoment,
-  // Since when it tells.
-  since: Timestamp,
-  lines: z.array(BriefingLine),
-  summary: z.string().nullable(),
-  // A summary was asked of the assistant and is not written yet.
-  summaryPending: z.boolean(),
-  // The notification went out; false while the user is busy (spec 27).
-  notified: z.boolean(),
-});
-export type Briefing = z.infer<typeof Briefing>;

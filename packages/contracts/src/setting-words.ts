@@ -1,5 +1,4 @@
 import { AlwaysAllowRule, ruleText } from './approvals.js';
-import { AssistantNote } from './assistant.js';
 import {
   FROM_OUTLOOK,
   Weekday,
@@ -93,11 +92,6 @@ export function settingValueWords(
     const rules = value.map((entry) => AlwaysAllowRule.safeParse(entry));
     if (rules.every((rule) => rule.success))
       return rules.map(({ data }) => ruleText(data)).join('; ');
-    const notes = value.map((entry) => AssistantNote.safeParse(entry));
-    if (notes.every((note) => note.success))
-      return notes
-        .map(({ data }) => (data.until ? `${data.text} (until ${data.until})` : data.text))
-        .join('; ');
   }
   return undefined;
 }

@@ -15,7 +15,7 @@ import {
   type DiagnosisProblem,
   type TrackerConnection,
 } from '@wow/contracts';
-import { and, asc, eq, isNotNull, isNull, not, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import * as t from '../db/schema.js';
 import { skillInstalled, type Reader, type ReaderDeps } from './readers.js';
@@ -195,15 +195,9 @@ interface Names {
 // Each list below is one bounded query: what still counts is decided in SQL, so the limit is
 // applied to what is reported and no row costs a query of its own.
 
-// An event trigger that could not start its run records the event with no run and stores a
-// "Trigger failed" notification under `<trigger>:<event>:failed` (see core/triggers.ts); its
-// newest failure counts until the trigger starts a run after it.
-const dismissed = (decisionId: SQL) =>
-  sql`exists (select 1 from ${t.decisionDismissals} where ${t.decisionDismissals.decisionId} = ${decisionId})`;
-
 // A card with a workflow whose start passed without starting its thread: missed, or failed
 // before its thread could start (the reason is in its "Trigger failed" notification). It counts
-// until the card starts a thread, or the user dismisses it from the decision queue.
+// until the card starts a thread.
 function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
   const policy = deps.settings.get('scheduler.missedPolicy');
   const policyLabel = settingsRegistry['scheduler.missedPolicy'].options?.[policy]?.label ?? policy;
@@ -227,7 +221,6 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
           and(eq(t.calendarItems.state, 'failed'), isNull(t.calendarItems.threadId)),
           eq(t.calendarItems.state, 'missed'),
         ),
-        not(dismissed(sql`'missedCard:' || ${t.calendarItems.id}`)),
       ),
     )
     .orderBy(sql`julianday(${t.calendarItems.start}) desc`)

@@ -1,6 +1,5 @@
 import {
   hiddenText,
-  type AssistantChange,
   type ServerCommand,
   type SettingRow,
   type SubscriptionTopic,
@@ -14,9 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { snapshot } from '../core/subscriptions.js';
 import { threadItems } from '../db/schema.js';
 import { startServer, type RunningServer } from '../server.js';
-import { instructionsWithNotes } from './memory.js';
 
-// Chief of staff plan U1: the readers of what agents produced, free slots, and the notes.
+// Chief of staff plan U1: the readers of what agents produced and free slots.
 
 const lookalike = 'ghp_abcdefghijklmnopqrstuvwxyz012345';
 const now = '2026-11-10T08:00:00.000Z'; // a Tuesday
@@ -187,55 +185,5 @@ describe('read_free_slots', () => {
       { start: '2026-11-10T10:30:00.000Z', end: '2026-11-10T12:00:00.000Z' },
       { start: '2026-11-11T08:00:00.000Z', end: '2026-11-11T12:00:00.000Z' },
     ]);
-  });
-});
-
-const depsOn = (today: string) => ({
-  db: server.database.db,
-  settings: server.settings,
-  clock: () => new Date(`${today}T12:00:00.000Z`),
-});
-
-describe('notes (chief of staff spec 29, 30)', () => {
-  it('remember keeps a note as an ordinary change with Undo, and forget removes it', async () => {
-    const kept = await call('remember', { text: 'Never plan anything before nine.' });
-    expect(kept.content['outcome']).toBe('changed');
-    const [note] = setting('assistant.notes') as { id: string; text: string; by: string }[];
-    expect(note).toMatchObject({ text: 'Never plan anything before nine.', by: 'assistant' });
-    const read = await call('read_notes');
-    expect(read.content['notes']).toHaveLength(1);
-
-    const [change] = rows<AssistantChange>('assistantChanges');
-    expect(change).toMatchObject({
-      what: 'Memory',
-      from: 'None (default)',
-      to: 'Never plan anything before nine.',
-    });
-    asUser({ type: 'assistant.undo', changeId: change?.id ?? '' });
-    expect(setting('assistant.notes') ?? []).toEqual([]);
-
-    await call('remember', { text: 'Tea matters most this week.', until: '2026-11-14' });
-    const [again] = setting('assistant.notes') as { id: string }[];
-    expect((await call('forget', { noteId: again?.id ?? '' })).content['outcome']).toBe('changed');
-    expect(setting('assistant.notes')).toEqual([]);
-    expect((await call('forget', { noteId: 'nope' })).isError).toBe(true);
-  });
-
-  it('adds the notes that still apply to the instructions', () => {
-    asUser({
-      type: 'setting.set',
-      key: 'assistant.notes',
-      scope: 'global',
-      value: [
-        { id: 'a', text: 'Tea first.', addedAt: now, until: '2026-11-14', by: 'you' },
-        { id: 'b', text: 'Never before nine.', addedAt: now, by: 'assistant' },
-      ],
-    });
-    const during = instructionsWithNotes(depsOn('2026-11-14'), 'Base.');
-    expect(during).toContain('- Tea first. (until 2026-11-14)');
-    expect(during).toContain('- Never before nine.');
-    const after = instructionsWithNotes(depsOn('2026-11-15'), 'Base.');
-    expect(after).not.toContain('Tea first.');
-    expect(after.startsWith('Base.')).toBe(true);
   });
 });

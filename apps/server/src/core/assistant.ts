@@ -16,16 +16,6 @@ import {
   undoRefusal,
 } from '../assistant/changes.js';
 import { classOf } from '../assistant/classes.js';
-import { decideBriefRequest, decideWriteBrief } from '../assistant/briefs.js';
-import {
-  decideBriefing,
-  decideBriefingNotified,
-  decideBriefingSummary,
-  decideMoveCard,
-  decideReminder,
-} from '../assistant/chief.js';
-import { decideDelegation, decideFollow, isDelegationCommand } from '../assistant/delegation.js';
-import { coverage } from '../assistant/permissions.js';
 import { decideSetup } from '../setup/apply.js';
 import { decideHelper, decideHelperFollow } from '../helpers/decide.js';
 import { decideTriggerInSteps, isSteppedTriggerCommand, isTriggerCommand } from './triggers.js';
@@ -83,94 +73,27 @@ export function* decideInSteps(
     yield* decideHelper(command, read, context);
     return;
   }
-  if (isDelegationCommand(command)) {
-    if (context.origin !== 'assistant') {
-      throw new CommandRejected('rejected', 'Only the assistant sends this.');
-    }
-    yield* decideDelegation(commandId, command, read, context);
-    return;
-  }
-  if (
-    command.type === 'assistant.brief' ||
-    command.type === 'assistant.briefingNotified' ||
-    command.type === 'assistant.remind' ||
-    command.type === 'assistant.moveCard'
-  ) {
-    if (context.origin === 'assistant')
-      throw new CommandRejected('rejected', 'Only wow sends this.');
-    if (command.type === 'assistant.brief') yield decideBriefing(command, read, context);
-    else if (command.type === 'assistant.briefingNotified') {
-      yield decideBriefingNotified(command, read, context);
-    } else if (command.type === 'assistant.remind') yield decideReminder(command, read, context);
-    else yield* decideMoveCard(commandId, command, read, context);
-    return;
-  }
-  if (command.type === 'assistant.writeBriefingSummary') {
-    if (context.origin !== 'assistant') {
-      throw new CommandRejected('rejected', 'Only the assistant writes a summary.');
-    }
-    yield decideBriefingSummary(command, read);
-    return;
-  }
-  if (command.type === 'assistant.requestBrief') {
-    if (context.origin === 'assistant')
-      throw new CommandRejected('rejected', 'Only wow sends this.');
-    yield decideBriefRequest(command, read, context);
-    return;
-  }
-  if (command.type === 'assistant.writeBrief') {
-    if (context.origin !== 'assistant') {
-      throw new CommandRejected('rejected', 'Only the assistant writes a brief.');
-    }
-    yield decideWriteBrief(command, read, context);
-    return;
-  }
-  if (command.type === 'assistant.follow') {
-    if (context.origin === 'assistant')
-      throw new CommandRejected('rejected', 'Only wow sends this.');
-    yield decideFollow(command, read, context);
-    return;
-  }
-
   if (context.origin === 'assistant') {
     const klass = classOf(command, read, context);
     if (klass.class === 'refused') throw new CommandRejected('rejected', klass.reason);
     const sent = Command.safeParse(command);
     if (!sent.success) throw new CommandRejected('rejected', `${command.type} is not a command`);
-    // A proposal a standing permission covers is applied at once and reported (chief of staff
-    // spec 5); one a permission would cover but may not now says why on its card (spec 8).
-    const covers = klass.class === 'proposal' ? coverage(sent.data, read, context) : undefined;
-    if (klass.class === 'proposal' && !(covers && 'covered' in covers)) {
+    if (klass.class === 'proposal') {
       // Decided once and thrown away: the app's own refusal reaches the assistant now, not the
       // user at Yes, and a command that would change nothing is not worth a question.
       if (decide(sent.data, read, asUser).length === 0) return;
-      const proposed = proposalOf(commandId, sent.data, read, context);
       yield [
         {
           kind: 'assistant.proposed',
           aggregate: commandId,
-          payload:
-            covers && 'held' in covers
-              ? {
-                  ...proposed,
-                  lines: [
-                    ...proposed.lines,
-                    { what: 'Why this asks', from: null, to: covers.held },
-                  ],
-                }
-              : proposed,
+          payload: proposalOf(commandId, sent.data, read, context),
         },
       ];
       return;
     }
     const target = targetOf(sent.data);
-    if (!target && !covers) {
-      throw new Error(`${command.type} is ordinary but names nothing it changes`);
-    }
-    // What a permission did is worded as its proposal would have been.
-    const used =
-      covers && 'covered' in covers ? proposalOf(commandId, sent.data, read, context) : undefined;
-    const before = target ? snapshot(target, read) : null;
+    if (!target) throw new Error(`${command.type} is ordinary but names nothing it changes`);
+    const before = snapshot(target, read);
     // A card's Run now is decided in steps; what it did is reported like any change below.
     if (isSteppedTriggerCommand(sent.data) && isTriggerCommand(sent.data)) {
       let any = false;
@@ -184,27 +107,16 @@ export function* decideInSteps(
       if (events.length === 0) return;
       yield events;
     }
-    const change = target
-      ? changeOf(commandId, sent.data, target, before, snapshot(target, read), read, context)
-      : undefined;
+    const change = changeOf(
+      commandId,
+      sent.data,
+      target,
+      before,
+      snapshot(target, read),
+      read,
+      context,
+    );
     if (change) yield [{ kind: 'assistant.changed', aggregate: commandId, payload: change }];
-    if (covers && 'covered' in covers && used) {
-      yield [
-        {
-          kind: 'assistant.permissionUsed',
-          aggregate: commandId,
-          payload: {
-            id: commandId,
-            at: context.now,
-            permissionId: covers.covered.id,
-            kind: covers.covered.kind,
-            commandType: sent.data.type,
-            what: used.title,
-            place: used.place,
-          },
-        },
-      ];
-    }
     return;
   }
 

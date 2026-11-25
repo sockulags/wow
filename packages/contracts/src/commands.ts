@@ -1,13 +1,6 @@
 import { z } from 'zod';
 import { AttachmentId } from './attachments.js';
-import {
-  AssistantChange,
-  AssistantPermissionUse,
-  AssistantProposal,
-  Briefing,
-  BriefingLine,
-  BriefingMoment,
-} from './assistant.js';
+import { AssistantChange, AssistantProposal } from './assistant.js';
 import { OwnSkill, SentSkill, SkillRef } from './skills.js';
 import {
   ChangeCount,
@@ -480,52 +473,6 @@ export const Command = z.discriminatedUnion('type', [
   // Takes back one change the assistant made (spec 8). Refused when the thing changed again
   // since, with what changed.
   z.object({ type: z.literal('assistant.undo'), changeId: Id }),
-  // Delegated work (chief of staff spec 9 to 15). Only the assistant sends these, and only while
-  // a standing permission covers them: a chat thread it starts in a project, in the project's own
-  // working copy when the project is a Git repository; a follow-up in a thread it started; and an
-  // answer to a question in such a thread, with the words of the user it comes from.
-  z.object({
-    type: z.literal('assistant.startThread'),
-    threadId: Id,
-    projectId: Id,
-    title: z.string().trim().min(1).max(200),
-    message: z.string().trim().min(1),
-    providerInstanceId: Id.optional(),
-    model: z.string().min(1).optional(),
-    effort: z.string().min(1).optional(),
-    ownWorkingCopy: z.boolean(),
-  }),
-  // The assistant's brief of a decision that waits (chief of staff spec 18), written once.
-  z.object({
-    type: z.literal('assistant.writeBrief'),
-    decisionId: z.string().min(1),
-    text: z.string().trim().min(1).max(1500),
-    recommendation: z.string().trim().min(1).max(300),
-  }),
-  // The window is shown again after the user was away (chief of staff spec 20): a briefing may
-  // be due.
-  z.object({ type: z.literal('presence.back'), awayFrom: Timestamp }),
-  // The assistant's summary of a briefing wow asked it for (spec 21).
-  z.object({
-    type: z.literal('assistant.writeBriefingSummary'),
-    briefingId: Id,
-    text: z.string().trim().min(1).max(1500),
-  }),
-  // A failed run or a missed card leaves the queue when the user is done with it.
-  z.object({ type: z.literal('decision.dismiss'), decisionId: z.string().min(1) }),
-  z.object({
-    type: z.literal('assistant.sendToThread'),
-    threadId: Id,
-    text: z.string().trim().min(1),
-  }),
-  z.object({
-    type: z.literal('assistant.answerQuestion'),
-    threadId: Id,
-    questionId: Id,
-    reply: QuestionReply,
-    // What the user wrote in the assistant conversation that answers it, quoted.
-    because: z.string().trim().min(1).max(500),
-  }),
   // "Start from a setup file" (app assistant spec 22): the file's text is read again, checked
   // and applied as one step that `setup.undo` takes back. `name` is the file's name as picked.
   z.object({
@@ -604,47 +551,6 @@ export type ProviderUpdateProgress = z.infer<typeof ProviderUpdateProgress>;
 // Commands only the server issues: what provider adapters report, and test results. They go
 // through the same pipeline as client commands but are not accepted over RPC.
 export const InternalCommand = z.discriminatedUnion('type', [
-  // A thread the assistant started ended its turn or asked for something (chief of staff spec
-  // 11 to 13): the assistant gets a turn to look at it, up to `assistant.followTurns` a thread.
-  // A briefing moment came (chief of staff spec 20 to 23): wow's lines, and whether the assistant
-  // is asked for a summary.
-  z.object({
-    type: z.literal('assistant.brief'),
-    briefingId: Id,
-    moment: BriefingMoment,
-    since: Timestamp,
-    lines: z.array(BriefingLine),
-  }),
-  // A held notification of a briefing goes out now that the user is free (spec 27).
-  z.object({ type: z.literal('assistant.briefingNotified'), briefingId: Id }),
-  // One reminder for a decision that waited long (spec 26).
-  z.object({
-    type: z.literal('assistant.remind'),
-    decisionId: z.string().min(1),
-    title: z.string().min(1),
-    path: z.string().min(1),
-  }),
-  // A meeting came to overlap a card with a workflow (spec 24): moved under Move cards, else a
-  // proposal.
-  z.object({
-    type: z.literal('assistant.moveCard'),
-    cardId: Id,
-    start: Timestamp,
-    end: Timestamp,
-    meeting: z.string().min(1),
-  }),
-  // A decision appeared: the assistant is asked for its brief, within assistant.briefsPerDay.
-  z.object({
-    type: z.literal('assistant.requestBrief'),
-    decisionId: z.string().min(1),
-    // What wow says of it, for the message that asks the assistant.
-    summary: z.string().min(1),
-  }),
-  z.object({
-    type: z.literal('assistant.follow'),
-    threadId: Id,
-    reason: z.enum(['turnEnded', 'question', 'approval']),
-  }),
   z.object({
     type: z.literal('provider.events'),
     threadId: Id,
@@ -1399,72 +1305,6 @@ export const DomainEvent = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('notification.sent'), aggregate: Id, payload: AppNotification }),
   // An ordinary change the assistant made, stored in the same commit as the change itself.
   z.object({ kind: z.literal('assistant.changed'), aggregate: Id, payload: AssistantChangeRecord }),
-  z.object({
-    kind: z.literal('decision.briefRequested'),
-    aggregate: z.string().min(1),
-    payload: z.object({ decisionId: z.string().min(1), at: Timestamp }),
-  }),
-  z.object({
-    kind: z.literal('decision.briefWritten'),
-    aggregate: z.string().min(1),
-    payload: z.object({
-      decisionId: z.string().min(1),
-      text: z.string().min(1),
-      recommendation: z.string().min(1),
-      at: Timestamp,
-    }),
-  }),
-  z.object({
-    kind: z.literal('decision.dismissed'),
-    aggregate: z.string().min(1),
-    payload: z.object({ decisionId: z.string().min(1), at: Timestamp }),
-  }),
-  z.object({ kind: z.literal('briefing.made'), aggregate: Id, payload: Briefing }),
-  z.object({
-    kind: z.literal('briefing.summaryWritten'),
-    aggregate: Id,
-    payload: z.object({ briefingId: Id, text: z.string().min(1) }),
-  }),
-  z.object({
-    kind: z.literal('briefing.notified'),
-    aggregate: Id,
-    payload: z.object({ briefingId: Id }),
-  }),
-  z.object({
-    kind: z.literal('decision.reminded'),
-    aggregate: z.string().min(1),
-    payload: z.object({ decisionId: z.string().min(1), at: Timestamp }),
-  }),
-  z.object({
-    kind: z.literal('presence.returned'),
-    aggregate: z.string().min(1),
-    payload: z.object({ awayFrom: Timestamp, at: Timestamp }),
-  }),
-  // The assistant started this thread (chief of staff spec 10).
-  z.object({
-    kind: z.literal('thread.delegated'),
-    aggregate: Id,
-    payload: z.object({ threadId: Id, at: Timestamp }),
-  }),
-  // The assistant was given a turn to follow the thread (spec 11).
-  z.object({
-    kind: z.literal('thread.followed'),
-    aggregate: Id,
-    payload: z.object({ threadId: Id, at: Timestamp }),
-  }),
-  // The assistant answered the question, from the user's words (spec 12).
-  z.object({
-    kind: z.literal('question.answeredByAssistant'),
-    aggregate: Id,
-    payload: z.object({ questionId: Id, because: z.string().min(1) }),
-  }),
-  // The assistant acted under a standing permission (chief of staff spec 5), in the same commit
-  // as what it did.
-  z.object({
-    kind: z.literal('assistant.permissionUsed'),
-    aggregate: Id,
-    payload: AssistantPermissionUse,
-  }),
   // The greeting after the first-start step waits until the assistant can run it.
   z.object({
     kind: z.literal('assistant.greetingOwed'),
