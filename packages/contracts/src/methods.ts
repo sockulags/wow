@@ -27,7 +27,7 @@ import {
   PullRequestPlan,
   PullRequestPlanParams,
 } from './thread-git.js';
-import { RunDiff, RunDiffParams, ThreadDiff, ThreadDiffParams } from './diff.js';
+import { ThreadDiff, ThreadDiffParams } from './diff.js';
 import {
   FileListParams,
   FileListResult,
@@ -40,7 +40,6 @@ import {
   FileReadResult,
 } from './files.js';
 import { HostItemRead, HostLookupParams, HostLookupResult } from './host-links.js';
-import { ChangeRequest, HostRead, HostRefreshParams, PageRead, TicketRead } from './hosts.js';
 import {
   Approval,
   BacklogItem,
@@ -48,8 +47,6 @@ import {
   CalendarItem,
   AppNotification,
   OutlookStatus,
-  PlanIntent,
-  PlanRun,
   Project,
   ProviderInstance,
   Question,
@@ -63,7 +60,6 @@ import {
   Trigger,
   Turn,
   Workflow,
-  WorkflowRun,
 } from './projections.js';
 import {
   DetectedProvider,
@@ -101,16 +97,9 @@ export const subscriptionTopics = {
   outlookStatus: { row: OutlookStatus, threadScoped: false },
   backlogItems: { row: BacklogItem, threadScoped: false },
   workflows: { row: Workflow, threadScoped: false },
-  workflowRuns: { row: WorkflowRun, threadScoped: false },
   triggers: { row: Trigger, threadScoped: false },
   notifications: { row: AppNotification, threadScoped: false },
   skills: { row: Skill, threadScoped: false },
-  planIntents: { row: PlanIntent, threadScoped: false },
-  planRuns: { row: PlanRun, threadScoped: false },
-  changeRequests: { row: ChangeRequest, threadScoped: false },
-  hostReads: { row: HostRead, threadScoped: false },
-  ticketReads: { row: TicketRead, threadScoped: false },
-  pageReads: { row: PageRead, threadScoped: false },
   // What was read about the items a chat thread links to (agent workbench spec 22).
   hostItemReads: { row: HostItemRead, threadScoped: true },
   // What a chat thread's session reported it can use (thread work spec 38): no row before its
@@ -364,37 +353,12 @@ export const rpcMethods = {
     params: NoParams,
     result: z.object({ skills: z.array(Skill) }),
   },
-  // Reads every project's intents folder now and answers with the intents found. Files only; no
-  // host is asked.
-  'plans.refresh': {
-    params: NoParams,
-    result: z.object({ intents: z.array(PlanIntent) }),
-  },
-  // "Refresh now" (review loop spec 30): asks the host once about one followed plan, one run, or
-  // everything wow follows, whatever the polling settings say, and answers with what is stored
-  // for them afterwards. A host that fails is an answer (the read's `error`), not an RPC error.
-  'hosts.refresh': {
-    params: HostRefreshParams,
-    result: z.object({ reads: z.array(HostRead) }),
-  },
   // A chat thread's links (agent workbench spec 20 to 25): the sites and references wow may read
   // for the thread, the item a link or reference names, and its read. Reads only when asked
   // (`read`), never on a timer. A host that fails is an answer (the read's `error`).
   'hosts.lookup': {
     params: HostLookupParams,
     result: HostLookupResult,
-  },
-  // Looks for each started step's expected artifacts in the project folder (behavior 26, run
-  // view open) and stores what it finds.
-  'workflowRuns.detectArtifacts': {
-    params: z.object({ runId: z.string().min(1) }),
-    result: WorkflowRun,
-  },
-  // What the run changed in its working folder since its base commit: the changed files, or one
-  // file's diff when `path` is given. Read only; git runs with hooks off.
-  'workflowRuns.diff': {
-    params: RunDiffParams,
-    result: RunDiff,
   },
   // What a chat thread changed in its folder since its first turn (agent workbench spec 34).
   'threads.diff': {
@@ -407,12 +371,6 @@ export const rpcMethods = {
   'threads.refreshTools': {
     params: z.object({ threadId: z.string().min(1) }),
     result: z.object({ outcome: RefreshToolsOutcome }),
-  },
-  // "Remove working copy" (review loop spec 37): deletes a kept working copy of a run that has
-  // ended, with whatever is uncommitted or unpushed in it. The app asks before it calls this.
-  'workflowRuns.removeWorkingCopy': {
-    params: z.object({ runId: z.string().min(1) }),
-    result: WorkflowRun,
   },
   // A chat thread's own working copy (thread work spec 10, 14, 15). The plan for `/chat/new`,
   // read only. The status: what is in the copy now that would be lost with it (commits on its
@@ -482,12 +440,6 @@ export const rpcMethods = {
   'threads.cancelProposal': {
     params: z.object({ requestId: z.string().min(1) }),
     result: z.object({ cancelled: z.boolean() }),
-  },
-  // Files in a project folder that expected artifact globs match, for the builder's "Matches 2
-  // files in Demo" line. Read only; nothing is stored.
-  'workflows.matchArtifacts': {
-    params: z.object({ projectId: z.string().min(1), globs: z.array(z.string().min(1)) }),
-    result: z.object({ files: z.array(z.string()) }),
   },
   // Reads one file for the viewer, of a run, a thread or a project. Only files inside the scope's
   // folders are read; anything else is answered as `refused` with the reason.

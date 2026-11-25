@@ -18,62 +18,38 @@ import type {
   BacklogState,
   CalendarItemSource,
   CardThreadMode,
-  ChangeRequestState,
-  CheckState,
   Command,
   FileHash,
   ForkOrigin,
   GoBack,
   ResumePointRef,
-  HostCheck,
   HostError,
   HostItemData,
   HostItemRef,
-  HostKind,
-  PolledHostScope,
   NotificationKind,
   OccurrenceOutcome,
   OutlookProfile,
-  PlanFile,
-  PlanProblem,
-  PlanRunState,
-  PlanRunUnit,
   PastSeries,
-  PlanSource,
-  PlanUnit,
   ProviderInstanceStatus,
   ProviderKind,
   ProviderUpdate,
   ProviderUpdateRun,
   RepeatRule,
-  ReviewComment,
-  RunEvent,
-  RunOccurrence,
-  RunUnit,
   SecretRef,
   SessionTools,
   SetupApplicationState,
   SetupFillIn,
   SetupMark,
   SkillSource,
-  PageLink,
-  PathVisit,
-  StepRun,
   StoredSnapshot,
   ThreadItemKind,
   ThreadKind,
   ThreadState,
   ThreadToolsSource,
-  Ticket,
-  TicketSource,
-  TriggerEvent,
-  TriggerKind,
   TriggerState,
   TurnSnapshot,
   TurnState,
-  UnitRef,
   Usage,
-  WorkflowRunState,
   WorkflowStep,
   WorkingCopy,
 } from '@wow/contracts';
@@ -132,8 +108,6 @@ export const threads = sqliteTable(
     permissionMode: text().notNull(),
     state: text().$type<ThreadState>().notNull(),
     pinned: bool().notNull(),
-    runId: text(),
-    stepId: text(),
     backgroundTasks: json<BackgroundTask[]>().notNull().default([]),
     archived: bool().notNull().default(false),
     seen: bool().notNull().default(true),
@@ -277,7 +251,6 @@ export const calendarItems = sqliteTable(
     workflowName: text(),
     threadMode: text().$type<CardThreadMode>().notNull().default('new'),
     threadId: text(),
-    runId: text(),
     state: text().notNull(),
     updatedAt: text().notNull(),
     focus: bool().notNull().default(false),
@@ -299,7 +272,6 @@ export const cardOccurrences = sqliteTable(
     start: text().notNull(),
     end: text().notNull(),
     outcome: text().$type<OccurrenceOutcome>().notNull(),
-    runId: text(),
     threadId: text(),
     reason: text(),
     offerRunNow: bool().notNull().default(false),
@@ -324,7 +296,6 @@ export const backlogItems = sqliteTable('backlog_items', {
   body: text().notNull(),
   tags: json<string[]>().notNull(),
   state: text().$type<BacklogState>().notNull(),
-  runId: text(),
   remote: json<BacklogRemote>(),
   createdAt: text().notNull(),
 });
@@ -341,82 +312,22 @@ export const workflows = sqliteTable('workflows', {
   updatedAt: text().notNull(),
 });
 
-export const workflowRuns = sqliteTable('workflow_runs', {
-  id: text().primaryKey(),
-  workflowId: text().notNull(),
-  projectId: text().notNull(),
-  calendarItemId: text(),
-  backlogItemId: text(),
-  state: text().$type<WorkflowRunState>().notNull(),
-  currentStep: integer().notNull(),
-  steps: json<StepRun[]>().notNull(),
-  startedAt: text().notNull(),
-  endedAt: text(),
-  baseSha: text(),
-  baseFiles: json<FileHash[]>(),
-  workingCopy: json<WorkingCopy>(),
-  unit: json<RunUnit>(),
-  event: json<RunEvent>(),
-  occurrence: json<RunOccurrence>(),
-  path: json<PathVisit[]>(),
-  wowSkills: bool(),
-});
-
-// Plan runs: one row per "Run ready units", kept after it ended.
-export const planRuns = sqliteTable(
-  'plan_runs',
-  {
-    id: text().primaryKey(),
-    planId: text().notNull(),
-    projectId: text().notNull(),
-    intentId: text().notNull(),
-    workflowId: text().notNull(),
-    state: text().$type<PlanRunState>().notNull(),
-    units: json<PlanRunUnit[]>().notNull(),
-    waitingFor: json<string[]>().notNull(),
-    message: text(),
-    startedAt: text().notNull(),
-    endedAt: text(),
-  },
-  (table) => [index('plan_runs_plan_idx').on(table.planId)],
-);
-
-// Card triggers and event triggers in one table. The columns of the other kind are null.
+// One trigger per local card with a workflow.
 export const triggers = sqliteTable(
   'triggers',
   {
     id: text().primaryKey(),
-    kind: text().$type<TriggerKind>().notNull().default('card'),
-    calendarItemId: text(),
+    calendarItemId: text().notNull(),
     workflowId: text().notNull(),
-    runAt: text(),
-    zone: text(),
-    state: text().$type<TriggerState>(),
-    runId: text(),
+    runAt: text().notNull(),
+    zone: text().notNull(),
+    state: text().$type<TriggerState>().notNull(),
     offerRunNow: bool().notNull().default(false),
-    projectId: text(),
-    event: text().$type<TriggerEvent>(),
-    enabled: bool(),
-    createdAt: text(),
   },
   (table) => [
     index('triggers_due_idx').on(table.state, table.runAt),
     index('triggers_card_idx').on(table.calendarItemId),
-    index('triggers_project_idx').on(table.projectId),
   ],
-);
-
-// The events an event trigger has seen, by the id the host gives them, so a repeated poll
-// starts nothing (review loop spec 49).
-export const triggerEvents = sqliteTable(
-  'trigger_events',
-  {
-    triggerId: text().notNull(),
-    eventId: text().notNull(),
-    runId: text(),
-    at: text().notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.triggerId, table.eventId] })],
 );
 
 export const notifications = sqliteTable('notifications', {
@@ -426,7 +337,6 @@ export const notifications = sqliteTable('notifications', {
   title: text().notNull(),
   body: text().notNull(),
   path: text().notNull(),
-  runId: text(),
   calendarItemId: text(),
   threadId: text(),
   approvalId: text(),
@@ -548,36 +458,6 @@ export const skills = sqliteTable('skills', {
   file: text(),
 });
 
-// One row per intent folder of a project, as its files read (packages/agent-os).
-export const planIntents = sqliteTable('plan_intents', {
-  id: text().primaryKey(),
-  projectId: text().notNull(),
-  intentId: text().notNull(),
-  title: text().notNull(),
-  hasIntent: bool().notNull(),
-  status: text(),
-  rev: integer(),
-  spec: json<PlanFile>(),
-  plan: json<PlanFile>(),
-  source: text().$type<PlanSource>(),
-  units: json<PlanUnit[]>().notNull(),
-  problems: json<PlanProblem[]>().notNull(),
-  followed: bool().notNull().default(false),
-});
-
-// What was last read from a host for one followed plan (`plan:<id>`) or one run (`run:<id>`).
-export const hostReads = sqliteTable('host_reads', {
-  id: text().primaryKey(),
-  projectId: text().notNull(),
-  scope: text().$type<PolledHostScope>().notNull(),
-  host: text().$type<HostKind>().notNull(),
-  hostName: text().notNull(),
-  branch: text(),
-  changeRequestIds: json<string[]>().notNull(),
-  fetchedAt: text(),
-  error: json<HostError>(),
-});
-
 // What was last read about one item a chat thread links to (agent workbench spec 22), read only
 // when its tab opens and on Refresh now.
 export const hostItemReads = sqliteTable(
@@ -603,54 +483,6 @@ export const threadTools = sqliteTable('thread_tools', {
   source: text().$type<ThreadToolsSource>().notNull(),
   live: bool().notNull(),
   reportedAt: text().notNull(),
-});
-
-// What was last read about one run's ticket (`run:<id>`), with the ticket itself.
-export const ticketReads = sqliteTable('ticket_reads', {
-  id: text().primaryKey(),
-  projectId: text().notNull(),
-  runId: text().notNull(),
-  host: text().$type<HostKind>().notNull(),
-  hostName: text().notNull(),
-  key: text(),
-  source: text().$type<TicketSource>(),
-  ticket: json<Ticket>(),
-  fetchedAt: text(),
-  error: json<HostError>(),
-});
-
-// What was last read about the pages one run's texts link to (`run:<id>`), with the pages.
-export const pageReads = sqliteTable('page_reads', {
-  id: text().primaryKey(),
-  projectId: text().notNull(),
-  runId: text().notNull(),
-  host: text().$type<HostKind>().notNull(),
-  hostName: text().notNull(),
-  pages: json<PageLink[]>().notNull(),
-  fetchedAt: text(),
-  error: json<HostError>(),
-});
-
-// Pull requests as last read, one row per project and number.
-export const changeRequests = sqliteTable('change_requests', {
-  id: text().primaryKey(),
-  projectId: text().notNull(),
-  host: text().$type<HostKind>().notNull(),
-  number: integer().notNull(),
-  title: text().notNull(),
-  url: text().notNull(),
-  state: text().$type<ChangeRequestState>().notNull(),
-  draft: bool().notNull(),
-  mergedAt: text(),
-  headBranch: text().notNull(),
-  headSha: text().notNull(),
-  fromFork: bool().notNull().default(false),
-  units: json<UnitRef[]>().notNull(),
-  checkState: text().$type<CheckState>().notNull(),
-  checks: json<HostCheck[]>().notNull(),
-  comments: json<ReviewComment[]>().notNull(),
-  newestCommentId: text(),
-  links: json<string[]>().notNull().default([]),
 });
 
 export const settings = sqliteTable(

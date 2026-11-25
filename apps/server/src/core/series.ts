@@ -1,11 +1,9 @@
 import {
-  isLiveRunState,
   type CalendarItem,
   type CalendarOccurrence,
   type CalendarRange,
   type CardOccurrence,
   type PastSeries,
-  type WorkflowRun,
 } from '@wow/contracts';
 import {
   firstAfter,
@@ -97,21 +95,6 @@ export function nextOccurrence(
     now,
     (occurrence) => !taken.has(occurrence.date) && !alsoTaken.has(occurrence.date),
   );
-}
-
-// A run of the card that is still running or waiting: the newest run it follows, or the run of
-// any occurrence it reached (a card restored by Undo has no run of its own yet).
-export function liveRunOf(card: CalendarItem, read: ReadModel): WorkflowRun | undefined {
-  const ids = new Set<string>();
-  if (card.runId !== null) ids.add(card.runId);
-  for (const occurrence of read.cardOccurrences(card.id)) {
-    if (occurrence.runId !== null) ids.add(occurrence.runId);
-  }
-  for (const id of ids) {
-    const run = read.run(id);
-    if (run && isLiveRunState(run.state)) return run;
-  }
-  return undefined;
 }
 
 // A card stored with a zone the platform does not know (before zones were checked for every

@@ -141,8 +141,6 @@ export function assistantThreadEvents(
     permissionMode: settings.permissionMode,
     state: 'idle',
     pinned: false,
-    runId: null,
-    stepId: null,
     createdAt: now,
     updatedAt: now,
   };

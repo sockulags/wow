@@ -34,7 +34,6 @@ export {
   type MockGitLabNote,
   type MockMergeRequest,
 } from './hosts/mock-gitlab.js';
-export { HostPoller, type HostPollerDeps } from './hosts/poller.js';
 export {
   failureCommand,
   snapshotCommand,

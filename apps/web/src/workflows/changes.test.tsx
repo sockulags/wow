@@ -1,6 +1,6 @@
 import type { RunDiffFile } from '@wow/contracts';
 import { describe, expect, it } from 'vitest';
-import { emptyReason, lineChanges, parsePatch } from './changes';
+import { lineChanges, parsePatch } from './changes';
 
 // The words and diff rows a thread's Changes shares (review loop spec 11 to 13). All invented.
 
@@ -12,7 +12,6 @@ const file = (path: string, overrides: Partial<RunDiffFile> = {}): RunDiffFile =
   added: 2,
   removed: 1,
   size: 300,
-  changedBy: [],
   ...overrides,
 });
 
@@ -32,10 +31,7 @@ describe('Changes model', () => {
     ]);
   });
 
-  it('words what stands in for lines and why nothing is compared', () => {
+  it('words what stands in for lines', () => {
     expect(lineChanges(file('a', { content: 'binary', size: null }))).toBe('Binary file');
-    expect(emptyReason('failed', 'fatal: bad object').description).toBe('fatal: bad object');
-    expect(emptyReason('baseMissing', null).title).toBe('The starting commit is gone');
-    expect(emptyReason('folderMissing', null).title).toBe('Folder missing');
   });
 });

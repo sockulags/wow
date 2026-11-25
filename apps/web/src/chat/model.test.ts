@@ -1,4 +1,4 @@
-import type { ProviderInstance, Skill, Thread, ThreadItem, WorkflowRun } from '@wow/contracts';
+import type { ProviderInstance, Skill, Thread, ThreadItem } from '@wow/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import type { CommandContext } from '@/app/commands';
 import { chatCommands } from './commands';
@@ -10,7 +10,6 @@ import {
   filterSkills,
   latestContext,
   permissionOptions,
-  runLabel,
   skillQuery,
   skillRefOf,
   typedTrigger,
@@ -30,8 +29,6 @@ const thread = (id: string, changes: Partial<Thread> = {}): Thread => ({
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00Z',
   updatedAt: '2026-11-02T08:00:00Z',
   ...changes,
@@ -45,48 +42,6 @@ const skill = (name: string, description: string): Skill => ({
   source: 'user-claude',
   manualOnly: false,
   invocations: { claude: `/${name}`, codex: `$${name}` },
-});
-
-describe('workflow thread labels', () => {
-  it('labels a workflow thread with the run and step name', () => {
-    const workflows = [
-      {
-        id: 'w1',
-        name: 'Feature',
-        templateKind: null,
-        createdAt: '2026-11-02T08:00:00Z',
-        updatedAt: '2026-11-02T08:00:00Z',
-        steps: [
-          {
-            id: 's1',
-            skillName: 'plan-work',
-            providerInstanceId: 'claude',
-            gateBefore: false,
-            gateAfter: true,
-            expectedArtifacts: [],
-          },
-        ],
-      },
-    ];
-    const runs: WorkflowRun[] = [
-      {
-        id: 'r1',
-        workflowId: 'w1',
-        projectId: 'p1',
-        calendarItemId: null,
-        backlogItemId: null,
-        state: 'running',
-        currentStep: 0,
-        steps: [],
-        startedAt: '2026-11-02T08:00:00Z',
-        endedAt: null,
-      },
-    ];
-    expect(runLabel(thread('t', { runId: 'r1', stepId: 's1' }), runs, workflows)).toBe(
-      'Feature · plan-work',
-    );
-    expect(runLabel(thread('t'), runs, workflows)).toBeUndefined();
-  });
 });
 
 describe('thread settings', () => {

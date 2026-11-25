@@ -19,24 +19,17 @@ const card = (id: string, state: string): CalendarItem => ({
   projectId: 'p1',
   backlogItemId: null,
   workflowId: 'wf1',
-  runId: null,
   state,
   updatedAt: '2026-11-02T08:00:00.000Z',
 });
 
 const trigger = (cardId: string, state: Trigger['state'], offerRunNow: boolean): Trigger => ({
   id: `${cardId}:trigger`,
-  kind: 'card',
-  projectId: null,
-  event: null,
-  enabled: null,
-  createdAt: null,
   calendarItemId: cardId,
   workflowId: 'wf1',
   runAt: '2026-11-02T09:00:00.000Z',
   zone: 'UTC',
   state,
-  runId: null,
   offerRunNow,
 });
 
@@ -47,7 +40,6 @@ const notification = (id: string): AppNotification => ({
   title: 'Waiting for you',
   body: '',
   path: '/workflows',
-  runId: null,
   calendarItemId: null,
 });
 

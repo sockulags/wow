@@ -45,8 +45,6 @@ const thread: Thread = {
   permissionMode: 'default',
   state: 'working',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: at(0),
   updatedAt: at(0),
 };

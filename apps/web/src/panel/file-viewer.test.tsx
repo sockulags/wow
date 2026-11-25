@@ -1,4 +1,4 @@
-import type { FileReadResult, Project, Workflow, WorkflowRun } from '@wow/contracts';
+import type { FileReadResult, Project } from '@wow/contracts';
 import {
   createMemorySettingsSource,
   createSettingsStore,
@@ -30,7 +30,7 @@ beforeAll(loadMarkdown);
 // The viewer's states in the context panel (review loop spec 6 to 9) against a fake server that
 // answers `files.read` from a table of invented files.
 
-const route = '/workflows/runs/run-1';
+const route = '/backlog';
 
 const project: Project = {
   id: 'demo',
@@ -39,49 +39,6 @@ const project: Project = {
   defaultProviderInstanceId: null,
   defaultModel: null,
   createdAt: '2026-11-02T08:00:00.000Z',
-};
-
-const run: WorkflowRun = {
-  id: 'run-1',
-  workflowId: 'w',
-  projectId: 'demo',
-  calendarItemId: null,
-  backlogItemId: null,
-  state: 'waiting',
-  currentStep: 0,
-  steps: [
-    {
-      stepId: 's1',
-      state: 'waiting',
-      threadId: 'run-1.s1',
-      startedAt: '2026-11-02T08:00:00.000Z',
-      endedAt: '2026-11-02T08:05:00.000Z',
-      artifactsFound: ['review/notes.md', 'review/screen.png'],
-    },
-  ],
-  startedAt: '2026-11-02T08:00:00.000Z',
-  endedAt: null,
-};
-
-const workflow: Workflow = {
-  id: 'w',
-  name: 'Review',
-  templateKind: null,
-  createdAt: '2026-11-02T08:00:00.000Z',
-  updatedAt: '2026-11-02T08:00:00.000Z',
-  steps: [
-    {
-      id: 's1',
-      skillName: 'check-work',
-      providerInstanceId: 'mock',
-      model: 'mock-model',
-      effort: 'default',
-      permissionMode: 'default',
-      gateBefore: false,
-      gateAfter: true,
-      expectedArtifacts: ['review/*'],
-    },
-  ],
 };
 
 type Answer = FileReadResult | Error | 'never';
@@ -97,14 +54,11 @@ function fake(
 ): Fake {
   const asked: unknown[] = [];
   const topics: Readonly<Record<string, unknown[]>> = {
-    workflowRuns: [run],
-    workflows: [workflow],
     projects: [project],
   };
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
     request(method, params) {
-      if (method === 'workflowRuns.detectArtifacts') return Promise.resolve(run);
       if (method !== 'files.read') return Promise.resolve([]);
       asked.push(params);
       const answer = files[(params as { path: string }).path];
@@ -154,7 +108,7 @@ const tabsWith = (file: ViewerFile | undefined): LayoutState['panelTabs'] =>
 const shownOf = (runtime: Runtime) => shownFile(runtime.layout.getState(), route);
 
 const fileAt = (path: string, from = route): ViewerFile => ({
-  scope: { runId: 'run-1' },
+  scope: { projectId: 'demo' },
   path,
   fullPath: `/home/me/demo/${path}`,
   from,
@@ -276,7 +230,7 @@ describe('file viewer', () => {
   });
 
   it.each([
-    ['outside', 'Outside the run’s folders', '../x is outside the folders, so it was not read.'],
+    ['outside', 'Outside the project folder', '../x is outside the folders, so it was not read.'],
     ['missing', 'File not found', 'There is no file gone.md.'],
     ['not_a_file', 'Not a file', 'review is a folder, not a file.'],
     ['binary', 'Not shown: binary file', 'data.bin is a binary file, so it is not shown.'],
@@ -301,13 +255,13 @@ describe('file viewer', () => {
     expect(within(await viewer()).getByRole('status', { name: 'Reading the file' })).toBeTruthy();
     first.unmount();
 
-    const failing = fake({ 'gone.md': new Error('No run run-1') }, { viewer: 'gone.md' });
+    const failing = fake({ 'gone.md': new Error('No project demo') }, { viewer: 'gone.md' });
     await renderApp(route, failing.runtime);
     const shown = await viewer();
     expect(
       await within(shown).findByRole('heading', { name: 'The file could not be read' }),
     ).toBeTruthy();
-    expect(within(shown).getByText('No run run-1')).toBeTruthy();
+    expect(within(shown).getByText('No project demo')).toBeTruthy();
   });
 
   it('says so when no server is connected', async () => {

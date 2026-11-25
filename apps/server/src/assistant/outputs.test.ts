@@ -4,7 +4,6 @@ import {
   type ServerCommand,
   type SettingRow,
   type SubscriptionTopic,
-  type WorkflowRun,
   type WorkflowStep,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
@@ -95,73 +94,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.stop();
   await rm(root, { recursive: true, force: true });
-});
-
-function completedRun(finalMessage: string): WorkflowRun {
-  asUser({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'delivery', projectId: 'tea' });
-  const run = rows<WorkflowRun>('workflowRuns')[0];
-  asUser({
-    type: 'workflowRun.stepCompleted',
-    runId: 'run-1',
-    stepId: run?.steps[0]?.stepId ?? '',
-    finalMessage,
-    artifactsFound: ['intents/spec.md'],
-  });
-  const done = rows<WorkflowRun>('workflowRuns')[0];
-  if (!done) throw new Error('no run');
-  return done;
-}
-
-describe('read_run (chief of staff spec 1, 2)', () => {
-  it("returns a step's final message, verdict and its artifacts' text, and no other file", async () => {
-    completedRun('Wrote the spec.\n\nAPPROVED');
-    const { isError, content, text } = await call('read_run', { runId: 'run-1' });
-    expect(isError).toBe(false);
-    const [first] = content['steps'] as Record<string, unknown>[];
-    expect(first).toMatchObject({
-      stepId: 's1',
-      skill: 'deliver-work',
-      finalMessage: { text: 'Wrote the spec.\n\nAPPROVED', cut: false },
-      artifacts: [{ path: 'intents/spec.md', read: true, text: '# Spec\n\nThe kettle sings.\n' }],
-    });
-    expect(text).not.toContain('not an artifact');
-    expect(content['changes']).toHaveProperty('status');
-  });
-
-  it('cuts long text at assistant.readMaxBytes and says so', async () => {
-    asUser({ type: 'setting.set', key: 'assistant.readMaxBytes', scope: 'global', value: 1000 });
-    completedRun('x'.repeat(1500));
-    const { content } = await call('read_run', { runId: 'run-1' });
-    const [first] = content['steps'] as { finalMessage: { text: string; cut: boolean } }[];
-    expect(first?.finalMessage.cut).toBe(true);
-    expect(first?.finalMessage.text).toHaveLength(1000);
-  });
-
-  it('hides what looks like a secret in what the agent wrote', async () => {
-    completedRun(`The token is ${lookalike}`);
-    const { text } = await call('read_run', { runId: 'run-1' });
-    expect(text).not.toContain(lookalike);
-    expect(text).toContain(hiddenText);
-  });
-
-  it('refuses a run in a project the person excluded', async () => {
-    completedRun('Done.');
-    asUser({
-      type: 'setting.set',
-      key: 'assistant.excludedProjects',
-      scope: 'global',
-      value: ['tea'],
-    });
-    const { isError, text } = await call('read_run', { runId: 'run-1' });
-    expect(isError).toBe(true);
-    expect(text).toContain('may not read');
-    expect(text).not.toContain('Done.');
-  });
-
-  it('takes no path, so no other file can be asked for', () => {
-    const tool = server.assistant.tools.list().find((entry) => entry.name === 'read_run');
-    expect(Object.keys(tool?.inputSchema['properties'] as object)).toEqual(['runId']);
-  });
 });
 
 const item = (index: number, text: string) => ({

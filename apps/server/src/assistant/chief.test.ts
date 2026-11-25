@@ -64,7 +64,6 @@ function meeting(id: string, start: string, end: string): void {
     projectId: null,
     backlogItemId: null,
     workflowId: null,
-    runId: null,
     state: 'scheduled',
     updatedAt: start,
   };
@@ -163,28 +162,6 @@ describe('briefings (chief of staff spec 20 to 23)', () => {
     at('2026-11-10T08:25:00.000Z');
     server.scheduler.tick();
     expect(notifications()).toMatchObject([{ kind: 'briefing' }]);
-  });
-});
-
-describe('reminders (chief of staff spec 26)', () => {
-  it('reminds once about a decision that waited long', () => {
-    at('2026-11-10T08:00:00.000Z');
-    asUser({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'delivery', projectId: 'tea' });
-    asUser({
-      type: 'workflowRun.stepCompleted',
-      runId: 'run-1',
-      stepId: 's1',
-      finalMessage: 'Done.',
-      artifactsFound: [],
-    });
-    at('2026-11-10T08:30:00.000Z');
-    server.scheduler.tick();
-    expect(notifications().filter((entry) => entry.kind === 'reminder')).toEqual([]);
-    at('2026-11-10T09:10:00.000Z');
-    server.scheduler.tick();
-    at('2026-11-10T10:30:00.000Z');
-    server.scheduler.tick();
-    expect(notifications().filter((entry) => entry.kind === 'reminder')).toHaveLength(1);
   });
 });
 

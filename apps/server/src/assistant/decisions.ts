@@ -4,7 +4,7 @@ import {
   type Decision,
   type DecisionKind,
 } from '@wow/contracts';
-import { eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
 
@@ -17,7 +17,6 @@ type Row = Omit<Decision, 'brief' | 'briefPending'>;
 
 const base = {
   threadId: null,
-  runId: null,
   proposalId: null,
   approvalId: null,
   questionId: null,
@@ -31,10 +30,8 @@ const base = {
 const tier: Readonly<Record<DecisionKind, number>> = {
   approval: 0,
   question: 0,
-  gate: 1,
   limit: 1,
   proposal: 2,
-  failedRun: 3,
   missedCard: 3,
 };
 
@@ -85,7 +82,6 @@ function threadRows(db: Db): Row[] {
     const item = itemOf(approval.itemId);
     const turnId = running.get(approval.threadId);
     if (!thread || !item || item.turnId !== turnId) continue;
-    // A step's approval belongs to its run; the run is not waiting at a gate for it.
     const payload = ApprovalItemPayload.safeParse(item.payload);
     rows.push({
       ...base,
@@ -96,7 +92,6 @@ function threadRows(db: Db): Row[] {
       where: where(thread.id),
       path: `/chat/${thread.id}`,
       threadId: thread.id,
-      runId: thread.runId,
       approvalId: approval.id,
       holdsTurn: true,
       fixed: [
@@ -119,7 +114,6 @@ function threadRows(db: Db): Row[] {
       where: where(thread.id),
       path: `/chat/${thread.id}`,
       threadId: thread.id,
-      runId: thread.runId,
       questionId: question.id,
       holdsTurn: true,
       fixed:
@@ -131,14 +125,7 @@ function threadRows(db: Db): Row[] {
   return rows;
 }
 
-function runRows(db: Db, dismissed: ReadonlySet<string>): Row[] {
-  const workflows = new Map(
-    db
-      .select()
-      .from(t.workflows)
-      .all()
-      .map((row) => [row.id, row]),
-  );
+function missedCardRows(db: Db, dismissed: ReadonlySet<string>): Row[] {
   const projects = new Map(
     db
       .select()
@@ -146,88 +133,23 @@ function runRows(db: Db, dismissed: ReadonlySet<string>): Row[] {
       .all()
       .map((row) => [row.id, row.name]),
   );
-  const cards = new Map(
-    db
-      .select()
-      .from(t.calendarItems)
-      .where(eq(t.calendarItems.source, 'local'))
-      .all()
-      .map((card) => [card.id, card]),
-  );
-  const rows: Row[] = [];
-  for (const run of db
+  return db
     .select()
-    .from(t.workflowRuns)
-    .where(inArray(t.workflowRuns.state, ['waiting', 'failed']))
-    .all()) {
-    const workflow = workflows.get(run.workflowId);
-    const project = projects.get(run.projectId);
-    const where = [workflow?.name, project].filter(Boolean).join(' · ') || null;
-    const card = run.calendarItemId ? cards.get(run.calendarItemId) : undefined;
-    const step = run.steps[run.currentStep] ?? run.steps.at(-1);
-    const skill = workflow?.steps.find((candidate) => candidate.id === step?.stepId)?.skillName;
-    if (run.state === 'failed') {
-      const id = `failedRun:${run.id}`;
-      if (dismissed.has(id)) continue;
-      const failed = run.steps.find((entry) => entry.state === 'failed');
-      rows.push({
-        ...base,
-        id,
-        kind: 'failedRun',
-        at: run.endedAt ?? run.startedAt,
-        title: `${workflow?.name ?? 'A run'} failed${failed ? ` at ${workflow?.steps.find((candidate) => candidate.id === failed.stepId)?.skillName ?? failed.stepId}` : ''}`,
-        where,
-        path: `/workflows/runs/${run.id}`,
-        runId: run.id,
-        cardId: run.calendarItemId,
-        fixed: failed?.error ? [failed.error] : [],
-      });
-      continue;
-    }
-    // A gate that waits for the pull request's checks waits for the host, not for the user.
-    if (step?.gate?.state === 'waitingForChecks') continue;
-    const atLimit = step?.gate?.state === 'waitingAtLimit';
-    rows.push({
+    .from(t.calendarItems)
+    .where(and(eq(t.calendarItems.source, 'local'), eq(t.calendarItems.state, 'missed')))
+    .all()
+    .filter((card) => !dismissed.has(`missedCard:${card.id}`))
+    .map((card) => ({
       ...base,
-      id: `${atLimit ? 'limit' : 'gate'}:${run.id}:${step?.stepId ?? ''}`,
-      kind: atLimit ? 'limit' : 'gate',
-      at: step?.endedAt ?? run.startedAt,
-      title: atLimit
-        ? (step?.gate?.detail ?? `${skill ?? 'A step'} reached its limit`)
-        : `${skill ?? 'A step'} waits for your review`,
-      where,
-      path: `/workflows/runs/${run.id}`,
-      runId: run.id,
-      cardId: run.calendarItemId,
-      cardStart: card?.start ?? null,
-      fixed: [
-        ...(step?.facts?.verdict && step.facts.verdict !== 'none'
-          ? [`Verdict: ${step.facts.verdict}`]
-          : []),
-        ...(step?.facts?.checks ? [`Checks: ${step.facts.checks}`] : []),
-        ...(step && step.artifactsFound.length > 0
-          ? [`Artifacts: ${step.artifactsFound.join(', ')}`]
-          : []),
-      ],
-    });
-  }
-  for (const card of cards.values()) {
-    if (card.state !== 'missed') continue;
-    const id = `missedCard:${card.id}`;
-    if (dismissed.has(id)) continue;
-    rows.push({
-      ...base,
-      id,
-      kind: 'missedCard',
+      id: `missedCard:${card.id}`,
+      kind: 'missedCard' as const,
       at: card.start,
       title: `${card.title} did not start`,
       where: card.projectId ? (projects.get(card.projectId) ?? null) : null,
       path: `/calendar?item=${encodeURIComponent(card.id)}`,
       cardId: card.id,
       fixed: ['wow was not running at its time; Run now starts it.'],
-    });
-  }
-  return rows;
+    }));
 }
 
 function proposalRows(db: Db): Row[] {
@@ -266,7 +188,7 @@ export function decisionRowsWithoutBriefs(db: Db): Row[] {
       .all()
       .map((row) => row.id),
   );
-  return [...threadRows(db), ...runRows(db, dismissed), ...proposalRows(db)].toSorted(
+  return [...threadRows(db), ...missedCardRows(db, dismissed), ...proposalRows(db)].toSorted(
     decisionOrder,
   );
 }
@@ -298,7 +220,6 @@ export const decisionSources = new Set([
   'turns',
   'approvals',
   'questions',
-  'workflowRuns',
   'assistantProposals',
   'calendarItems',
   'decisions',

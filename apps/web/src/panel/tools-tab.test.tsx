@@ -43,8 +43,6 @@ const thread = (id: string, providerInstanceId: string): Thread => ({
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-12T20:00:00.000Z',
   updatedAt: '2026-11-12T20:00:00.000Z',
 });

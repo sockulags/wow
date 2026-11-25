@@ -42,8 +42,6 @@ const thread: Thread = {
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
 };
@@ -195,16 +193,7 @@ describe('the thread sends skills (wow skills spec 18, 20)', () => {
   });
 });
 
-describe("a step's thread and a waiting question (wow skills spec 14, 18)", () => {
-  it('sends the step its message again as the step sent it on Retry', async () => {
-    const { sent, user } = setup({
-      failed: true,
-      shown: { ...thread, runId: 'run-1', stepId: 'build' },
-    });
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(sent()).toEqual([{ type: 'thread.retry', threadId: thread.id }]);
-  });
-
+describe('a waiting question (wow skills spec 18)', () => {
   it("names a plugin skill's sent chip by its own name, with the plugins mark", () => {
     setup({
       topics: {

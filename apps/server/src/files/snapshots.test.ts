@@ -758,7 +758,7 @@ describe('what a restore writes and keeps', () => {
 });
 
 describe('refusals (spec 23, 26, 44)', () => {
-  it('refuses while a turn runs, for an old turn, a step thread and a link out of the folder', async () => {
+  it('refuses while a turn runs, for an old turn and a link out of the folder', async () => {
     await twoTurns();
     // A link where a folder was: writing docs/old.md would go through it.
     const away = path.join(root, 'away');
@@ -787,8 +787,6 @@ describe('refusals (spec 23, 26, 44)', () => {
       message: expect.stringContaining('A turn is running'),
     });
 
-    server.database.db.update(threads).set({ runId: 'r1' }).where(eq(threads.id, 't1')).run();
-    expect(await preview({ turnId: 't1:turn:1' })).toMatchObject({ status: 'notChat' });
     await server.providerService.idle();
   });
 

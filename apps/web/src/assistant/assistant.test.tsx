@@ -448,8 +448,6 @@ describe("a secret field card for a provider's environment variable (spec 14)", 
       permissionMode: 'default',
       state: 'idle' as const,
       pinned: false,
-      runId: null,
-      stepId: null,
       createdAt: at,
       updatedAt: at,
     };

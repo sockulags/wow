@@ -33,11 +33,11 @@ import type { Commit, Engine } from '../core/engine.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import type { Db } from '../db/database.js';
 import { threadImagePath } from '../files/images.js';
-import { providerInstances, threadTools, threads, turns, workflowRuns } from '../db/schema.js';
+import { providerInstances, threadTools, threads, turns } from '../db/schema.js';
 import type { ProviderAdapters } from '../hooks/providers.js';
 import type { Logger } from '../logger.js';
 import type { SettingsService } from '../settings/service.js';
-import type { RunChanges } from '../workflows/runner.js';
+import type { FolderChanges } from '../workflows/changes.js';
 
 export interface ProviderServiceDeps {
   readonly db: Db;
@@ -53,7 +53,7 @@ export interface ProviderServiceDeps {
   readonly assistant: () => { readonly url: string; readonly token: string } | undefined;
   // Reads a chat thread's folder through git for its Changes (agent workbench spec 34); without
   // it, threads get no base and no marks.
-  readonly changes?: RunChanges | undefined;
+  readonly changes?: FolderChanges | undefined;
   // Makes a chat thread's own working copy before its turn goes out (thread work spec 12);
   // answers why it could not, and the turn then fails with that and nothing is sent.
   readonly prepareThread?: ((threadId: string) => Promise<string | undefined>) | undefined;
@@ -153,32 +153,15 @@ export class ProviderService {
         { type: 'turnFailed', threadId, error: 'The server stopped while this turn was running' },
       ]);
     }
+    // Background work does not live through a restart, and no thread waits for it.
     const waiting = this.#deps.db
-      .select({
-        id: threads.id,
-        runId: threads.runId,
-        stepId: threads.stepId,
-        tasks: threads.backgroundTasks,
-      })
+      .select({ id: threads.id })
       .from(threads)
       .where(ne(threads.backgroundTasks, []))
       .all();
-    for (const { id: threadId, runId, stepId, tasks } of waiting) {
+    for (const { id: threadId } of waiting) {
       if (running.has(threadId)) continue;
-      // Only a running workflow step waited for a turn; any other thread keeps its state.
-      if (!tasks.some((task) => task.agent === true) || !this.#stepRunning(runId, stepId)) {
-        this.#dispatch(threadId, [{ type: 'backgroundTasks', threadId, tasks: [] }]);
-        continue;
-      }
-      this.#dispatch(threadId, [
-        { type: 'backgroundTasks', threadId, tasks: [] },
-        { type: 'turnStartedByProvider', threadId },
-        {
-          type: 'turnFailed',
-          threadId,
-          error: 'The server stopped while the agent was waiting for background work',
-        },
-      ]);
+      this.#dispatch(threadId, [{ type: 'backgroundTasks', threadId, tasks: [] }]);
     }
     // No session lived through the restart, so no stored list can be asked again (thread work
     // spec 39) until the next turn reports one.
@@ -198,16 +181,6 @@ export class ProviderService {
     for (const { id, queued: message } of queued) {
       if (message) this.#sendQueued(id, message.id);
     }
-  }
-
-  #stepRunning(runId: string | null, stepId: string | null): boolean {
-    if (runId === null || stepId === null) return false;
-    const run = this.#deps.db
-      .select({ steps: workflowRuns.steps })
-      .from(workflowRuns)
-      .where(eq(workflowRuns.id, runId))
-      .get();
-    return run?.steps.some((step) => step.stepId === stepId && step.state === 'running') === true;
   }
 
   async test(providerInstanceId: string): Promise<ProviderTestResult> {
@@ -805,16 +778,15 @@ export class ProviderService {
       );
   }
 
-  // A chat thread, whose working copy is made and whose changes are measured; a step's thread
-  // has its run's.
+  // A chat thread, whose working copy is made and whose changes are measured.
   #chatThread(threadId: string): boolean {
     if (!this.#deps.changes && !this.#deps.prepareThread && !this.#deps.snapshots) return false;
     const row = this.#deps.db
-      .select({ runId: threads.runId, kind: threads.kind })
+      .select({ kind: threads.kind })
       .from(threads)
       .where(eq(threads.id, threadId))
       .get();
-    return row !== undefined && row.runId === null && row.kind === 'chat';
+    return row?.kind === 'chat';
   }
 
   // The thread's own working copy first: without its folder the turn has nowhere to run. Then

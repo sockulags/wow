@@ -35,8 +35,6 @@ const thread: Thread = {
   permissionMode: 'acceptEdits',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-12T08:00:00.000Z',
   updatedAt: '2026-11-12T08:00:00.000Z',
 };

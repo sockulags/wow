@@ -1,4 +1,3 @@
-import { intentUnitLines } from '@wow/agent-os';
 import type { HostCheck, Issue, ReviewComment } from '@wow/contracts';
 import type { GitHubConfig } from '../trackers/github.js';
 import {
@@ -29,16 +28,12 @@ import {
 
 export interface GitHubHostOptions extends RequestOptions, WaitOptions {
   // How many of the newest pull requests are read when the host has no search.
-  readonly listFallbackCount: number;
 }
 
 // GitHub's largest page. A plan with more pull requests or a pull request with more review
 // comments than one page shows the newest ones.
 const pageSize = 100;
 
-// A search endpoint that is not there (older or restricted Enterprise Server) or that turns the
-// query down: the newest pull requests are read instead.
-const noSearch = new Set([404, 405, 410, 422, 501]);
 // An endpoint this host does not have: no checks from it.
 const missingEndpoint = new Set([404, 410, 501]);
 
@@ -75,7 +70,6 @@ function found(item: unknown): FoundChangeRequest | undefined {
     state: mergedAt !== null ? 'merged' : field(item, 'state') === 'open' ? 'open' : 'closed',
     draft: field(item, 'draft') === true,
     mergedAt,
-    units: intentUnitLines(text(field(item, 'body'))),
     links: webLinksIn(text(field(item, 'body'))),
     ...(typeof branch === 'string' && typeof sha === 'string'
       ? { head: { branch, sha, fromFork } }
@@ -300,22 +294,6 @@ export function createGitHubHost(
       if (!short) return waitUntil;
       return waitUntil && waitUntil > short ? waitUntil : short;
     },
-    async findForIntent(intentId) {
-      // Only the intent id is searched for: a line in bold, underscores or quote marks does not
-      // hold the phrase `Intent-Unit: <intent-id>/`, and the lines are read below.
-      const query = `"${intentId}" in:body is:pr repo:${config.owner}/${config.repo}`;
-      const all = await getOr(
-        `${base}/search/issues?q=${encodeURIComponent(query)}&per_page=${pageSize}`,
-        noSearch,
-        () =>
-          pulls(
-            `state=all&sort=created&direction=desc&per_page=${Math.min(options.listFallbackCount, pageSize)}`,
-          ),
-        (body) => list(field(body, 'items')).flatMap((item) => found(item) ?? []),
-      );
-      // The search matches the id anywhere; only a body with the line itself counts.
-      return all.filter((request) => request.units.some((unit) => unit.intentId === intentId));
-    },
     async findForBranch(branch) {
       const head = encodeURIComponent(`${config.owner}:${branch}`);
       const [newest] = await pulls(`head=${head}&state=all&sort=created&direction=desc&per_page=1`);
@@ -419,7 +397,6 @@ export function createGitHubHost(
         fromFork: current.head.fromFork,
         // The single pull request answer has the body too, but the lines were read when it was
         // found, from the same body.
-        units: [...request.units],
         links: [...(current.links ?? request.links ?? [])],
         checkState: checkStateOf(all),
         checks: all,

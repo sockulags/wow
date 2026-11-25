@@ -175,11 +175,8 @@ export class ThreadApply {
     needCopy: boolean,
   ): Promise<Context | { readonly refused: ApplyPreview }> {
     const thread = this.#threadRow(threadId);
-    if (thread.kind !== 'chat' || thread.runId !== null) {
-      return refused(
-        'notChat',
-        "Only a chat thread applies its changes; a step's work is its run's.",
-      );
+    if (thread.kind !== 'chat') {
+      return refused('notChat', 'Only a chat thread applies its changes.');
     }
     const copy = thread.workingCopy;
     const projectFolder = this.#projectFolderOf(thread);

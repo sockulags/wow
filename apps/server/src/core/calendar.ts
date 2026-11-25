@@ -163,7 +163,6 @@ const toCalendarItem = (row: OutlookCalendarRow, at: string): CalendarItem => ({
   projectId: null,
   backlogItemId: null,
   workflowId: null,
-  runId: null,
   focus: false,
   updatedAt: at,
 });
@@ -272,13 +271,13 @@ function updateEvents(
       payload: { cardId: card.id, changes, updatedAt: context.now },
     },
   ];
-  // A single card that already ran becomes a series whose first occurrence is that run or the
-  // thread it started (orchestrator threads spec 27).
+  // A single card that already started its thread becomes a series whose first occurrence is
+  // that thread (orchestrator threads spec 27).
   const trigger = read.trigger(triggerIdFor(card.id));
   if (
     !isRepeating(card) &&
     isRepeating(after) &&
-    (card.runId !== null || (card.threadId ?? null) !== null) &&
+    (card.threadId ?? null) !== null &&
     trigger?.state === 'fired' &&
     !read.cardOccurrences(card.id).some((done) => done.date === localDay(card.start, card.zone))
   ) {
@@ -292,7 +291,6 @@ function updateEvents(
           start: card.start,
           end: card.end,
           outcome: 'fired',
-          runId: card.runId,
           threadId: card.threadId ?? null,
           reason: null,
           offerRunNow: false,
@@ -365,7 +363,6 @@ export function decideCalendar(
         workflowName: command.workflowName ?? null,
         threadMode: command.threadMode ?? 'new',
         threadId: null,
-        runId: null,
         state: 'scheduled',
         updatedAt: context.now,
         focus: command.focus ?? false,
@@ -448,7 +445,7 @@ export function decideCalendar(
     case 'card.delete': {
       const card = requireCard(read, command.cardId);
       return [
-        ...cardDeleteEvents(card, command.stopRun, read, context),
+        ...cardDeleteEvents(card, read),
         { kind: 'card.deleted', aggregate: command.cardId, payload: { cardId: command.cardId } },
       ];
     }

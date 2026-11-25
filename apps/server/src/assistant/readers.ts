@@ -3,7 +3,6 @@ import {
   SecretRef,
   SettingGroup,
   TrackerConnection,
-  isCardTrigger,
   inListOrder,
   skillGroupOf,
   ambiguousOwnSkill,
@@ -20,7 +19,6 @@ import type { Db } from '../db/database.js';
 import * as t from '../db/schema.js';
 import { CommandRejected } from '../core/orchestrator.js';
 import { readCalendarRange } from '../core/series.js';
-import { runPath } from '../core/workflows.js';
 import type { SettingsService } from '../settings/service.js';
 import type { TrackerService } from '../trackers/service.js';
 
@@ -63,28 +61,6 @@ export const skillInstalled = (skillName: string, installed: readonly string[]):
     (name) =>
       name === skillName || name.endsWith(`:${skillName}`) || skillName.endsWith(`:${name}`),
   );
-
-const isLive = (state: string) => state === 'running' || state === 'waiting';
-
-// What the last read of a host said, without what was read.
-const lastRead = (row: {
-  id: string;
-  projectId: string;
-  host: string;
-  hostName: string;
-  fetchedAt: string | null;
-  error: { kind: string; message: string; setting: string | null } | null;
-}) => ({
-  about: row.id,
-  projectId: row.projectId,
-  host: row.host,
-  hostName: row.hostName,
-  fetchedAt: row.fetchedAt,
-  ok: row.error === null,
-  error: row.error
-    ? { kind: row.error.kind, message: row.error.message, setting: row.error.setting }
-    : null,
-});
 
 export const readers = {
   read_settings: reader({
@@ -207,11 +183,6 @@ export const readers = {
         }));
     },
   }),
-  read_templates: reader({
-    description: 'The workflow templates a new workflow can start from.',
-    input: none,
-    read: (_args, deps) => deps.settings.get('workflows.templates'),
-  }),
   read_skills: reader({
     description:
       'Every skill a workflow step or a message can use, in list order: your own skills ("yours") first, then the skills wow ships ("wow"), then skills from folders. A wow skill (group yours or wow) is sent as its text; read it with read_skill. Your own skills can be written, changed and removed with create_skill, update_skill and delete_skill; the others cannot be changed.',
@@ -318,7 +289,7 @@ export const readers = {
             projectId: item.projectId,
             workflowId: item.workflowId,
             backlogItemId: item.backlogItemId,
-            runId: item.runId,
+            threadId: item.threadId ?? null,
             state: item.state,
             nextAt: item.nextAt,
             ...(item.repeat
@@ -331,7 +302,7 @@ export const readers = {
                     start: occurrence.start,
                     end: occurrence.end,
                     outcome: occurrence.record?.outcome ?? null,
-                    runId: occurrence.record?.runId ?? null,
+                    threadId: occurrence.record?.threadId ?? null,
                     reason: occurrence.record?.reason ?? null,
                   })),
                   moreOccurrences: range.more.includes(item.id),
@@ -365,96 +336,12 @@ export const readers = {
           body: item.body,
           tags: item.tags,
           state: item.state,
-          runId: item.runId,
           remote: item.remote,
           path: `/backlog/${encodeURIComponent(item.id)}`,
         })),
   }),
-  read_runs: reader({
-    description:
-      'Workflow runs and plan runs with their state, newest first: each step with its state and error, never what an agent wrote. Give live to read only runs that are running or waiting, and limit to read fewer.',
-    input: z
-      .object({
-        live: z.boolean().optional(),
-        limit: z.number().int().positive().optional(),
-      })
-      .strict(),
-    read: ({ live, limit }, deps) => {
-      const cut = <T>(rows: T[]): T[] => (limit === undefined ? rows : rows.slice(0, limit));
-      const workflows = new Map(
-        deps.db
-          .select()
-          .from(t.workflows)
-          .all()
-          .map((workflow) => [workflow.id, workflow]),
-      );
-      const runs = deps.db
-        .select()
-        .from(t.workflowRuns)
-        .orderBy(desc(t.workflowRuns.startedAt))
-        .all()
-        .filter((run) => !live || isLive(run.state));
-      const planRuns = deps.db
-        .select()
-        .from(t.planRuns)
-        .orderBy(desc(t.planRuns.startedAt))
-        .all()
-        .filter((run) => !live || isLive(run.state));
-      return {
-        runs: cut(runs).map((run) => {
-          const workflow = workflows.get(run.workflowId);
-          return {
-            id: run.id,
-            workflowId: run.workflowId,
-            workflow: workflow?.name ?? null,
-            projectId: run.projectId,
-            calendarItemId: run.calendarItemId,
-            backlogItemId: run.backlogItemId,
-            state: run.state,
-            currentStep: run.currentStep,
-            startedAt: run.startedAt,
-            endedAt: run.endedAt,
-            steps: run.steps.map((step) => ({
-              stepId: step.stepId,
-              skill:
-                workflow?.steps.find((candidate) => candidate.id === step.stepId)?.skillName ??
-                null,
-              state: step.state,
-              attempt: step.attempt ?? 1,
-              error: step.error ?? null,
-              gate: step.gate?.state ?? null,
-              artifactsFound: step.artifactsFound,
-            })),
-            unit: run.unit ? { planRunId: run.unit.planRunId, unitKey: run.unit.unitKey } : null,
-            startedByEvent: run.event
-              ? { triggerId: run.event.triggerId, event: run.event.event, url: run.event.url }
-              : null,
-            workingCopy: run.workingCopy
-              ? { state: run.workingCopy.state, error: run.workingCopy.error }
-              : null,
-            path: runPath(run.id),
-          };
-        }),
-        planRuns: cut(planRuns).map((planRun) => ({
-          id: planRun.id,
-          planId: planRun.planId,
-          projectId: planRun.projectId,
-          intentId: planRun.intentId,
-          workflowId: planRun.workflowId,
-          state: planRun.state,
-          units: planRun.units,
-          waitingFor: planRun.waitingFor,
-          message: planRun.message,
-          startedAt: planRun.startedAt,
-          endedAt: planRun.endedAt,
-          path: `/plans/${encodeURIComponent(planRun.projectId)}/${encodeURIComponent(planRun.intentId)}`,
-        })),
-      };
-    },
-  }),
   read_triggers: reader({
-    description:
-      'Triggers: the time triggers of calendar cards with their state, and event triggers with whether they are on.',
+    description: 'The time triggers of calendar cards with their state.',
     input: none,
     read: (_args, deps) => {
       const cards = new Map(
@@ -467,37 +354,23 @@ export const readers = {
       return deps.db
         .select()
         .from(t.triggers)
-        .orderBy(asc(t.triggers.runAt), asc(t.triggers.createdAt), asc(t.triggers.id))
+        .orderBy(asc(t.triggers.runAt), asc(t.triggers.id))
         .all()
-        .map((trigger) =>
-          isCardTrigger(trigger)
-            ? {
-                id: trigger.id,
-                kind: trigger.kind,
-                workflowId: trigger.workflowId,
-                cardId: trigger.calendarItemId,
-                card: cards.get(trigger.calendarItemId) ?? null,
-                // For a repeating card, the next occurrence it fires at.
-                runAt: trigger.runAt,
-                zone: trigger.zone,
-                state: trigger.state,
-                runId: trigger.runId,
-              }
-            : {
-                id: trigger.id,
-                kind: trigger.kind,
-                workflowId: trigger.workflowId,
-                projectId: trigger.projectId,
-                event: trigger.event,
-                enabled: trigger.enabled,
-                lastRunId: trigger.runId,
-              },
-        );
+        .map((trigger) => ({
+          id: trigger.id,
+          workflowId: trigger.workflowId,
+          cardId: trigger.calendarItemId,
+          card: cards.get(trigger.calendarItemId) ?? null,
+          // For a repeating card, the next occurrence it fires at.
+          runAt: trigger.runAt,
+          zone: trigger.zone,
+          state: trigger.state,
+        }));
     },
   }),
   read_notifications: reader({
     description:
-      'What the app told the user: runs that started, wait or failed, newest first. Give limit to read fewer.',
+      'What the app told the user: scheduled threads that started or failed, threads that wait or finished, newest first. Give limit to read fewer.',
     input: z.object({ limit: z.number().int().positive().optional() }).strict(),
     read: ({ limit }, deps) => {
       const rows = deps.db.select().from(t.notifications).orderBy(desc(t.notifications.at)).all();
@@ -508,13 +381,13 @@ export const readers = {
         title: row.title,
         body: row.body,
         path: row.path,
-        runId: row.runId,
+        threadId: row.threadId,
       }));
     },
   }),
   read_connections: reader({
     description:
-      'How the connections stand: each provider instance from its last test, and what the last read of each host said for followed plans and live runs. To test a tracker or host sign-in now, use test_connection.',
+      'How the provider instances stand from their last test. To test a tracker or host sign-in now, use test_connection.',
     input: none,
     read: (_args, deps) => {
       return {
@@ -531,11 +404,6 @@ export const readers = {
             account: instance.account,
             message: instance.statusMessage,
           })),
-        hostReads: [
-          ...deps.db.select().from(t.hostReads).orderBy(asc(t.hostReads.id)).all(),
-          ...deps.db.select().from(t.ticketReads).orderBy(asc(t.ticketReads.id)).all(),
-          ...deps.db.select().from(t.pageReads).orderBy(asc(t.pageReads.id)).all(),
-        ].map(lastRead),
       };
     },
   }),

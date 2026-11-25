@@ -62,10 +62,6 @@ import {
   e2eCodexInstanceId,
   e2eHome,
   e2eNeedsYouWorkflowId,
-  e2eEventBranch,
-  e2eEventIntentId,
-  e2eEventProjectId,
-  e2eEventWorkflowId,
   e2eGitLabBranch,
   e2eGitLabIntentId,
   e2eGitLabProjectId,
@@ -78,9 +74,6 @@ import {
   e2eTicketKey,
   e2ePagesBacklogItemId,
   e2ePagesTicketKey,
-  e2ePlanRunIntentId,
-  e2ePlanRunProjectId,
-  e2ePlanRunWorkflowId,
   e2eOutlookControlPort,
   e2ePanelCardId,
   e2ePanelHome,
@@ -96,7 +89,7 @@ import {
 } from './env';
 import { AssistantMockAgent } from './assistant-agent';
 import { emptyFolder } from './folder-holders';
-import { e2eIntentMd, e2ePlanMd, e2ePlansDirectory, e2eSpecMd, seedPlanFiles } from './plans-seed';
+import { e2eIntentMd, e2ePlanMd, e2eSpecMd } from './intent-files';
 
 // WOW_E2E_HOME and WOW_E2E_PORT start a second copy for the settings tests (playwright.config.ts).
 const home = process.env['WOW_E2E_HOME'] ?? e2eHome;
@@ -239,16 +232,6 @@ const gardenUnits = `## Units
 - [U5] Sell the tea -- blocked: the stall is not built
 
 ${['U1', 'U2', 'U3', 'U4', 'U5'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
-// The event trigger tests (review loop spec 48) follow this plan's one pull request.
-const leafRepo = path.join(home, 'tea-leaf');
-const leafUnits = `## Units
-
-- [U1] Pick the leaves
-
-### U1 Invented
-
-Outcome: invented for the tests.
-`;
 // The GitLab tests (review loop spec 34) read this plan's merge requests from the mock GitLab.
 const fieldRepo = path.join(home, 'tea-field');
 const fieldOrigin = path.join(home, 'tea-field-origin.git');
@@ -260,15 +243,6 @@ const fieldUnits = `## Units
 - [U4] Harvest -- depends on U2
 
 ${['U1', 'U2', 'U3', 'U4'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
-// The plan run tests (review loop spec 40, 41) run a workflow over the units of this plan.
-const potRepo = path.join(home, 'tea-pot');
-const potUnits = `## Units
-
-- [U1] Shape the pot
-- [U2] Glaze the pot -- depends on U1
-- [U3] Fire the kiln
-
-${['U1', 'U2', 'U3'].map((key) => `### ${key} Invented\n\nOutcome: invented for the tests.\n`).join('\n')}`;
 const git = (repo: string, ...args: string[]) =>
   execFileSync(
     'git',
@@ -544,30 +518,6 @@ function startTurn(command: Extract<ProviderCommand, { type: 'startTurn' }>): Pr
   }
   // The step of the "Needs you e2e" workflow ends at once, so its run waits at the gate.
   if (/sum-up/i.test(prompt)) return [session, ...finish(threadId, 'Summed up.')];
-  // A step of a unit's run: the agent opens the unit's pull request, as deliver-work would, and
-  // says which unit it was told about.
-  const unit = /^Unit: (\S+) (.*)$/m.exec(prompt);
-  const unitIntent = /^Intent: (\S+)$/m.exec(prompt)?.[1];
-  if (/deliver the plan unit/i.test(prompt) && unit?.[1] && unitIntent) {
-    const key = unit[1];
-    const line = `Intent-Unit: ${unitIntent}/${key}`;
-    if (!potHost.pulls.some((pull) => pull.body.endsWith(line))) {
-      const number = 31 + potHost.pulls.length;
-      potHost.pulls = [
-        ...potHost.pulls,
-        {
-          number,
-          title: unit[2] ?? key,
-          body: `Invented.\n\n${line}`,
-          state: 'open',
-          branch: `agent/${key}`,
-          sha: `c${number}c${number}c${number}`,
-          checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
-        },
-      ];
-    }
-    return [session, ...finish(threadId, `Delivered ${key} of ${unitIntent}: ${unit[2] ?? ''}`)];
-  }
   // A send back names no step, and the note in it may say anything, so it is looked for first.
   if (/sent it back/i.test(prompt)) {
     if (inTeaRepo(command.cwd)) reworkTeaTimer(command.cwd);
@@ -1478,33 +1428,7 @@ if (home === e2eChangesHome) {
   })) {
     writeInRepo(fieldRepo, `intents/${e2eGitLabIntentId}/${name}`, text);
   }
-  // The plan run tests: a repository whose plan has no pull request yet. Its unit runs work in
-  // working copies, which share the repository's settings.
-  seedTeaRepo(potRepo);
-  git(potRepo, 'config', 'core.autocrlf', 'false');
-  const pot = 'A tea pot that pours without dripping';
-  for (const [name, text] of Object.entries({
-    'intent.md': e2eIntentMd(e2ePlanRunIntentId, pot),
-    'spec.md': e2eSpecMd(e2ePlanRunIntentId, pot),
-    'plan.md': e2ePlanMd(e2ePlanRunIntentId, pot, potUnits),
-  })) {
-    writeInRepo(potRepo, `intents/${e2ePlanRunIntentId}/${name}`, text);
-  }
-  // The event trigger tests: a repository that has the branch of its plan's pull request, so
-  // the run an event starts gets a working copy on it.
-  seedTeaRepo(leafRepo);
-  git(leafRepo, 'config', 'core.autocrlf', 'false');
-  git(leafRepo, 'branch', e2eEventBranch);
-  const leaf = 'A tea leaf picker';
-  for (const [name, text] of Object.entries({
-    'intent.md': e2eIntentMd(e2eEventIntentId, leaf),
-    'spec.md': e2eSpecMd(e2eEventIntentId, leaf),
-    'plan.md': e2ePlanMd(e2eEventIntentId, leaf, leafUnits),
-  })) {
-    writeInRepo(leafRepo, `intents/${e2eEventIntentId}/${name}`, text);
-  }
 }
-await seedPlanFiles(home);
 // Commands the assistant mock agent sends as the assistant's, numbered for their ids.
 let assistantActs = 0;
 const server = await startServer({
@@ -1713,12 +1637,6 @@ if (!firstStart) {
     projectId: e2eProjectId,
     name: 'Demo',
     cwd: home,
-  });
-  server.engine.dispatch('seed-plans-directory', {
-    type: 'setting.set',
-    key: 'plans.intentsDirectory',
-    scope: `project:${e2eProjectId}`,
-    value: e2ePlansDirectory,
   });
 }
 
@@ -2079,32 +1997,10 @@ const gitHubHost = new MockGitHub({
   repo: 'tea-garden',
   webUrl: `${trackerUrl}/web`,
 });
-// The plan run tests' repository on the same invented host. It starts without pull requests;
-// the mock agent opens one per unit it is asked to deliver.
-const potHost = new MockGitHub({ owner: 'acme', repo: 'tea-pot', webUrl: `${trackerUrl}/web` });
-potHost.token = 'github-host-e2e-token';
 // The repository a chat thread opens a pull request in (thread work U4). Its links are on the
 // GitHub site of the settings, so the line's chip opens a tab.
 const mugHost = new MockGitHub({ owner: 'acme', repo: 'tea-mug', webUrl: `${trackerUrl}/github` });
 mugHost.token = 'github-host-e2e-token';
-// The event trigger tests' repository on the same invented host: one open pull request.
-const leafHost = new MockGitHub({ owner: 'acme', repo: 'tea-leaf', webUrl: `${trackerUrl}/web` });
-leafHost.token = 'github-host-e2e-token';
-leafHost.pulls = [
-  {
-    number: 21,
-    title: 'Pick the leaves by hand',
-    body: `Invented.\n\nIntent-Unit: ${e2eEventIntentId}/U1`,
-    state: 'open',
-    branch: e2eEventBranch,
-    // The run's working copy starts at the pull request's head commit.
-    sha:
-      home === e2eChangesHome
-        ? git(leafRepo, 'rev-parse', e2eEventBranch).toString().trim()
-        : 'd4d4d4d4d4d4',
-    checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }],
-  },
-];
 const unitLine = (key: string) => `Invented.\n\nIntent-Unit: ${e2eHostIntentId}/${key}`;
 gitHubHost.token = 'github-host-e2e-token';
 gitHubHost.pulls = [
@@ -2293,14 +2189,6 @@ if (home === e2eChangesHome) {
   for (const [key, value] of Object.entries(hostSettings)) {
     server.engine.dispatch(`seed-host-${key}`, { type: 'setting.set', key, scope, value });
   }
-  // A round a day: the tests see the reads a followed plan, a new run and Refresh now start,
-  // and no round of the timer falls between two of their steps.
-  server.engine.dispatch('seed-host-interval', {
-    type: 'setting.set',
-    key: 'hosts.pollSeconds',
-    scope: 'global',
-    value: 86_400,
-  });
   server.engine.dispatch('seed-host-workflow', {
     type: 'workflow.create',
     workflowId: e2eHostWorkflowId,
@@ -2329,59 +2217,6 @@ if (home === e2eChangesHome) {
       value,
     });
   }
-  server.engine.dispatch('seed-pot-project', {
-    type: 'project.create',
-    projectId: e2ePlanRunProjectId,
-    name: 'Tea pot',
-    cwd: potRepo,
-  });
-  const potScope = `project:${e2ePlanRunProjectId}`;
-  const potSettings: Record<string, unknown> = {
-    'trackers.github.repo': 'tea-pot',
-    'trackers.github.token': await server.secrets.set(
-      `setting:${potScope}:trackers.github.token`,
-      'github-host-e2e-token',
-    ),
-  };
-  for (const [key, value] of Object.entries(potSettings)) {
-    server.engine.dispatch(`seed-pot-${key}`, { type: 'setting.set', key, scope: potScope, value });
-  }
-  server.engine.dispatch('seed-pot-workflow', {
-    type: 'workflow.create',
-    workflowId: e2ePlanRunWorkflowId,
-    name: 'Deliver a unit',
-    steps: [{ ...teaStep('deliver', 'deliver-work', 'Deliver the plan unit.'), gateAfter: false }],
-    forUnits: true,
-  });
-  server.engine.dispatch('seed-leaf-project', {
-    type: 'project.create',
-    projectId: e2eEventProjectId,
-    name: 'Tea leaf',
-    cwd: leafRepo,
-  });
-  const leafScope = `project:${e2eEventProjectId}`;
-  const leafSettings: Record<string, unknown> = {
-    'trackers.github.repo': 'tea-leaf',
-    'trackers.github.token': await server.secrets.set(
-      `setting:${leafScope}:trackers.github.token`,
-      'github-host-e2e-token',
-    ),
-  };
-  for (const [key, value] of Object.entries(leafSettings)) {
-    server.engine.dispatch(`seed-leaf-${key}`, {
-      type: 'setting.set',
-      key,
-      scope: leafScope,
-      value,
-    });
-  }
-  server.engine.dispatch('seed-leaf-workflow', {
-    type: 'workflow.create',
-    workflowId: e2eEventWorkflowId,
-    name: 'Tidy up after a merge',
-    steps: [{ ...teaStep('tidy', 'deliver-work', 'Tidy up after the merge.'), gateAfter: false }],
-  });
-  await server.plans.refresh();
 }
 
 const received: { path: string; authorization: string | undefined; body: unknown }[] = [];
@@ -2398,27 +2233,10 @@ function fire(match: (card: CalendarItem) => boolean): string | undefined {
   const cards = snapshot(server.database.db, { topic: 'calendarItems' }) as CalendarItem[];
   const card = cards.find(match);
   if (!card?.workflowId || !card.projectId) return undefined;
-  // A backlog item's card starts its main thread as the scheduler would (orchestrator threads
-  // spec 27); the panel cases below still start a run of the card's workflow.
-  if (card.backlogItemId) {
-    const threadId = `thread-${card.id}`;
-    server.engine.dispatch(`fire-${card.id}`, {
-      type: 'card.runNow',
-      cardId: card.id,
-      runId: threadId,
-    });
-    return threadId;
-  }
-  const runId = `run-${card.id}`;
-  server.engine.dispatch(`fire-${card.id}`, {
-    type: 'workflowRun.start',
-    runId,
-    workflowId: card.workflowId,
-    projectId: card.projectId,
-    calendarItemId: card.id,
-    ...(card.backlogItemId ? { backlogItemId: card.backlogItemId } : {}),
-  });
-  return runId;
+  // The card starts its main thread as the scheduler would (orchestrator threads spec 27).
+  const threadId = `thread-${card.id}`;
+  server.engine.dispatch(`fire-${card.id}`, { type: 'card.runNow', cardId: card.id, threadId });
+  return threadId;
 }
 
 const trackers = createServer((request, response) => {
@@ -2432,30 +2250,10 @@ const trackers = createServer((request, response) => {
   if (request.method === 'POST' && url.pathname === '/fire') {
     const backlogItemId = url.searchParams.get('backlogItemId');
     const cardId = url.searchParams.get('cardId');
-    const runId = fire((card) =>
+    const threadId = fire((card) =>
       cardId === null ? card.backlogItemId === backlogItemId : card.id === cardId,
     );
-    return runId ? json(200, { runId }) : json(404, { error: 'No such card' });
-  }
-  // A run started without a card, for the viewer tests.
-  if (request.method === 'POST' && url.pathname === '/run') {
-    const workflowId = url.searchParams.get('workflowId');
-    const runId = url.searchParams.get('runId');
-    if (!workflowId || !runId) return json(400, { error: 'workflowId and runId are needed' });
-    const projectId = url.searchParams.get('projectId') ?? e2eProjectId;
-    const backlogItemId = url.searchParams.get('backlogItemId');
-    // Every run of the tea timer starts from the same invented commit.
-    if (projectId === e2eChangesProjectId) seedTeaRepo(changesRepo);
-    if (projectId === e2eGateProjectId) seedTeaRepo(gateRepo);
-    if (projectId === e2eCopyProjectId) seedCopyRepo();
-    server.engine.dispatch(`run-${runId}`, {
-      type: 'workflowRun.start',
-      runId,
-      workflowId,
-      projectId,
-      ...(backlogItemId ? { backlogItemId } : {}),
-    });
-    return json(200, { runId });
+    return threadId ? json(200, { threadId }) : json(404, { error: 'No such card' });
   }
   // The mock GitHub the host tests' project reads, and its controls.
   if (url.pathname === '/github-host/requests' && request.method === 'GET') {
@@ -2568,39 +2366,11 @@ const trackers = createServer((request, response) => {
     );
     return json(answer.status, answer.body);
   }
-  // Merges the pull request of one unit of the plan run tests' plan.
-  if (url.pathname === '/github-pot/merged' && request.method === 'PUT') {
-    const line = `Intent-Unit: ${e2ePlanRunIntentId}/${url.searchParams.get('unit') ?? ''}`;
-    if (!potHost.pulls.some((pull) => pull.body.endsWith(line))) {
-      return json(404, { error: 'No pull request for that unit' });
-    }
-    potHost.pulls = potHost.pulls.map((pull) =>
-      pull.body.endsWith(line)
-        ? { ...pull, state: 'closed', mergedAt: '2026-11-05T10:00:00Z' }
-        : pull,
-    );
-    return json(200, {});
-  }
-  // Merges the pull request of the event trigger tests' plan.
-  if (url.pathname === '/github-leaf/merged' && request.method === 'PUT') {
-    leafHost.pulls = leafHost.pulls.map((pull) => ({
-      ...pull,
-      state: 'closed',
-      mergedAt: '2026-11-06T10:00:00Z',
-    }));
-    return json(200, {});
-  }
   if (request.method === 'GET' && url.pathname.startsWith('/github/')) {
     const asked = `${url.pathname.slice('/github'.length)}${url.search}`;
-    // Three invented repositories live on this host; a request names its own.
+    // Two invented repositories live on this host; a request names its own.
     const named = decodeURIComponent(asked);
-    const repository = named.includes('acme/tea-pot')
-      ? potHost
-      : named.includes('acme/tea-leaf')
-        ? leafHost
-        : named.includes('acme/tea-mug')
-          ? mugHost
-          : gitHubHost;
+    const repository = named.includes('acme/tea-mug') ? mugHost : gitHubHost;
     const answer = repository.answer('GET', asked, request.headers.authorization ?? null);
     for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
     return json(answer.status, answer.body);

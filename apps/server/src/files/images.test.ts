@@ -388,42 +388,6 @@ describe('images in the composer', () => {
     ]);
   });
 
-  it('takes no image for a workflow step thread', async () => {
-    await mkdir(path.join(root, 'tea'), { recursive: true });
-    dispatch({ type: 'project.create', projectId: 'p1', name: 'tea', cwd: path.join(root, 'tea') });
-    dispatch({
-      type: 'workflow.create',
-      workflowId: 'wf',
-      name: 'Brew',
-      steps: [
-        {
-          id: 'brew',
-          skillName: 'wow-verdict',
-          providerInstanceId: 'claude',
-          gateBefore: false,
-          gateAfter: false,
-          expectedArtifacts: [],
-        },
-      ],
-    });
-    const created = committed('thread.created');
-    dispatch({ type: 'workflowRun.start', runId: 'r1', workflowId: 'wf', projectId: 'p1' });
-    await created;
-    expect(errorOf(await put('r1.brew', png()))).toEqual({
-      code: 'rejected',
-      message: 'A workflow step takes no images.',
-    });
-    expect(existsSync(threadImageFolder(server.home, 'r1.brew'))).toBe(false);
-    expect(() =>
-      dispatch({
-        type: 'thread.sendMessage',
-        threadId: 'r1.brew',
-        text: 'Look at this',
-        attachments: [{ id: '0f8fad5b-d9cb-469f-a165-70867728950e.png' }],
-      }),
-    ).toThrow('A workflow step takes no images');
-  });
-
   it('keeps every thread id inside the images folder', () => {
     expect(threadImageFolderName('run-1:step:2')).toBe('t-run-1~00003astep~00003a2');
     expect(threadImageFolderName('../up')).toBe('t-~00002e~00002e~00002fup');

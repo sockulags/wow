@@ -52,10 +52,6 @@ export const RepeatRule = z
   });
 export type RepeatRule = z.infer<typeof RepeatRule>;
 
-// What happened at an occurrence the scheduler reached, kept per card so the calendar can show
-// how each past occurrence went. `fired` started `runId`; `failed` could not start a run;
-// `skipped` started nothing because the card's earlier run was still going; `missed` passed
-// while the app was closed or paused.
 // A series a repeating card followed before an edit or a moved occurrence changed it (recurring
 // cards spec 10, 11). The days before `until`, and from the `until` of the entry before it on,
 // keep this series' times; the card's own series sets the days from the last `until` on.
@@ -71,12 +67,15 @@ export type PastSeries = z.infer<typeof PastSeries>;
 export const OccurrenceOutcome = z.enum(['fired', 'failed', 'skipped', 'missed']);
 export type OccurrenceOutcome = z.infer<typeof OccurrenceOutcome>;
 
+// What happened at an occurrence the scheduler reached, kept per card so the calendar can show
+// how each past occurrence went. `fired` started or continued `threadId`; `failed` could not
+// start it; `skipped` started nothing because the card's thread was still working; `missed`
+// passed while the app was closed or paused.
 export const CardOccurrence = z.object({
   date: LocalDay,
   start: Timestamp,
   end: Timestamp,
   outcome: OccurrenceOutcome,
-  runId: Id.nullable(),
   // The main thread the occurrence started or continued (orchestrator threads spec 27).
   threadId: Id.nullable().optional(),
   // Why nothing started, in words, for `failed` and `skipped`.

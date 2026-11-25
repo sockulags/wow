@@ -1,9 +1,4 @@
-import {
-  isCardTrigger,
-  type CalendarItem,
-  type OutlookProfile,
-  type Trigger,
-} from '@wow/contracts';
+import { type CalendarItem, type OutlookProfile, type Trigger } from '@wow/contracts';
 import { dispatch, settingValue, type SettingValues } from '@wow/client-runtime';
 import type { AppCommand, CommandContext } from '@/app/commands';
 import { notify, offerUndo } from '@/lib/feedback';
@@ -59,7 +54,6 @@ export function runNowCardIds(
   const missed = new Set(cards.filter((card) => card.state === 'missed').map((card) => card.id));
   return new Set(
     triggers
-      .filter(isCardTrigger)
       .filter((trigger) => trigger.state === 'missed' && trigger.offerRunNow)
       .map((trigger) => trigger.calendarItemId)
       .filter((id) => missed.has(id)),
@@ -231,12 +225,12 @@ export function calendarCommands({
       group: 'Cards',
       keywords: ['missed', 'trigger', 'workflow', 'start'],
       run: ({ connection }) => {
-        // The outcome shows up on the card, which follows its run.
+        // The outcome shows up on the card, which follows its thread.
         if (!connection) return;
         void dispatch(connection, {
           type: 'card.runNow',
           cardId: card.id,
-          runId: globalThis.crypto.randomUUID(),
+          threadId: globalThis.crypto.randomUUID(),
         }).catch(() => undefined);
       },
     });

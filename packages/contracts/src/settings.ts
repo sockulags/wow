@@ -10,12 +10,7 @@ import {
   defaultSecretPatterns,
 } from './assistant.js';
 import { defaultModelGuidance } from './models.js';
-import {
-  alwaysStopSkillDefaults,
-  WorkingCopyStart,
-  WorkflowTemplate,
-  type WorkflowTemplateStep,
-} from './workflow.js';
+import { alwaysStopSkillDefaults, WorkingCopyStart } from './workflow.js';
 
 // Every tunable value in wow is one entry here. The server validates writes against `schema`, and
 // the settings UI renders fields from it, so adding a setting needs no other code.
@@ -32,7 +27,6 @@ export const SettingGroup = z.enum([
   'scheduler',
   'workflows',
   'skills',
-  'plans',
   'trackers',
   'hosts',
   'viewer',
@@ -57,7 +51,6 @@ export const settingGroupTitles: Readonly<Record<SettingGroup, string>> = {
   scheduler: 'Scheduler',
   workflows: 'Workflows',
   skills: 'Skills',
-  plans: 'Plans',
   trackers: 'Trackers',
   hosts: 'Hosts',
   viewer: 'Viewer',
@@ -139,8 +132,6 @@ const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) =>
 
 // The context panel's width range; the web app's resize handle stops at the same bounds.
 export const contextPanelWidthBounds = { min: 280, max: 720 } as const;
-// The list of changed files beside a run's diff (agent workbench spec 94).
-export const changesListWidthBounds = { min: 120, max: 800 } as const;
 
 export const Weekday = z.enum([
   'monday',
@@ -290,116 +281,6 @@ export const SecretSetting = SecretRef.nullable().meta({ widget: 'secret' });
 
 export const MissedTriggerPolicy = z.enum(['run', 'mark', 'skip']);
 export type MissedTriggerPolicy = z.infer<typeof MissedTriggerPolicy>;
-
-const templateStep = (
-  skillName: string,
-  gateAfter: boolean,
-  expectedArtifacts: string[] = [],
-): WorkflowTemplateStep => ({ skillName, gateBefore: false, gateAfter, expectedArtifacts });
-
-// The review loops back to delivery until it approves (workflow branches spec 20).
-const checkWorkStep: WorkflowTemplateStep = {
-  ...templateStep('check-work', false),
-  rules: [
-    {
-      when: { fact: 'verdict', is: 'changesRequested' },
-      goTo: { type: 'skill', skillName: 'deliver-work' },
-    },
-  ],
-};
-
-// Behavior 25. The agent-os skill names appear only here, as editable defaults.
-export const defaultWorkflowTemplates: WorkflowTemplate[] = [
-  {
-    kind: 'bug',
-    name: 'Bug',
-    steps: [templateStep('deliver-work', false), checkWorkStep],
-  },
-  {
-    kind: 'feature',
-    name: 'Feature',
-    steps: [
-      templateStep('capture-intent', true, ['intents/*/intent.md', 'intents/*/spec.md']),
-      templateStep('plan-work', true, ['intents/*/plan.md']),
-      templateStep('deliver-work', false),
-      checkWorkStep,
-    ],
-  },
-  {
-    kind: 'initiative',
-    name: 'Initiative',
-    steps: [
-      templateStep('capture-intent', true, ['intents/*/intent.md', 'intents/*/spec.md']),
-      templateStep('plan-work', true, ['intents/*/plan.md']),
-      templateStep('shape-work', true),
-      templateStep('deliver-work', false),
-      checkWorkStep,
-    ],
-  },
-];
-
-// Behavior 11: by default the previous step's final message and the expected artifact paths.
-export const defaultHandoverTemplate = [
-  '{{#previousMessage}}The previous step ({{previousStep}}) ended with:',
-  '',
-  '{{previousMessage}}',
-  '{{/previousMessage}}',
-  '{{#backlogBody}}Backlog item:',
-  '',
-  '{{backlogBody}}',
-  '{{/backlogBody}}',
-  '{{#previousArtifacts}}Artifacts from earlier steps:',
-  '{{previousArtifacts}}',
-  '{{/previousArtifacts}}',
-  '{{#previousError}}The previous step ({{previousStep}}) failed with:',
-  '',
-  '{{previousError}}',
-  '{{/previousError}}',
-  '{{#expectedArtifacts}}This step is expected to produce:',
-  '{{expectedArtifacts}}',
-  '{{/expectedArtifacts}}',
-  '{{#event}}This run was started by an event: {{event}}.',
-  '{{pullRequestName}}: {{pullRequestUrl}}',
-  'Branch: {{pullRequestBranch}}',
-  '{{/event}}',
-  '{{#commentUrl}}The review comment, by {{commentAuthor}}: {{commentUrl}}',
-  'Its text is left out here on purpose; read it at that link.',
-  '{{/commentUrl}}',
-].join('\n');
-
-export const defaultSendBackTemplate = [
-  'The reviewer looked at the result of this step and sent it back.',
-  '',
-  "Reviewer's note:",
-  '',
-  '{{note}}',
-  '',
-  'Do the step ({{skill}}) again in this conversation with the note taken into account, and end with your result as before.',
-].join('\n');
-
-// What a step is told in its own thread when a rule of a later step sends the run back to it
-// (workflow branches spec 7).
-export const defaultGoBackTemplate = [
-  'The step {{fromStep}} sent the work back to this step: {{reason}}.',
-  '',
-  '{{#message}}What {{fromStep}} ended with:',
-  '',
-  '{{message}}',
-  '',
-  '{{/message}}Do the step ({{skill}}) again in this conversation with that taken into account, and end with your result as before.',
-].join('\n');
-
-// What a plan run tells every step of a unit's run (review loop spec 40). The last line is how
-// wow finds the unit's pull request afterwards.
-export const defaultUnitPromptTemplate = [
-  'This run delivers one unit of a plan.',
-  '',
-  'Intent: {{intentId}}',
-  'Unit: {{unitKey}} {{unitTitle}}',
-  '',
-  // Left out for a run whose steps get wow-pull-request, which says the same (wow skills spec 13).
-  '{{#intentUnitLine}}When you open a pull request for it, put this line in its body: {{intentUnitLine}}{{/intentUnitLine}}',
-].join('\n');
 
 // What "Propose" in the commit and pull request dialogs asks the thread's model (thread work
 // spec 28, 31). The answer only fills fields the user reads and edits before anything happens.
@@ -1298,19 +1179,6 @@ export const settingsRegistry = {
     scope: 'global',
     unit: 'minutes',
   }),
-  'workflows.templates': defineSetting({
-    schema: z
-      .array(WorkflowTemplate)
-      .refine((templates) => new Set(templates.map((t) => t.kind)).size === templates.length, {
-        message: 'Template kinds must be unique',
-      }),
-    group: 'workflows',
-    label: 'Templates',
-    description:
-      'Starting points offered by the workflow builder: an ordered list of skills with gates. A workflow built from one keeps no link to it.',
-    default: defaultWorkflowTemplates,
-    scope: 'global',
-  }),
   'workflows.followTemplate': defineSetting({
     schema: z
       .string()
@@ -1341,93 +1209,6 @@ export const settingsRegistry = {
       '---\nname: {{name}}\ndescription: What this workflow is for, in one line\n---\n\n## Plan\n\nRead the request and write a short plan.\n\ngate: after\n\n## Build\n\ninstance: Claude Code\n\nCarry out the plan, with tests.\n\n## Review\n\ninstance: Codex\n\nReview the change and say what to fix.\n',
     scope: 'global',
   }),
-  'workflows.handoverTemplate': defineSetting({
-    schema: z.string().meta({
-      widget: 'template',
-      placeholders: [
-        'previousStep',
-        'previousMessage',
-        'backlogBody',
-        'previousArtifacts',
-        'previousError',
-        'expectedArtifacts',
-        'event',
-        'pullRequestNumber',
-        'pullRequestName',
-        'pullRequestUrl',
-        'pullRequestBranch',
-        'commentUrl',
-        'commentAuthor',
-      ],
-    }),
-    group: 'workflows',
-    label: 'Handover text',
-    description:
-      'Text added to every step prompt after the skill invocation. The placeholders below are replaced; a {{#name}}…{{/name}} section is left out when that value is empty.',
-    default: defaultHandoverTemplate,
-    scope: 'project',
-  }),
-  'workflows.sendBackTemplate': defineSetting({
-    schema: z.string().meta({ widget: 'template', placeholders: ['note', 'skill', 'attempt'] }),
-    group: 'workflows',
-    label: 'Send back text',
-    description:
-      "The message a step gets in its own thread when you send it back at a gate. {{note}} is what you wrote (added after the text when the template does not name it), {{skill}} the step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
-    default: defaultSendBackTemplate,
-    scope: 'project',
-  }),
-  'workflows.goBackTemplate': defineSetting({
-    schema: z.string().meta({
-      widget: 'template',
-      placeholders: ['fromStep', 'reason', 'message', 'skill', 'attempt'],
-    }),
-    group: 'workflows',
-    label: 'Go back text',
-    description:
-      "The message a step gets in its own thread when a rule of a later step sends the run back to it. {{fromStep}} is the step that sent it back, {{reason}} the fact that held, {{message}} that step's final message (or its error), {{skill}} this step's skill and {{attempt}} the number of this try; a {{#name}}…{{/name}} section is left out when that value is empty.",
-    default: defaultGoBackTemplate,
-    scope: 'project',
-  }),
-  'workflows.unitPromptTemplate': defineSetting({
-    schema: z.string().meta({
-      widget: 'template',
-      placeholders: ['intentId', 'unitKey', 'unitTitle', 'intentUnitLine'],
-    }),
-    group: 'workflows',
-    label: 'Unit text',
-    description:
-      "What every step is told about its unit when a plan run starts the workflow for one. It goes after the step's skill and before the handover. {{intentId}} is the intent's folder name, {{unitKey}} the unit's key and {{unitTitle}} its title and {{intentUnitLine}} the Intent-Unit line, which is empty when the step gets the built-in skill wow-pull-request that asks for it; a {{#name}}…{{/name}} section is left out when that value is empty.",
-    default: defaultUnitPromptTemplate,
-    scope: 'project',
-  }),
-  'workflows.planRunOnFailure': defineSetting({
-    schema: PlanRunOnFailure,
-    group: 'workflows',
-    label: "When a unit's run fails",
-    description: 'What a plan run does when the run of one of its units fails or is stopped.',
-    default: 'stop',
-    scope: 'project',
-    radio: true,
-    options: {
-      stop: {
-        label: 'Stop the plan run',
-        description: 'No further unit starts until you start a plan run again.',
-      },
-      skip: {
-        label: 'Leave the unit and go on',
-        description: 'The next ready unit starts. Units that depend on the one left stay waiting.',
-      },
-    },
-  }),
-  'workflows.planRunParallel': defineSetting({
-    schema: z.number().int().min(1).max(10),
-    group: 'workflows',
-    label: 'Units at once in a plan run',
-    description:
-      "How many units' runs a plan run keeps going at the same time, each in its own working copy. 1 runs the units one after another.",
-    default: 1,
-    scope: 'project',
-  }),
   'workflows.verdictApprovedLine': defineSetting({
     schema: z.string().trim().min(1),
     group: 'workflows',
@@ -1455,15 +1236,6 @@ export const settingsRegistry = {
     default: 'BLOCKED',
     scope: 'project',
   }),
-  'workflows.maxStepVisits': defineSetting({
-    schema: z.number().int().min(1).max(50),
-    group: 'workflows',
-    label: 'Step starts before a run waits for you',
-    description:
-      'How often one step may start in a run. When a rule or the order of the steps would start it once more, the run waits for you there: Approve lets the step run once more, Stop ends the run. A workflow can set its own number.',
-    default: 3,
-    scope: 'project',
-  }),
   'workflows.alwaysStopSkills': defineSetting({
     schema: z.array(z.string().trim().min(1)),
     group: 'workflows',
@@ -1472,25 +1244,6 @@ export const settingsRegistry = {
       'The gate after a step with one of these skills always waits for you and cannot get a condition. capture-intent, plan-work, design-work and shape-work always stop, whether they are listed or not; add the skills your project plans or specifies with. The builder and saving a workflow use the list as set for all projects.',
     default: [...alwaysStopSkillDefaults],
     scope: 'project',
-  }),
-  'workflows.attachBuiltInSkills': defineSetting({
-    schema: z.boolean(),
-    group: 'workflows',
-    label: 'Attach built-in skills',
-    description:
-      "Give a step wow's built-in skills where the workflow depends on them: wow-verdict when its gate or a rule reads the verdict, wow-artifacts when it expects artifacts, wow-pull-request when the run delivers a unit of a plan. A step can leave one out. Off: steps get only the skills they name.",
-    default: true,
-    scope: 'project',
-  }),
-  'workflows.gateChecksTimeoutMinutes': defineSetting({
-    schema: z.number().int().min(1).max(1440),
-    group: 'workflows',
-    label: 'Wait for checks at a gate',
-    description:
-      "How long a gate whose condition includes the pull request's checks waits for them to finish after its step ended. After that the run waits for you.",
-    default: 30,
-    scope: 'project',
-    unit: 'minutes',
   }),
   'skills.directories': defineSetting({
     personal: 'machine',
@@ -1524,25 +1277,6 @@ export const settingsRegistry = {
     description: 'Also offer skills from installed Claude Code plugins, invoked as /plugin:skill.',
     default: true,
     scope: 'global',
-  }),
-  'plans.intentsDirectory': defineSetting({
-    schema: IntentsDirectory,
-    group: 'plans',
-    label: 'Intents folder',
-    description:
-      'Folder inside a project whose <id>/intent.md, spec.md and plan.md files the Plans view reads. wow only reads them.',
-    default: 'intents',
-    scope: 'project',
-  }),
-  'plans.writeSettleMs': defineSetting({
-    schema: z.number().int().min(0).max(10_000),
-    group: 'plans',
-    label: 'Wait for a file to settle',
-    description:
-      'How long an intent, spec or plan file must stay the same size before it is read again after a change, so a file is not read halfway through a save.',
-    default: 200,
-    scope: 'global',
-    unit: 'ms',
   }),
   'trackers.jira.baseUrl': defineSetting({
     schema: TrackerUrl,
@@ -1746,34 +1480,6 @@ export const settingsRegistry = {
     description:
       'How many recent commits of a project wow reads to suggest its Jira project key from references such as ABC-123. 0 turns the suggestion off.',
     default: 200,
-    scope: 'global',
-  }),
-  'hosts.polling': defineSetting({
-    schema: z.boolean(),
-    group: 'hosts',
-    label: 'Ask the hosts on a timer',
-    description:
-      'Read pull requests of followed plans and live runs from their host at every interval. Off: nothing is asked until you press Refresh now, except once when a unit run of a plan run ends and once when a gate starts waiting for the checks of a pull request. A paused scheduler also stops it.',
-    default: true,
-    scope: 'global',
-  }),
-  'hosts.pollSeconds': defineSetting({
-    schema: z.number().int().min(10).max(86_400),
-    group: 'hosts',
-    label: 'Interval',
-    description:
-      'How often wow asks the hosts. A host that says its request limit is used up is left alone until the limit resets, however short this is.',
-    default: 60,
-    scope: 'global',
-    unit: 'seconds',
-  }),
-  'hosts.listFallbackCount': defineSetting({
-    schema: z.number().int().min(1).max(100),
-    group: 'hosts',
-    label: 'Pull requests read without search',
-    description:
-      "On a host without search, how many of the repository's newest pull requests are read to find a plan's own.",
-    default: 30,
     scope: 'global',
   }),
   'hosts.longestWaitMinutes': defineSetting({
@@ -2104,15 +1810,6 @@ export const settingsRegistry = {
     default: 20_000,
     scope: 'global',
   }),
-  'assistant.readMaxDiffLines': defineSetting({
-    schema: z.number().int().min(0).max(20_000),
-    group: 'assistant',
-    label: 'Diff lines the assistant reads',
-    description:
-      "When the assistant reads a run's changes it gets every changed file with its counts, and the diff itself up to this many lines in all. 0 leaves the diff out.",
-    default: 400,
-    scope: 'global',
-  }),
   'assistant.readMaxMessages': defineSetting({
     schema: z.number().int().min(1).max(50),
     group: 'assistant',
@@ -2184,16 +1881,6 @@ export const settingsRegistry = {
     label: 'Context panel width',
     description: 'Width of the context panel. Dragging its left edge changes it.',
     default: 380,
-    scope: 'global',
-    unit: 'pixels',
-  }),
-  'appearance.changesListWidth': defineSetting({
-    schema: z.number().int().min(changesListWidthBounds.min).max(changesListWidthBounds.max),
-    group: 'appearance',
-    label: 'Changed files list width',
-    description:
-      "Width of the list of changed files beside the diff in a run's Changes tab. Dragging the edge between them changes it.",
-    default: 288,
     scope: 'global',
     unit: 'pixels',
   }),

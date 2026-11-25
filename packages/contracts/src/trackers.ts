@@ -131,7 +131,7 @@ export const trackerConnectionLabels: Readonly<Record<TrackerConnection, string>
 };
 
 // How a publish found its project: chosen in the dialog, or from the item's card or run.
-export const PublishProjectSource = z.enum(['chosen', 'card', 'run']);
+export const PublishProjectSource = z.enum(['chosen', 'card']);
 export type PublishProjectSource = z.infer<typeof PublishProjectSource>;
 
 export const PublishProject = z.object({

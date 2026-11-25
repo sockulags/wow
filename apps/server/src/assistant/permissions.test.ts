@@ -6,7 +6,6 @@ import {
   type ServerCommand,
   type SettingRow,
   type SubscriptionTopic,
-  type WorkflowRun,
   type WorkflowStep,
 } from '@wow/contracts';
 import { plainProtector } from '@wow/secrets';
@@ -78,7 +77,6 @@ const allow = (...permissions: AssistantPermission[]) => {
 const proposals = () =>
   rows<AssistantProposal>('assistantProposals').filter((row) => row.state === 'pending');
 const uses = () => rows<AssistantPermissionUse>('assistantPermissionUses');
-const runs = () => rows<WorkflowRun>('workflowRuns');
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'wow-permissions-'));
@@ -128,31 +126,7 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-const startDelivery = () => call('start_run', { workflowId: 'delivery', projectId: 'tea' });
-
 describe('Start runs (chief of staff spec 4, 5, 7)', () => {
-  it('starts nothing on its own while delegation is off, whatever is stored', async () => {
-    asUser({
-      type: 'setting.set',
-      key: 'assistant.permissions',
-      scope: 'global',
-      value: [permission({})],
-    });
-    expect((await startDelivery()).content.outcome).toBe('proposed');
-    expect(runs()).toEqual([]);
-  });
-
-  it('starts a covered run at once, reports it and records the use', async () => {
-    allow(permission({}));
-    const started = await startDelivery();
-    expect(started.content).toMatchObject({ outcome: 'done', underPermission: 'Start runs' });
-    expect(runs()).toHaveLength(1);
-    expect(uses()).toMatchObject([{ permissionId: 'p1', kind: 'startRuns' }]);
-    expect(proposals()).toEqual([]);
-    const read = await call('read_permissions');
-    expect(read.content['permissions']).toMatchObject([{ id: 'p1', usedToday: 1 }]);
-  });
-
   it("starts a covered card's thread at once and reports it like a run (orchestrator threads spec 27)", async () => {
     allow(permission({}));
     // The stored workflow's file, as the export writes it (spec 22).
@@ -184,7 +158,6 @@ describe('Start runs (chief of staff spec 4, 5, 7)', () => {
     const started = await call('start_card_run', { cardId: 'card-1' });
     expect(started.content).toMatchObject({ outcome: 'done', underPermission: 'Start runs' });
     expect(uses()).toMatchObject([{ permissionId: 'p1', kind: 'startRuns' }]);
-    expect(runs()).toEqual([]);
     expect(
       server.database.db
         .select()
@@ -192,30 +165,6 @@ describe('Start runs (chief of staff spec 4, 5, 7)', () => {
         .all()
         .map((thread) => thread.title),
     ).toEqual(['Brew the plan · 2026-11-11']);
-  });
-
-  it('leaves a workflow or project it does not name as a proposal', async () => {
-    allow(permission({}));
-    expect(
-      (await call('start_run', { workflowId: 'other', projectId: 'tea' })).content.outcome,
-    ).toBe('proposed');
-  });
-
-  it('asks again past the daily limit, when paused or ended, and says why', async () => {
-    allow(permission({ dailyLimit: 1 }));
-    expect((await startDelivery()).content.outcome).toBe('done');
-    asUser({ type: 'workflowRun.stop', runId: runs()[0]?.id ?? '' });
-    expect((await startDelivery()).content.outcome).toBe('proposed');
-    expect(proposals()[0]?.lines.at(-1)).toMatchObject({
-      what: 'Why this asks',
-      to: 'Start runs was used 1 times today, its limit.',
-    });
-
-    allow(permission({ paused: true }));
-    expect((await startDelivery()).content.outcome).toBe('proposed');
-    allow(permission({ until: '2026-11-09' }));
-    expect((await startDelivery()).content.outcome).toBe('proposed');
-    expect(proposals().at(-1)?.lines.at(-1)?.to).toBe('Start runs ended on 2026-11-09.');
   });
 });
 
@@ -252,19 +201,13 @@ describe('Plan runs (chief of staff spec 4, 5)', () => {
 });
 
 describe('what no permission covers (chief of staff spec 6, 7)', () => {
-  it('covers only the five commands of planning and starting runs', () => {
+  it('covers only the four commands of planning and starting work', () => {
     allow(
       ...(
         ['planRuns', 'startRuns', 'startThreads', 'driveThreads', 'retry', 'moveCards'] as const
       ).map((kind, index) => permission({ id: `p${index}`, kind })),
     );
-    const coverable = new Set([
-      'card.create',
-      'card.update',
-      'backlog.plan',
-      'workflowRun.start',
-      'card.runNow',
-    ]);
+    const coverable = new Set(['card.create', 'card.update', 'backlog.plan', 'card.runNow']);
     const read = readModel(server.database.db);
     const context = { now, registry: settingsRegistry };
     for (const type of Object.keys(commandClasses)) {
@@ -295,13 +238,6 @@ describe('what no permission covers (chief of staff spec 6, 7)', () => {
     });
     expect(widened.content.outcome).toBe('proposed');
     expect(setting('assistant.permissions')).toMatchObject([{ workflowIds: ['delivery'] }]);
-  });
-
-  it('never answers a gate under any permission', async () => {
-    allow(permission({}));
-    await startDelivery();
-    const stop = await call('stop_run', { runId: runs()[0]?.id ?? '' });
-    expect(stop.isError).toBe(true);
   });
 });
 

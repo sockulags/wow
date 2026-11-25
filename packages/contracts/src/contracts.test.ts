@@ -13,17 +13,9 @@ import {
   secretPatterns,
   settingGroupTitles,
   SettingGroup,
-  PageRead,
-  ChangeRequest,
-  changeRequestName,
   Command,
-  InternalCommand,
   WorkingCopy,
-  runFolder,
   workingCopyOnDisk,
-  PlanIntent,
-  PlanRun,
-  isLivePlanRunState,
   subscriptionTopics,
   Keybinding,
   KeyValueList,
@@ -34,19 +26,10 @@ import {
   ProviderEvent,
   RpcResponse,
   ServerMessage,
-  PathVisit,
-  StepGate,
-  StepRun,
-  StepRunState,
   ruleConditionText,
   ruleProblems,
   WorkflowStep,
-  alwaysStopSkillDefaults,
-  alwaysStops,
-  rulesForTemplate,
-  rulesFromTemplate,
   settingsRegistry,
-  type TemplateRule,
   type SettingDefinition,
 } from './index.js';
 
@@ -98,7 +81,7 @@ describe('provider protocol', () => {
 });
 
 describe('workflow contracts', () => {
-  it('parses a step and its run', () => {
+  it('parses a step', () => {
     expect(
       WorkflowStep.parse({
         id: 's1',
@@ -109,18 +92,7 @@ describe('workflow contracts', () => {
         expectedArtifacts: ['intents/*/intent.md'],
       }).gateAfter,
     ).toBe(true);
-    expect(StepRun.safeParse({ stepId: 's1', state: 'waiting', artifactsFound: [] }).success).toBe(
-      true,
-    );
   });
-});
-
-const templateStepWith = (skillName: string, rules?: TemplateRule[]) => ({
-  skillName,
-  gateBefore: false,
-  gateAfter: false,
-  expectedArtifacts: [],
-  ...(rules ? { rules } : {}),
 });
 
 describe('settings registry', () => {
@@ -138,7 +110,6 @@ describe('settings registry', () => {
         'scheduler',
         'workflows',
         'skills',
-        'plans',
         'trackers',
         'hosts',
         'viewer',
@@ -172,114 +143,9 @@ describe('settings registry', () => {
       false,
     );
     const params = rpcMethods['files.read'].params;
-    expect(params.safeParse({ runId: 'r1', path: 'a.md' }).success).toBe(true);
-    expect(params.safeParse({ runId: 'r1', path: '' }).success).toBe(false);
-    expect(params.safeParse({ runId: 'r1', path: 'a\0.md' }).success).toBe(false);
-  });
-
-  it('seeds the Bug, Feature and Initiative templates (behavior 25)', () => {
-    const outline = settingsRegistry['workflows.templates'].default.map((template) => [
-      template.name,
-      template.steps.map((step) => `${step.skillName}${step.gateAfter ? ' (gate after)' : ''}`),
-    ]);
-    expect(outline).toEqual([
-      ['Bug', ['deliver-work', 'check-work']],
-      [
-        'Feature',
-        ['capture-intent (gate after)', 'plan-work (gate after)', 'deliver-work', 'check-work'],
-      ],
-      [
-        'Initiative',
-        [
-          'capture-intent (gate after)',
-          'plan-work (gate after)',
-          'shape-work (gate after)',
-          'deliver-work',
-          'check-work',
-        ],
-      ],
-    ]);
-  });
-
-  it('gives check-work of every default template the rule back to deliver-work (workflow branches spec 20)', () => {
-    const templates = settingsRegistry['workflows.templates'].default;
-    expect(templates.map((template) => template.kind)).toEqual(['bug', 'feature', 'initiative']);
-    for (const template of templates) {
-      const withRules = template.steps.filter((step) => step.rules !== undefined);
-      expect(withRules.map((step) => [step.skillName, step.rules])).toEqual([
-        [
-          'check-work',
-          [
-            {
-              when: { fact: 'verdict', is: 'changesRequested' },
-              goTo: { type: 'skill', skillName: 'deliver-work' },
-            },
-          ],
-        ],
-      ]);
-    }
-  });
-
-  it('reads a template stored before rules existed as it was stored', () => {
-    const stored = [
-      {
-        kind: 'bug',
-        name: 'Bug',
-        steps: [
-          { skillName: 'deliver-work', gateBefore: false, gateAfter: false, expectedArtifacts: [] },
-          { skillName: 'check-work', gateBefore: false, gateAfter: true, expectedArtifacts: [] },
-        ],
-      },
-    ];
-    expect(settingsRegistry['workflows.templates'].schema.parse(stored)).toEqual(stored);
-  });
-
-  it('turns the rules of a template into rules between steps and back', () => {
-    const when = { fact: 'verdict', is: 'changesRequested' } as const;
-    const template = [
-      templateStepWith('deliver-work'),
-      templateStepWith('check-work', [
-        { when, goTo: { type: 'skill', skillName: 'deliver-work' } },
-      ]),
-      templateStepWith('deliver-work'),
-      templateStepWith('check-work', [
-        { when, goTo: { type: 'skill', skillName: 'deliver-work' } },
-        { when: { fact: 'stepFailed' }, goTo: { type: 'end' } },
-        { when: { fact: 'verdict', is: 'blocked' }, goTo: { type: 'skill', skillName: 'gone' } },
-      ]),
-    ];
-    const ids = ['a', 'b', 'c', 'd'];
-    expect(rulesFromTemplate(template, ids, 0)).toEqual([]);
-    // The nearest step before with that skill.
-    expect(rulesFromTemplate(template, ids, 1)).toEqual([
-      { when, goTo: { type: 'step', stepId: 'a' } },
-    ]);
-    expect(rulesFromTemplate(template, ids, 3)).toEqual([
-      { when, goTo: { type: 'step', stepId: 'c' } },
-      { when: { fact: 'stepFailed' }, goTo: { type: 'end' } },
-    ]);
-
-    const steps = template.map((entry, index) => ({
-      id: ids[index] as string,
-      skillName: entry.skillName,
-      rules: rulesFromTemplate(template, ids, index),
-    }));
-    expect(rulesForTemplate(steps, 3)).toEqual(template[3]?.rules?.slice(0, 2));
-    // A step that its skill would not find again cannot be named in a template.
-    const far = [...steps];
-    far[3] = {
-      id: 'd',
-      skillName: 'check-work',
-      rules: [{ when, goTo: { type: 'step', stepId: 'a' } }],
-    };
-    expect(rulesForTemplate(far, 3)).toEqual([]);
-  });
-
-  it('refuses templates that share a kind', () => {
-    const [bug] = settingsRegistry['workflows.templates'].default;
-    expect(settingsRegistry['workflows.templates'].schema.safeParse([bug, bug]).success).toBe(
-      false,
-    );
+    expect(params.safeParse({ threadId: 't1', path: 'a.md' }).success).toBe(true);
+    expect(params.safeParse({ threadId: 't1', path: '' }).success).toBe(false);
+    expect(params.safeParse({ threadId: 't1', path: 'a\0.md' }).success).toBe(false);
   });
 
   it('accepts shortcuts with modifiers or empty, and marks the schema as a keybinding', () => {
@@ -331,14 +197,6 @@ describe('server contracts', () => {
     expect(SettingScopeRef.safeParse('team:x').success).toBe(false);
   });
 
-  it('keeps the intents folder inside the project', () => {
-    const { schema } = settingsRegistry['plans.intentsDirectory'];
-    expect(schema.parse(' docs/intents ')).toBe('docs/intents');
-    const outside = ['', '../intents', 'docs/../../x', '/etc', 'C:\\plans', '~/intents', '.', './'];
-    expect(schema.parse('..drafts')).toBe('..drafts');
-    expect(outside.filter((value) => schema.safeParse(value).success)).toEqual([]);
-  });
-
   it('needs a threadId for thread-scoped topics', () => {
     expect(SubscribeParams.safeParse({ topic: 'projects' }).success).toBe(true);
     expect(SubscribeParams.safeParse({ topic: 'threadItems' }).success).toBe(false);
@@ -354,107 +212,6 @@ describe('server contracts', () => {
       }).success,
     ).toBe(true);
     expect(Command.safeParse({ type: 'project.explode', projectId: 'p1' }).success).toBe(false);
-  });
-});
-
-describe('hosts', () => {
-  it('reads a page read of linked Confluence pages, each with its own error', () => {
-    const row = {
-      id: 'run:r1',
-      projectId: 'tea',
-      runId: 'r1',
-      host: 'confluence',
-      hostName: 'wiki.example.invalid',
-      pages: [
-        {
-          ref: 'id:123',
-          link: 'https://wiki.example.invalid/pages/viewpage.action?pageId=123',
-          source: 'ticket',
-          page: {
-            id: '123',
-            title: 'Design',
-            space: 'ENG',
-            version: 2,
-            body: '<p>x</p>',
-            url: null,
-          },
-          fetchedAt: '2026-11-03T09:00:00.000Z',
-          error: null,
-        },
-      ],
-      fetchedAt: '2026-11-03T09:00:00.000Z',
-      error: null,
-    };
-    expect(PageRead.safeParse(row).success).toBe(true);
-    expect(
-      PageRead.safeParse({ ...row, pages: [{ ...row.pages[0], source: 'search' }] }).success,
-    ).toBe(false);
-  });
-
-  it('reads a plan row stored before plans could be followed', () => {
-    const stored = {
-      id: 'tea:2026-01-tea-timer',
-      projectId: 'tea',
-      intentId: '2026-01-tea-timer',
-      title: 'A tea timer',
-      hasIntent: true,
-      status: 'accepted',
-      rev: 1,
-      spec: null,
-      plan: null,
-      source: 'files',
-      units: [
-        {
-          key: 'U1',
-          title: 'Count down',
-          line: 12,
-          dependsOn: [],
-          blocked: null,
-          contract: null,
-          status: 'unknown',
-          statusReason: 'No host is set up',
-        },
-      ],
-      problems: [],
-    };
-    const row = PlanIntent.parse(stored);
-    expect(row.followed).toBe(false);
-    expect(row.units[0]?.changeRequestId).toBeNull();
-  });
-
-  it('accepts a plan.follow command and a change request with checks and comments', () => {
-    expect(
-      Command.safeParse({ type: 'plan.follow', planId: 'tea:2026-01-tea-timer', followed: true })
-        .success,
-    ).toBe(true);
-    const request = {
-      id: 'tea:14',
-      projectId: 'tea',
-      host: 'github',
-      number: 14,
-      title: 'Ring the bell',
-      url: 'https://ghe.example.invalid/acme/tea/pull/14',
-      state: 'open',
-      draft: true,
-      mergedAt: null,
-      headBranch: 'agent/U2-bell',
-      headSha: 'b2b2b2b',
-      units: [{ intentId: '2026-01-tea-timer', unitKey: 'U2' }],
-      checkState: 'failure',
-      checks: [{ name: 'test', state: 'failure', url: null }],
-      comments: [],
-      newestCommentId: null,
-    };
-    expect(ChangeRequest.safeParse(request).success).toBe(true);
-    // A GitLab merge request is a change request too (review loop spec 34), written `!14`.
-    expect(ChangeRequest.safeParse({ ...request, host: 'gitlab' }).success).toBe(true);
-    expect(ChangeRequest.safeParse({ ...request, host: 'bitbucket' }).success).toBe(false);
-    expect(changeRequestName({ host: 'gitlab', number: 14 })).toBe('Merge request !14');
-    expect(changeRequestName({ host: 'github', number: 14 })).toBe('Pull request #14');
-    expect(
-      ChangeRequest.safeParse({ ...request, checks: [{ name: 'test', state: 'none', url: null }] })
-        .success,
-    ).toBe(false);
   });
 });
 
@@ -477,156 +234,6 @@ describe('working copies', () => {
     expect(WorkingCopy.safeParse({ ...copy, path: '' }).success).toBe(false);
     expect(workingCopyOnDisk(WorkingCopy.parse({ ...copy, state: 'kept' }))).toBe(true);
     expect(workingCopyOnDisk(WorkingCopy.parse({ ...copy, state: 'removed' }))).toBe(false);
-  });
-
-  it('names the folder a run works in', () => {
-    expect(runFolder({ workingCopy: WorkingCopy.parse(copy) }, '/home/me/tea')).toBe(copy.path);
-    expect(runFolder({ workingCopy: null }, '/home/me/tea')).toBe('/home/me/tea');
-    expect(runFolder({}, '/home/me/tea')).toBe('/home/me/tea');
-  });
-
-  it('takes the switch on a workflow and the outcome of a working copy as commands', () => {
-    expect(
-      Command.safeParse({ type: 'workflow.update', workflowId: 'w', ownWorkingCopy: true }).success,
-    ).toBe(true);
-    expect(
-      InternalCommand.safeParse({
-        type: 'workflowRun.workingCopySettled',
-        runId: 'r1',
-        state: 'kept',
-        unpushed: {
-          uncommittedFiles: 2,
-          unpushedCommits: 1,
-          newestSubject: 'Ring the bell',
-          branch: null,
-        },
-        error: null,
-      }).success,
-    ).toBe(true);
-    // A client cannot report what became of a working copy.
-    expect(
-      Command.safeParse({
-        type: 'workflowRun.workingCopyFailed',
-        runId: 'r1',
-        error: 'made up',
-      }).success,
-    ).toBe(false);
-    expect(Object.keys(rpcMethods)).toContain('workflowRuns.removeWorkingCopy');
-  });
-});
-
-describe('plan runs', () => {
-  const planRun = {
-    id: 'pr1',
-    planId: 'tea:2026-01-tea-timer',
-    projectId: 'tea',
-    intentId: '2026-01-tea-timer',
-    workflowId: 'deliver',
-    state: 'waiting',
-    units: [{ unitKey: 'U1', title: 'Count down', runId: 'pr1.U1', outcome: 'done' }],
-    waitingFor: ['U2 waits for U1 to merge'],
-    message: null,
-    startedAt: '2026-11-03T09:00:00.000Z',
-    endedAt: null,
-  };
-
-  it('accepts a plan run in every state and only those, on its own topic', () => {
-    for (const state of ['running', 'waiting', 'done', 'failed', 'stopped']) {
-      expect(PlanRun.safeParse({ ...planRun, state }).success).toBe(true);
-    }
-    expect(PlanRun.safeParse({ ...planRun, state: 'paused' }).success).toBe(false);
-    expect(
-      PlanRun.safeParse({ ...planRun, units: [{ ...planRun.units[0], outcome: 'merged' }] })
-        .success,
-    ).toBe(false);
-    expect(isLivePlanRunState('waiting')).toBe(true);
-    expect(isLivePlanRunState('failed')).toBe(false);
-    expect(subscriptionTopics.planRuns.row).toBe(PlanRun);
-  });
-
-  it('takes start, stop and the For units switch from clients, and advance only from the server', () => {
-    expect(
-      Command.safeParse({
-        type: 'planRun.start',
-        planRunId: 'pr1',
-        planId: 'tea:2026-01-tea-timer',
-        workflowId: 'deliver',
-      }).success,
-    ).toBe(true);
-    expect(Command.safeParse({ type: 'planRun.stop', planRunId: 'pr1' }).success).toBe(true);
-    expect(
-      Command.safeParse({ type: 'workflow.update', workflowId: 'w', forUnits: true }).success,
-    ).toBe(true);
-    expect(Command.safeParse({ type: 'planRun.advance', planRunId: 'pr1' }).success).toBe(false);
-    expect(InternalCommand.safeParse({ type: 'planRun.advance', planRunId: 'pr1' }).success).toBe(
-      true,
-    );
-  });
-
-  it('has the unit text and the failure choice as project settings', () => {
-    const template = settingsRegistry['workflows.unitPromptTemplate'];
-    expect(template.scope).toBe('project');
-    // The Intent-Unit line comes in whole, or not at all for a step that gets wow-pull-request.
-    expect(template.default).toContain('put this line in its body: {{intentUnitLine}}');
-    const onFailure = settingsRegistry['workflows.planRunOnFailure'];
-    expect(onFailure.default).toBe('stop');
-    expect(onFailure.schema.safeParse('skip').success).toBe(true);
-    expect(onFailure.schema.safeParse('retry').success).toBe(false);
-  });
-});
-
-describe('gate conditions (review loop spec 54 to 57)', () => {
-  const step = {
-    id: 'check',
-    skillName: 'check-work',
-    providerInstanceId: 'claude-work',
-    gateBefore: false,
-    gateAfter: true,
-    expectedArtifacts: [],
-  };
-
-  it('takes each part once on a step and nothing else', () => {
-    const parse = (gateAfterCondition: unknown) =>
-      WorkflowStep.safeParse({ ...step, gateAfterCondition }).success;
-    expect(WorkflowStep.safeParse(step).success).toBe(true);
-    expect(parse(['verdict', 'checks', 'artifacts'])).toBe(true);
-    expect(parse(['verdict', 'verdict'])).toBe(false);
-    expect(parse([])).toBe(false);
-    expect(parse(['model'])).toBe(false);
-  });
-
-  it('records how a gate stands on the step run', () => {
-    const gate = {
-      state: 'passedByItself',
-      parts: [{ part: 'verdict', state: 'held', detail: 'The final message ends with APPROVED' }],
-      since: '2026-11-03T09:00:00.000Z',
-      at: '2026-11-03T09:00:00.000Z',
-    };
-    const run = { stepId: 'check', state: 'done', artifactsFound: [] };
-    expect(StepRun.safeParse({ ...run, gate }).success).toBe(true);
-    expect(StepRun.safeParse({ ...run, gate: { ...gate, state: 'merged' } }).success).toBe(false);
-  });
-
-  it('always stops the four planning skills, with or without a plugin prefix, and what the setting adds', () => {
-    for (const name of alwaysStopSkillDefaults) expect(alwaysStops(name, [])).toBe(true);
-    expect(alwaysStops('agent-os-core:plan-work', [])).toBe(true);
-    expect(alwaysStops('check-work', [])).toBe(false);
-    expect(alwaysStops('write-spec', ['write-spec'])).toBe(true);
-    expect(alwaysStops('acme:write-spec', ['write-spec'])).toBe(true);
-  });
-
-  it('has the three settings with their defaults, and the checks wait is sent only by the server', () => {
-    expect(settingsRegistry['workflows.verdictApprovedLine'].default).toBe('APPROVED');
-    expect(settingsRegistry['workflows.alwaysStopSkills'].default).toEqual([
-      'capture-intent',
-      'plan-work',
-      'design-work',
-      'shape-work',
-    ]);
-    expect(settingsRegistry['workflows.gateChecksTimeoutMinutes'].default).toBe(30);
-    const check = { type: 'workflowRun.checkGate', runId: 'r1', stepId: 'check' };
-    expect(InternalCommand.safeParse(check).success).toBe(true);
-    expect(Command.safeParse(check).success).toBe(false);
   });
 });
 
@@ -697,47 +304,6 @@ describe('rules on a step (workflow branches spec 1 to 18)', () => {
     expect(ruleConditionText({ fact: 'checks', is: 'successful' })).toBe('checks successful');
     expect(ruleConditionText({ fact: 'stepFailed' })).toBe('step failed');
   });
-
-  it('has skipped as a step state, the limit as a gate state and a path on a run', () => {
-    expect(StepRunState.safeParse('skipped').success).toBe(true);
-    const at = '2026-11-03T09:00:00.000Z';
-    expect(
-      StepGate.safeParse({
-        state: 'waitingAtLimit',
-        parts: [],
-        detail: 'deliver-work has run 3 times: the limit',
-        since: at,
-        at,
-      }).success,
-    ).toBe(true);
-    expect(
-      PathVisit.safeParse({
-        stepId: 'review',
-        attempt: 2,
-        startedAt: at,
-        endedAt: at,
-        ended: 'done',
-        next: { to: toBuild, by: 'rule', when: { fact: 'verdict', is: 'changesRequested' } },
-        reason: 'verdict changes requested → deliver-work',
-      }).success,
-    ).toBe(true);
-  });
-
-  it('takes a limit of its own on a workflow, and null to take it away', () => {
-    const update = { type: 'workflow.update', workflowId: 'w' };
-    expect(Command.safeParse({ ...update, maxStepVisits: 2 }).success).toBe(true);
-    expect(Command.safeParse({ ...update, maxStepVisits: null }).success).toBe(true);
-    expect(Command.safeParse({ ...update, maxStepVisits: 0 }).success).toBe(false);
-  });
-
-  it('registers the settings rules use, with their defaults', () => {
-    expect(settingsRegistry['workflows.maxStepVisits'].default).toBe(3);
-    expect(settingsRegistry['workflows.verdictChangesRequestedLine'].default).toBe(
-      'CHANGES_REQUESTED',
-    );
-    expect(settingsRegistry['workflows.verdictBlockedLine'].default).toBe('BLOCKED');
-    expect(settingsRegistry['workflows.goBackTemplate'].default).toContain('{{fromStep}}');
-  });
 });
 
 describe('app assistant', () => {
@@ -764,18 +330,18 @@ describe('app assistant', () => {
   const proposal = {
     id: 'p1',
     at,
-    commandType: 'workflowRun.start',
-    title: 'Start Delivery in Tea',
-    lines: [{ what: 'Backlog item', from: null, to: 'A quieter kettle' }],
-    place: { label: 'Workflows → Delivery', path: '/workflows/delivery' },
+    commandType: 'project.delete',
+    title: 'Remove Tea',
+    lines: [{ what: 'Project', from: 'Tea', to: null }],
+    place: { label: 'Settings → Projects', path: '/settings/projects' },
     state: 'pending',
     answeredAt: null,
     reason: null,
   };
   const proposalRecord = {
     ...proposal,
-    command: { type: 'workflowRun.start', runId: 'r1', workflowId: 'delivery', projectId: 'tea' },
-    basis: { workflow: { id: 'delivery', name: 'Delivery' }, project: 'Tea' },
+    command: { type: 'project.delete', projectId: 'tea' },
+    basis: { project: 'Tea' },
   };
 
   it('has commands for the answers only the user gives', () => {
@@ -923,33 +489,5 @@ describe('app assistant', () => {
     expect(
       JSON.parse(hideSecrets('["https://a.example.invalid","ada@example.invalid"]', [])),
     ).toEqual(['https://a.example.invalid', 'ada@example.invalid']);
-  });
-});
-
-describe('page reads in the history', () => {
-  const pageRead = {
-    id: 'run:r1',
-    projectId: 'tea',
-    runId: 'r1',
-    host: 'confluence',
-    hostName: 'wiki.example.invalid',
-    pages: [],
-    fetchedAt: '2026-11-03T09:00:00.000Z',
-    error: null,
-  };
-
-  it('loads a pages.synced event from before, and one that only moves the times', () => {
-    for (const payload of [
-      { projectId: 'tea', reads: [pageRead] },
-      {
-        projectId: 'tea',
-        reads: [],
-        fetched: { at: '2026-11-03T09:10:00.000Z', ids: ['run:r1'] },
-      },
-    ]) {
-      expect(
-        DomainEvent.safeParse({ kind: 'pages.synced', aggregate: 'pages:tea', payload }).success,
-      ).toBe(true);
-    }
   });
 });

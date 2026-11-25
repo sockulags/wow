@@ -1,14 +1,5 @@
 import { z } from 'zod';
-import {
-  ChangeRequest,
-  HostError,
-  HostKind,
-  HostReadScope,
-  Issue,
-  Page,
-  Ticket,
-  hostReadId,
-} from './hosts.js';
+import { ChangeRequest, HostError, HostKind, Issue, Page, Ticket } from './hosts.js';
 
 // Links and references to the user's own hosts in chat messages (agent workbench spec 19 to
 // 26). A link is recognised only against a site wow has settings and a token for: the server
@@ -78,7 +69,7 @@ export type HostItemData = z.infer<typeof HostItemData>;
 export const HostItemRead = z.object({
   // `thread:<threadId>:<hostItemKey>`.
   id: Id,
-  scope: HostReadScope.extract(['thread']),
+  scope: z.literal('thread'),
   threadId: Id,
   item: HostItemRef,
   hostName: z.string(),
@@ -93,7 +84,7 @@ export const hostItemKey = (item: HostItemRef): string =>
   [item.host, item.site, item.path.toLowerCase(), item.kind, item.id].join('|');
 
 export const hostItemReadId = (threadId: string, item: HostItemRef): string =>
-  `${hostReadId('thread', threadId)}:${hostItemKey(item)}`;
+  `thread:${threadId}:${hostItemKey(item)}`;
 
 // `hosts.lookup`: the thread's rules, and with `ref` (a web address or a bare reference) the item
 // it names. `read`: `open` reads the item when it was never read in this thread (or only failed)

@@ -1,42 +1,12 @@
-import type { ResolvedSetting, Workflow, WorkflowRun } from '@wow/contracts';
+import type { ResolvedSetting } from '@wow/contracts';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { appId, decodeServerInfoArg, encodeServerInfoArg } from '../app.js';
 import { opensOutside, rendererFile } from './app-protocol.js';
 import { readDesktopSettings } from './desktop-settings.js';
-import { chatNotices, routeOf, runNotices, runStates } from './notifications.js';
+import { chatNotices, routeOf } from './notifications.js';
 import { applicationMenu } from './app-menu.js';
 import { trayMenu, traySummary, trayTooltip } from './tray-menu.js';
-
-const run = (
-  id: string,
-  state: WorkflowRun['state'],
-  overrides: Partial<WorkflowRun> = {},
-): WorkflowRun => ({
-  id,
-  workflowId: 'wf-feature',
-  projectId: 'p1',
-  calendarItemId: null,
-  backlogItemId: null,
-  state,
-  currentStep: 1,
-  steps: [
-    { stepId: 's1', state: 'done', artifactsFound: [] },
-    { stepId: 's2', state: 'waiting', artifactsFound: [] },
-  ],
-  startedAt: '2026-11-02T08:00:00.000Z',
-  endedAt: null,
-  ...overrides,
-});
-
-const workflow: Workflow = {
-  id: 'wf-feature',
-  name: 'Feature',
-  templateKind: 'feature',
-  steps: [],
-  createdAt: '2026-11-01T08:00:00.000Z',
-  updatedAt: '2026-11-01T08:00:00.000Z',
-};
 
 describe('app identity', () => {
   it('has a reverse-domain app id', () => {
@@ -57,7 +27,6 @@ const chatRow = (id: string, threadId: string | null) => ({
   title: 'Needs you: Kettle timer',
   body: 'Allow pnpm test?',
   path: '/chat/t1',
-  runId: threadId === null ? 'run-1' : null,
   calendarItemId: null,
   threadId,
   approvalId: threadId === null ? null : 't1:tool-1',
@@ -82,41 +51,6 @@ describe('chatNotices', () => {
   it('reads the route of a window that shows the app', () => {
     expect(routeOf('wow://app/chat/t1', 'wow://app')).toBe('/chat/t1');
     expect(routeOf('https://example.com/chat/t1', 'wow://app')).toBeUndefined();
-  });
-});
-
-describe('runNotices', () => {
-  it('stays quiet on the first snapshot', () => {
-    expect(runNotices(undefined, [run('r1', 'waiting')], [workflow])).toEqual([]);
-  });
-
-  it('announces a new run, a run that waits for you and a run that failed', () => {
-    const before = runStates([run('r1', 'running'), run('r2', 'running')]);
-    const notices = runNotices(
-      before,
-      [run('r1', 'waiting'), run('r2', 'failed'), run('r3', 'running', { currentStep: 0 })],
-      [workflow],
-    );
-    expect(notices).toEqual([
-      { runId: 'r1', title: 'Waiting for you', body: 'Feature, step 2 of 2', path: '/workflows' },
-      {
-        runId: 'r2',
-        title: 'Workflow run failed',
-        body: 'Feature, step 2 of 2',
-        path: '/workflows',
-      },
-      {
-        runId: 'r3',
-        title: 'Workflow run started',
-        body: 'Feature, step 1 of 2',
-        path: '/workflows',
-      },
-    ]);
-  });
-
-  it('says nothing for unchanged runs or states nobody waits on', () => {
-    const before = runStates([run('r1', 'waiting'), run('r2', 'waiting')]);
-    expect(runNotices(before, [run('r1', 'waiting'), run('r2', 'done')], [])).toEqual([]);
   });
 });
 
@@ -175,7 +109,6 @@ describe('readDesktopSettings', () => {
       closeToTray: true,
       startMinimized: false,
       schedulerPaused: false,
-      notifications: true,
       updatesEnabled: true,
       updateCheckIntervalMinutes: 240,
     });
@@ -233,7 +166,6 @@ describe('tray summary', () => {
   it('says how many need you and what fires next', () => {
     const summary = traySummary(
       [{ state: 'needs_you' }, { state: 'idle' }, { state: 'needs_you' }],
-      [{ state: 'waiting' }, { state: 'running' }],
       [
         { state: 'fired', runAt: '2026-11-02T09:00:00.000Z', calendarItemId: 'old' },
         { state: 'scheduled', runAt: '2026-11-02T17:30:00.000Z', calendarItemId: 'late' },
@@ -246,13 +178,13 @@ describe('tray summary', () => {
       new Date('2026-11-02T12:00:00.000Z'),
       (instant) => instant.toISOString().slice(11, 16),
     );
-    expect(summary).toEqual({ needsYou: 3, next: { title: 'Nightly triage', at: '15:30' } });
+    expect(summary).toEqual({ needsYou: 2, next: { title: 'Nightly triage', at: '15:30' } });
     const state = { serverReady: true, schedulerPaused: false, updateReady: undefined, ...summary };
     expect(trayMenu(state).slice(0, 2)).toMatchObject([
-      { label: '3 need you', action: 'openChat' },
+      { label: '2 need you', action: 'openChat' },
       { label: 'Next: Nightly triage at 15:30', action: 'openCalendar' },
     ]);
-    expect(trayTooltip(state)).toBe('wow · 3 need you');
+    expect(trayTooltip(state)).toBe('wow · 2 need you');
   });
 });
 

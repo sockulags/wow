@@ -115,17 +115,15 @@ export function RowButtons({ thread }: { readonly thread: Thread }) {
       >
         {thread.pinned ? <PinOffIcon /> : <PinIcon />}
       </IconButton>
-      {(archived || thread.runId === null) && (
-        <IconButton
-          label={`${archived ? 'Unarchive' : 'Archive'} ${thread.title}`}
-          size="icon-xs"
-          tabIndex={-1}
-          data-testid="thread-row-archive"
-          onClick={() => run(archived ? 'unarchive' : 'archive')}
-        >
-          {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-        </IconButton>
-      )}
+      <IconButton
+        label={`${archived ? 'Unarchive' : 'Archive'} ${thread.title}`}
+        size="icon-xs"
+        tabIndex={-1}
+        data-testid="thread-row-archive"
+        onClick={() => run(archived ? 'unarchive' : 'archive')}
+      >
+        {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+      </IconButton>
     </span>
   );
 }

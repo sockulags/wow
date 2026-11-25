@@ -1,10 +1,4 @@
-import {
-  isLiveRunState,
-  isWorkflowSkill,
-  type CalendarItem,
-  type Command,
-  type Skill,
-} from '@wow/contracts';
+import { isWorkflowSkill, type CalendarItem, type Command, type Skill } from '@wow/contracts';
 import { Link } from '@tanstack/react-router';
 import { InfoIcon, WorkflowIcon } from 'lucide-react';
 import { useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
@@ -99,9 +93,8 @@ function workflowChoices(files: readonly Skill[], current: string) {
   }));
 }
 
-// What Delete asks before it deletes (recurring cards spec 12): which part of a repeating card,
-// and whether to stop a run that is going.
-type Asking = 'which' | 'stopRun' | undefined;
+// What Delete asks before it deletes (recurring cards spec 12): which part of a repeating card.
+type Asking = 'which' | undefined;
 
 // Undo of a deleted card creates it again with the same id and fields, a series with its rule
 // and the days skipped by hand (spec 13).
@@ -150,14 +143,10 @@ function CardForm({
   const { firstDayOfWeek } = useCalendarPrefs();
   const snapMinutes = useSetting('calendar.snapMinutes');
   const saveBinding = useSetting('keybindings.calendarSaveCard');
-  const runs = useTopic('workflowRuns');
-  const run = card?.runId ? runs?.find((entry) => entry.id === card.runId) : undefined;
-  const liveRun = run && isLiveRunState(run.state) ? run : undefined;
   const repeating = card?.repeat !== null && card?.repeat !== undefined;
   // The occurrence the dialog was opened from, for "This occurrence".
   const occurrenceDate = dialog.type === 'edit' && repeating ? dialog.date : undefined;
-  // Deleting a card whose run is live asks first whether to stop the run (spec 13); a repeating
-  // card first asks whether to delete one occurrence or the series.
+  // Deleting a repeating card asks first whether to delete one occurrence or the series.
   const [asking, setAsking] = useState<Asking>(() =>
     dialog.type === 'edit' && dialog.deleting ? 'which' : undefined,
   );
@@ -194,7 +183,6 @@ function CardForm({
   const canRunNow =
     card !== undefined &&
     (card.workflowName ?? card.workflowId ?? null) !== null &&
-    (run === undefined || !isLiveRunState(run.state)) &&
     (card.state === 'missed' || card.state === 'failed');
   const blocked = !range.ok
     ? range.message
@@ -235,14 +223,10 @@ function CardForm({
   };
 
   // Delete at once and offer Undo (owner decision F-9): Undo creates the card again with the same
-  // id and fields. A run it had stays stopped or kept as chosen.
-  const remove = async (stopRun?: boolean) => {
+  // id and fields.
+  const remove = async () => {
     if (dialog.type !== 'edit' || !card) return;
-    const deleted = await send({
-      type: 'card.delete',
-      cardId: dialog.cardId,
-      ...(stopRun === undefined ? {} : { stopRun }),
-    });
+    const deleted = await send({ type: 'card.delete', cardId: dialog.cardId });
     if (!deleted) return;
     offerUndo({
       message: repeating ? 'Series deleted' : 'Card deleted',
@@ -252,11 +236,8 @@ function CardForm({
     });
   };
 
-  // "The whole series", or a single card: a live run asks first.
-  const removeAll = () => {
-    if (liveRun) setAsking('stopRun');
-    else void remove();
-  };
+  // "The whole series", or a single card.
+  const removeAll = () => void remove();
 
   // "This occurrence": that day is skipped and the rest of the series stays. Undo puts the list
   // of skipped days back as it was.
@@ -496,7 +477,7 @@ function CardForm({
                       void send({
                         type: 'card.runNow',
                         cardId: card.id,
-                        runId: globalThis.crypto.randomUUID(),
+                        threadId: globalThis.crypto.randomUUID(),
                       })
                     }
                   >
@@ -580,42 +561,6 @@ function CardForm({
                 onClick={removeAll}
               >
                 {repeating ? 'The whole series' : 'Delete card'}
-              </Button>
-            </div>
-          </div>
-        )}
-        {asking === 'stopRun' && dialog.type === 'edit' && liveRun && (
-          <div
-            role="alertdialog"
-            aria-label="Stop the run?"
-            className="grid gap-2 rounded-md border border-destructive/50 p-3 text-xs"
-          >
-            <p>
-              This card's workflow run is{' '}
-              {liveRun.state === 'waiting' ? 'waiting for you' : 'running'}. Stop it too? Its
-              threads are kept either way.
-            </p>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => void remove(false)}
-              >
-                Keep run and delete
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                disabled={busy}
-                onClick={() => void remove(true)}
-              >
-                Stop run and delete
               </Button>
             </div>
           </div>

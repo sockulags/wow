@@ -1,6 +1,5 @@
 import {
   Diagnosis,
-  type ChangeRequest,
   type DiagnosisProblem,
   type ServerCommand,
   type WorkflowStep,
@@ -10,7 +9,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { planRuns, workflowRuns } from '../db/schema.js';
 import { MockProviderAdapter } from '../hooks/providers.js';
 import { startServer, type RunningServer } from '../server.js';
 
@@ -73,28 +71,6 @@ async function diagnose(): Promise<{ text: string; diagnosis: Diagnosis }> {
 
 const ofKind = (problems: readonly DiagnosisProblem[], kind: DiagnosisProblem['kind']) =>
   problems.filter((problem) => problem.kind === kind);
-
-const runOf = (id: string) =>
-  server.database.db
-    .select()
-    .from(workflowRuns)
-    .all()
-    .find((run) => run.id === id);
-
-// A plan run row as the plan-run projection stores it.
-const planRun = (id: string, state: 'failed' | 'done', startedAt: string) => ({
-  id,
-  planId: 'tea:kettle',
-  projectId: 'tea',
-  intentId: 'kettle',
-  workflowId: 'brew',
-  state,
-  units: [],
-  waitingFor: [],
-  message: state === 'failed' ? 'Unit K-1 failed.' : null,
-  startedAt,
-  endedAt: startedAt,
-});
 
 beforeEach(async () => {
   clock = Date.parse(now);
@@ -243,130 +219,6 @@ describe('the diagnosis (spec 19, 20)', () => {
     ]);
   });
 
-  it('names no event trigger, which starts nothing now, and a failed host read with the setting it names', async () => {
-    dispatch({ type: 'workflow.create', workflowId: 'mend', name: 'Mend', steps: [step('fix')] });
-    dispatch({
-      type: 'trigger.create',
-      triggerId: 'on-merged',
-      projectId: 'tea',
-      event: 'merged',
-      workflowId: 'mend',
-    });
-    dispatch({
-      type: 'workflowRun.start',
-      runId: 'run-watch',
-      workflowId: 'brew',
-      projectId: 'tea',
-    });
-    const request = (state: ChangeRequest['state']): ChangeRequest => ({
-      id: 'tea:14',
-      projectId: 'tea',
-      host: 'github',
-      number: 14,
-      title: 'Ring the bell',
-      url: 'https://github.example.invalid/acme/tea/pull/14',
-      state,
-      draft: false,
-      mergedAt: state === 'merged' ? at(-5) : null,
-      headBranch: 'agent/bell',
-      headSha: 'b2b2b2b',
-      units: [],
-      checkState: 'none',
-      checks: [],
-      comments: [],
-      newestCommentId: null,
-    });
-    const sync = (state: ChangeRequest['state']) =>
-      dispatch({
-        type: 'hosts.sync',
-        projectId: 'tea',
-        at: now,
-        host: 'github',
-        hostName: 'github.example.invalid',
-        reads: [
-          {
-            id: 'run:run-watch',
-            scope: 'run',
-            branch: 'agent/bell',
-            result: { ok: true, changeRequestIds: ['tea:14'] },
-          },
-        ],
-        changeRequests: [request(state)],
-      });
-    sync('open');
-    dispatch({ type: 'workflow.delete', workflowId: 'mend' });
-    sync('merged');
-
-    // Event triggers are gone (orchestrator threads spec 29): the merge starts nothing to fail.
-    const { diagnosis } = await diagnose();
-    expect(ofKind(diagnosis.problems, 'trigger')).toEqual([]);
-
-    dispatch({
-      type: 'hosts.sync',
-      projectId: 'tea',
-      at: at(1),
-      host: 'github',
-      hostName: 'github.example.invalid',
-      reads: [
-        {
-          id: 'run:run-watch',
-          scope: 'run',
-          branch: 'agent/bell',
-          result: {
-            ok: false,
-            error: {
-              kind: 'refused',
-              message: 'github.example.invalid refused the GitHub token (401).',
-              setting: 'trackers.github.token',
-            },
-          },
-        },
-      ],
-      changeRequests: [],
-    });
-    expect(ofKind((await diagnose()).diagnosis.problems, 'hostRead')).toEqual([
-      {
-        kind: 'hostRead',
-        what: 'Reading github.example.invalid',
-        reason: 'github.example.invalid refused the GitHub token (401).',
-        place: { label: 'Settings → Trackers', path: '/settings/trackers' },
-      },
-    ]);
-  });
-
-  it('names a failed run with its error and its link, until a later run of it ends done', async () => {
-    set('calendar.zone', 'Europe/Stockholm');
-    dispatch({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'brew', projectId: 'tea' });
-    dispatch({
-      type: 'workflowRun.stepFailed',
-      runId: 'run-1',
-      stepId: 'pour',
-      error: 'The kettle was empty.',
-    });
-    expect(runOf('run-1')?.state).toBe('failed');
-    const { diagnosis } = await diagnose();
-    expect(ofKind(diagnosis.problems, 'run')).toEqual([
-      {
-        kind: 'run',
-        what: 'Run of Brew in Tea, started Tue, 10 Nov 2026, 09:00 (Europe/Stockholm)',
-        reason: 'Step pour failed: The kettle was empty.',
-        place: { label: 'The run of Brew', path: '/workflows/runs/run-1' },
-      },
-    ]);
-
-    clock = Date.parse(at(10));
-    dispatch({ type: 'workflowRun.start', runId: 'run-2', workflowId: 'brew', projectId: 'tea' });
-    dispatch({
-      type: 'workflowRun.stepCompleted',
-      runId: 'run-2',
-      stepId: 'pour',
-      finalMessage: 'Poured.',
-      artifactsFound: [],
-    });
-    expect(runOf('run-2')?.state).toBe('done');
-    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toEqual([]);
-  });
-
   it('names a card that did not start: missed, and failed with the reason, each with its card', async () => {
     set('calendar.zone', 'Europe/Stockholm');
     dispatch({
@@ -391,7 +243,12 @@ describe('the diagnosis (spec 19, 20)', () => {
       workflowId: 'gone',
     });
     dispatch({ type: 'workflow.delete', workflowId: 'gone' });
-    dispatch({ type: 'trigger.fire', triggerId: 'orphan:trigger', runAt: at(60), runId: 'run-x' });
+    dispatch({
+      type: 'trigger.fire',
+      triggerId: 'orphan:trigger',
+      runAt: at(60),
+      threadId: 'thread-x',
+    });
 
     const found = ofKind((await diagnose()).diagnosis.problems, 'card');
     expect(found.map(({ what, place }) => ({ what, place }))).toEqual([
@@ -404,133 +261,13 @@ describe('the diagnosis (spec 19, 20)', () => {
         place: { label: 'Calendar → Brew yesterday', path: '/calendar?item=late' },
       },
     ]);
-    expect(found[0]?.reason).toMatch(/^Its run could not start: .*gone/i);
+    expect(found[0]?.reason).toMatch(/^Its thread could not start: .*gone/i);
     expect(found[1]?.reason).toBe(
-      'Its start time passed without a run: it was put in the past, or wow was closed or the scheduler paused then. Missed triggers are set to "Mark as missed" in Settings → Scheduler. Run now on the card starts it.',
+      'Its start time passed without starting its thread: it was put in the past, or wow was closed or the scheduler paused then. Missed triggers are set to "Mark as missed" in Settings → Scheduler. Run now on the card starts it.',
     );
   });
 
-  it('lists at most assistant.diagnosisLimit failed runs, newest first', async () => {
-    set('assistant.diagnosisLimit', 2);
-    for (const id of ['a', 'b', 'c']) {
-      dispatch({ type: 'workflow.create', workflowId: id, name: `W${id}`, steps: [step('s')] });
-      dispatch({ type: 'workflowRun.start', runId: `run-${id}`, workflowId: id, projectId: 'tea' });
-      dispatch({ type: 'workflowRun.stepFailed', runId: `run-${id}`, stepId: 's', error: 'No.' });
-    }
-    const failed = ofKind((await diagnose()).diagnosis.problems, 'run');
-    expect(failed).toHaveLength(2);
-  });
-
-  it('drops failed runs of a deleted workflow or project, and counts the limit after dropping them', async () => {
-    set('assistant.diagnosisLimit', 1);
-    dispatch({
-      type: 'workflowRun.start',
-      runId: 'run-kept',
-      workflowId: 'brew',
-      projectId: 'tea',
-    });
-    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-kept', stepId: 'pour', error: 'No.' });
-    clock = Date.parse(at(5));
-    dispatch({ type: 'workflow.create', workflowId: 'gone', name: 'Gone', steps: [step('s')] });
-    dispatch({
-      type: 'workflowRun.start',
-      runId: 'run-gone',
-      workflowId: 'gone',
-      projectId: 'tea',
-    });
-    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-gone', stepId: 's', error: 'No.' });
-    dispatch({ type: 'workflow.delete', workflowId: 'gone' });
-    clock = Date.parse(at(10));
-    dispatch({ type: 'project.create', projectId: 'old', name: 'Old', cwd: root });
-    dispatch({ type: 'workflowRun.start', runId: 'run-old', workflowId: 'brew', projectId: 'old' });
-    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-old', stepId: 'pour', error: 'No.' });
-    server.database.db
-      .insert(planRuns)
-      .values({ ...planRun('plan-old', 'failed', at(10)), planId: 'old:kettle', projectId: 'old' })
-      .run();
-    dispatch({ type: 'project.delete', projectId: 'old' });
-    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toEqual([
-      expect.objectContaining({
-        place: { label: 'The run of Brew', path: '/workflows/runs/run-kept' },
-      }),
-    ]);
-  });
-  it('drops a failed read of a run once the run has ended, since it is not read again', async () => {
-    dispatch({
-      type: 'workflowRun.start',
-      runId: 'run-read',
-      workflowId: 'brew',
-      projectId: 'tea',
-    });
-    dispatch({
-      type: 'hosts.sync',
-      projectId: 'tea',
-      at: now,
-      host: 'github',
-      hostName: 'github.example.invalid',
-      reads: [
-        {
-          id: 'run:run-read',
-          scope: 'run',
-          branch: 'agent/bell',
-          result: {
-            ok: false,
-            error: {
-              kind: 'refused',
-              message: 'github.example.invalid refused the GitHub token (401).',
-              setting: 'trackers.github.token',
-            },
-          },
-        },
-      ],
-      changeRequests: [],
-    });
-    expect(ofKind((await diagnose()).diagnosis.problems, 'hostRead')).toHaveLength(1);
-    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-read', stepId: 'pour', error: 'No.' });
-    expect(ofKind((await diagnose()).diagnosis.problems, 'hostRead')).toEqual([]);
-  });
-
-  it('names a failed plan run until a later plan run of the same plan ends done', async () => {
-    server.database.db
-      .insert(planRuns)
-      .values(planRun('plan-1', 'failed', at(-10)))
-      .run();
-    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toMatchObject([
-      { what: expect.stringMatching(/^Plan run of kettle in Tea/), reason: 'Unit K-1 failed.' },
-    ]);
-    server.database.db
-      .insert(planRuns)
-      .values(planRun('plan-2', 'done', at(-5)))
-      .run();
-    expect(ofKind((await diagnose()).diagnosis.problems, 'run')).toEqual([]);
-  });
-
-  it('drops a missed card once a later run of its workflow in its project ends done', async () => {
-    dispatch({
-      type: 'card.create',
-      cardId: 'late',
-      title: 'Brew yesterday',
-      start: at(-24 * 60),
-      end: at(-23 * 60),
-      zone: 'Europe/Stockholm',
-      projectId: 'tea',
-      workflowId: 'brew',
-    });
-    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toHaveLength(1);
-    dispatch({ type: 'workflowRun.start', runId: 'run-now', workflowId: 'brew', projectId: 'tea' });
-    dispatch({
-      type: 'workflowRun.stepCompleted',
-      runId: 'run-now',
-      stepId: 'pour',
-      finalMessage: 'Poured.',
-      artifactsFound: [],
-    });
-    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toEqual([]);
-  });
-
-  it('drops a failed run and a missed card the user dismissed from the decision queue', async () => {
-    dispatch({ type: 'workflowRun.start', runId: 'run-1', workflowId: 'brew', projectId: 'tea' });
-    dispatch({ type: 'workflowRun.stepFailed', runId: 'run-1', stepId: 'pour', error: 'No.' });
+  it('drops a missed card the user dismissed from the decision queue', async () => {
     dispatch({
       type: 'card.create',
       cardId: 'late',
@@ -542,45 +279,9 @@ describe('the diagnosis (spec 19, 20)', () => {
       workflowId: 'brew',
     });
     const before = (await diagnose()).diagnosis.problems;
-    expect(ofKind(before, 'run')).toHaveLength(1);
     expect(ofKind(before, 'card')).toHaveLength(1);
-    dispatch({ type: 'decision.dismiss', decisionId: 'failedRun:run-1' });
     dispatch({ type: 'decision.dismiss', decisionId: 'missedCard:late' });
     const after = (await diagnose()).diagnosis.problems;
-    expect(ofKind(after, 'run')).toEqual([]);
     expect(ofKind(after, 'card')).toEqual([]);
-  });
-
-  it('compares a card start that carries an offset as an instant, not as text', async () => {
-    clock = Date.parse(at(60));
-    const card = (cardId: string, start: string, end: string) =>
-      dispatch({
-        type: 'card.create',
-        cardId,
-        title: cardId,
-        start,
-        end,
-        zone: 'Europe/Stockholm',
-        projectId: 'tea',
-        workflowId: 'brew',
-      });
-    // 07:30Z, before the run below; 08:30Z, after it.
-    card('Before', '2026-11-10T08:30:00+01:00', '2026-11-10T08:45:00+01:00');
-    card('After', '2026-11-10T07:30:00-01:00', '2026-11-10T07:45:00-01:00');
-    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toHaveLength(2);
-    // A run that starts at 08:00Z and ends done.
-    clock = Date.parse(now);
-    dispatch({ type: 'workflowRun.start', runId: 'run-8', workflowId: 'brew', projectId: 'tea' });
-    expect(runOf('run-8')?.startedAt).toBe(now);
-    dispatch({
-      type: 'workflowRun.stepCompleted',
-      runId: 'run-8',
-      stepId: 'pour',
-      finalMessage: 'Poured.',
-      artifactsFound: [],
-    });
-    expect(ofKind((await diagnose()).diagnosis.problems, 'card')).toEqual([
-      expect.objectContaining({ what: expect.stringMatching(/^Card "After"/) }),
-    ]);
   });
 });

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MockProviderAdapter } from '../hooks/index.js';
 import { databaseFileName, startServer, type RunningServer } from '../server.js';
 import { migrationsFolder } from './database.js';
-import { calendarItems, settings, triggerEvents, triggers } from './schema.js';
+import { calendarItems, settings, triggers } from './schema.js';
 
 // Scheduled jobs as main threads (orchestrator threads spec 27, 29): the migration gives every
 // card a thread mode and removes event triggers, what they saw and their settings. The store is
@@ -94,7 +94,6 @@ describe('migration 0048_cards_start_threads', () => {
       userHome: path.join(root, 'user'),
       watchSkills: () => ({ close: () => Promise.resolve() }),
       schedulerTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
-      hostTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
       hooks: { providers: { claude: (row) => new MockProviderAdapter(row.kind) } },
     });
     const { db } = server.database;
@@ -102,14 +101,14 @@ describe('migration 0048_cards_start_threads', () => {
       { id: 'c1', threadMode: 'new', threadId: null, workflowName: null },
     ]);
     expect(db.select().from(triggers).all()).toEqual([]);
-    expect(db.select().from(triggerEvents).all()).toEqual([]);
     expect(
       db
         .select()
         .from(settings)
         .all()
         .map((row) => row.key),
-    ).toEqual(['hosts.polling']);
+      // `hosts.polling` went later, with the host poller (migration 0051).
+    ).toEqual([]);
     expect(Object.keys(settingsRegistry).filter((key) => key.startsWith('triggers.'))).toEqual([]);
   });
 });

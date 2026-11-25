@@ -65,8 +65,6 @@ const assistant: Thread = {
   permissionMode: 'dontAsk',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: at,
   updatedAt: at,
 };
@@ -113,7 +111,6 @@ describe('migration 0050_assistant_is_a_main_thread', () => {
       userHome: path.join(root, 'user'),
       watchSkills: () => ({ close: () => Promise.resolve() }),
       schedulerTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
-      hostTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
       hooks: { providers: { claude: (row) => new MockProviderAdapter(row.kind) } },
     });
     const { db } = server.database;

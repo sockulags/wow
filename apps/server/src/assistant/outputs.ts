@@ -4,7 +4,6 @@ import {
   assistantThreadId,
   freeSlots,
   resolveCalendarPrefs,
-  runFolder,
   type WorkHours,
 } from '@wow/contracts';
 import { and, asc, desc, eq, gt, isNull, lt, ne } from 'drizzle-orm';
@@ -12,14 +11,11 @@ import { z } from 'zod';
 import { CommandRejected } from '../core/orchestrator.js';
 import { readCalendarRange } from '../core/series.js';
 import * as t from '../db/schema.js';
-import { readViewerFile } from '../files/read.js';
-import { changesOptions, readRunDiff } from '../workflows/changes.js';
 import type { Reader, ReaderDeps } from './readers.js';
 
-// What agents produced (chief of staff spec 1 to 3): a run's steps with their final messages,
-// artifacts and changes, and a chat thread's latest messages and what it waits for. These are
-// the only readers that return what an agent wrote. Each still builds its answer field by
-// field, cuts long text at `assistant.readMaxBytes`, and reads no file but a step's artifacts.
+// What agents produced (chief of staff spec 1 to 3): a chat thread's latest messages and what
+// it waits for. These are the only readers that return what an agent wrote. Each still builds
+// its answer field by field, cuts long text at `assistant.readMaxBytes`, and reads no file.
 // The tool layer passes every answer through `assistant.secretPatterns`.
 
 const reader = <S extends z.ZodType>(definition: Reader<S>) => definition;
@@ -37,58 +33,6 @@ const excluded = (deps: ReaderDeps, projectId: string | null): boolean =>
 
 const excludedReason = (name: string) =>
   `${name} is in a project the assistant may not read (Settings → Assistant, "Projects the assistant does not read").`;
-
-// The diff of a run, file by file, until the line budget is spent.
-async function runChanges(
-  deps: ReaderDeps,
-  folder: string,
-  run: typeof t.workflowRuns.$inferSelect,
-) {
-  const options = changesOptions(deps.settings);
-  const listed = await readRunDiff({ folder, run, options });
-  if (listed.status !== 'ok') {
-    return { status: listed.status, message: listed.message, files: [], omitted: 0 };
-  }
-  let budget = deps.settings.get('assistant.readMaxDiffLines');
-  const files = [];
-  for (const file of listed.files) {
-    let patch: Cut | null = null;
-    if (budget > 0 && file.content === 'text') {
-      const one = await readRunDiff({ folder, run, path: file.path, options });
-      if (one.patch !== null) {
-        const lines = one.patch.split('\n');
-        patch = {
-          text: lines.slice(0, budget).join('\n'),
-          cut: lines.length > budget,
-        };
-        budget -= Math.min(budget, lines.length);
-      }
-    }
-    files.push({
-      path: file.path,
-      oldPath: file.oldPath,
-      status: file.status,
-      added: file.added,
-      removed: file.removed,
-      changedBy: file.changedBy,
-      patch,
-    });
-  }
-  return { status: listed.status, message: null, files, omitted: listed.omitted };
-}
-
-async function artifactText(deps: ReaderDeps, roots: string[], path: string) {
-  const max = deps.settings.get('assistant.readMaxBytes');
-  const read = await readViewerFile({
-    roots,
-    path,
-    maxBytes: max,
-    place: "the run's working folder",
-  });
-  if (read.kind === 'refused') return { path, read: false, reason: read.message };
-  if (read.kind === 'image') return { path, read: false, reason: 'It is a picture.' };
-  return { path, read: true, ...cutText(read.text, max) };
-}
 
 const busyOf = (deps: ReaderDeps, from: Date, to: Date) => {
   const range = { from: from.toISOString(), to: to.toISOString() };
@@ -140,70 +84,6 @@ export function calendarPrefs(deps: Pick<ReaderDeps, 'db' | 'settings'>): {
 }
 
 export const outputReaders = {
-  read_run: reader({
-    description:
-      "One workflow run in full: each step with its state, its final message (what the agent wrote last), its verdict and checks, the artifacts it found with their text, and the run's changes since its base, file by file with the diff up to a limit. Long text is cut and says so. Runs in a project the person excluded are refused.",
-    input: z.object({ runId: z.string().min(1) }).strict(),
-    read: async ({ runId }, deps) => {
-      const run = deps.db.select().from(t.workflowRuns).where(eq(t.workflowRuns.id, runId)).get();
-      if (!run) throw new CommandRejected('not_found', `There is no run ${runId}.`);
-      if (excluded(deps, run.projectId)) {
-        throw new CommandRejected('rejected', excludedReason('This run'));
-      }
-      const project = deps.db
-        .select()
-        .from(t.projects)
-        .where(eq(t.projects.id, run.projectId))
-        .get();
-      const workflow = deps.db
-        .select()
-        .from(t.workflows)
-        .where(eq(t.workflows.id, run.workflowId))
-        .get();
-      const max = deps.settings.get('assistant.readMaxBytes');
-      const folder = project ? runFolder(run, project.cwd) : null;
-      const steps = [];
-      for (const step of run.steps) {
-        const definition = workflow?.steps.find((candidate) => candidate.id === step.stepId);
-        steps.push({
-          stepId: step.stepId,
-          skill: definition?.skillName ?? null,
-          state: step.state,
-          attempt: step.attempt ?? 1,
-          threadId: step.threadId ?? null,
-          startedAt: step.startedAt ?? null,
-          endedAt: step.endedAt ?? null,
-          error: step.error ?? null,
-          finalMessage: step.finalMessage === undefined ? null : cutText(step.finalMessage, max),
-          verdict: step.facts?.verdict ?? null,
-          checks: step.facts?.checks ?? null,
-          gate: step.gate ? { state: step.gate.state, detail: step.gate.detail ?? null } : null,
-          artifacts: folder
-            ? await Promise.all(
-                step.artifactsFound.map((path) => artifactText(deps, [folder], path)),
-              )
-            : step.artifactsFound.map((path) => ({
-                path,
-                read: false,
-                reason: 'The project is gone.',
-              })),
-        });
-      }
-      return {
-        id: run.id,
-        workflow: workflow?.name ?? null,
-        projectId: run.projectId,
-        project: project?.name ?? null,
-        state: run.state,
-        startedAt: run.startedAt,
-        endedAt: run.endedAt,
-        steps,
-        changes: folder
-          ? await runChanges(deps, folder, run)
-          : { status: 'folderMissing', message: null, files: [], omitted: 0 },
-      };
-    },
-  }),
   read_thread: reader({
     description:
       "One chat or step thread: its title, state, provider, model and project, its latest agent messages (newest last), the approval or question it waits for with what was asked, and the tokens and cost of its turns. Not the assistant's own conversation. Threads in a project the person excluded are refused.",
@@ -267,8 +147,6 @@ export const outputReaders = {
         title: thread.title,
         state: thread.state,
         projectId: thread.projectId,
-        runId: thread.runId,
-        stepId: thread.stepId,
         providerInstanceId: thread.providerInstanceId,
         model: thread.model,
         effort: thread.effort,

@@ -1,11 +1,4 @@
-import type {
-  CalendarItem,
-  Project,
-  ServerCommand,
-  Thread,
-  Trigger,
-  WorkflowRun,
-} from '@wow/contracts';
+import type { CalendarItem, Project, ServerCommand, Thread, Trigger } from '@wow/contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Database } from '../db/database.js';
 import { providerInstances } from '../db/schema.js';
@@ -34,7 +27,6 @@ const projects = () => snapshot(database.db, { topic: 'projects' }) as Project[]
 const cards = () => snapshot(database.db, { topic: 'calendarItems' }) as CalendarItem[];
 const triggers = () => snapshot(database.db, { topic: 'triggers' }) as Trigger[];
 const threads = () => snapshot(database.db, { topic: 'threads' }) as Thread[];
-const runs = () => snapshot(database.db, { topic: 'workflowRuns' }) as WorkflowRun[];
 
 beforeEach(() => {
   database = openDatabase(':memory:');
@@ -165,7 +157,7 @@ describe('projects', () => {
     expect(triggers()).toEqual([expect.objectContaining({ state: 'scheduled' })]);
     run({
       type: 'setting.set',
-      key: 'workflows.handoverTemplate',
+      key: 'workflows.verdictApprovedLine',
       scope: 'project:p1',
       value: 'Go on',
     });
@@ -182,20 +174,6 @@ describe('projects', () => {
     // A card starts its thread without a project too (orchestrator threads spec 27).
     expect(triggers()).toEqual([expect.objectContaining({ state: 'scheduled' })]);
     expect(snapshot(database.db, { topic: 'settings' })).toEqual([]);
-  });
-
-  it('waits for a live run in the project, then keeps the finished run as history', () => {
-    run({ type: 'workflowRun.start', runId: 'r1', workflowId: 'w1', projectId: 'p1' });
-    expect(rejection({ type: 'project.delete', projectId: 'p1' })).toEqual({
-      code: 'conflict',
-      message: 'wow has a workflow run in progress; stop it or let it finish first',
-    });
-    expect(projects()).toHaveLength(1);
-
-    run({ type: 'workflowRun.stop', runId: 'r1' });
-    run({ type: 'project.delete', projectId: 'p1' });
-    expect(projects()).toEqual([]);
-    expect(runs()).toEqual([expect.objectContaining({ id: 'r1', projectId: 'p1' })]);
   });
 
   it('reports a missing project', () => {

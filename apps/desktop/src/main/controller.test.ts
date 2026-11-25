@@ -1,4 +1,4 @@
-import type { AppNotification, WorkflowRun } from '@wow/contracts';
+import type { AppNotification } from '@wow/contracts';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,19 +19,6 @@ const setRows = (client: RpcClient, topic: string, rows: unknown[]) =>
     topic,
     rows,
   }).catch(() => undefined);
-
-const waitingRun: WorkflowRun = {
-  id: 'run-1',
-  workflowId: 'wf-1',
-  projectId: 'p1',
-  calendarItemId: 'card-1',
-  backlogItemId: null,
-  state: 'waiting',
-  currentStep: 0,
-  steps: [{ stepId: 's1', state: 'waiting', artifactsFound: [] }],
-  startedAt: '2026-11-02T08:00:00.000Z',
-  endedAt: null,
-};
 
 describe('DesktopController', () => {
   let home: string;
@@ -102,20 +89,28 @@ describe('DesktopController', () => {
     const opens = shell.calls.filter((call) => call.kind === 'openWindow').length;
     expect(controller.windowClosing()).toBe('hide');
     expect(controller.server?.running).toBe(true);
-    // A trigger firing while the window is hidden still reaches the main process.
+    // A thread that finishes while the window is hidden still reaches the main process.
     const client = await connectOther();
-    let marker = shell.calls.length;
-    await setRows(client, 'workflowRuns', [{ ...waitingRun, state: 'running' }]);
-    const started = await shell.waitFor('notify', () => true, marker);
-    expect(started.notice.title).toBe('Workflow run started');
-    marker = shell.calls.length;
-    await setRows(client, 'workflowRuns', [waitingRun]);
+    const marker = shell.calls.length;
+    await setRows(client, 'notifications', [
+      {
+        id: 't1:finished:turn-1',
+        at: '2026-11-02T08:00:00.000Z',
+        kind: 'finished',
+        title: 'Finished: Kettle timer',
+        body: 'The timer rings twice.',
+        path: '/chat/t1',
+        calendarItemId: null,
+        threadId: 't1',
+        approvalId: null,
+      } satisfies AppNotification,
+    ]);
     const notified = await shell.waitFor('notify', () => true, marker);
-    expect(notified.notice.title).toBe('Waiting for you');
+    expect(notified.notice.title).toBe('Finished: Kettle timer');
     controller.trayAction('open');
     expect(shell.calls.filter((call) => call.kind === 'openWindow')).toHaveLength(opens + 1);
     notified.click();
-    expect(shell.last('openWindow')?.path).toBe('/workflows');
+    expect(shell.last('openWindow')?.path).toBe('/chat/t1');
   });
 
   it('quits on close when close-to-tray is off, and stops the server cleanly', async () => {
@@ -170,20 +165,6 @@ describe('DesktopController', () => {
     expect(shell.last('openWindow')).toBeDefined();
   });
 
-  it('sends no notification when notifications are off', async () => {
-    await controller.start();
-    const client = await connectOther();
-    let marker = shell.calls.length;
-    await setRows(client, 'settings', [{ key: 'scheduler.notifications', value: false }]);
-    await shell.waitFor('setTray', () => controller.settings?.notifications === false, marker);
-    marker = shell.calls.length;
-    await setRows(client, 'workflowRuns', [waitingRun]);
-    // The fake server answers test.setRows after pushing, and pushes arrive in order on the
-    // controller's socket, so a request round trip on that socket is enough to have seen it.
-    await controller.toggleScheduler();
-    expect(shell.calls.slice(marker).some((call) => call.kind === 'notify')).toBe(false);
-  });
-
   const needsYou: AppNotification = {
     id: 't1:needs-you:tool-1',
     at: '2026-11-02T08:00:00.000Z',
@@ -191,7 +172,6 @@ describe('DesktopController', () => {
     title: 'Needs you: Kettle timer',
     body: 'Allow pnpm test?',
     path: '/chat/t1',
-    runId: null,
     calendarItemId: null,
     threadId: 't1',
     approvalId: 't1:tool-1',

@@ -65,8 +65,6 @@ describe('migration 0026_background_tasks', () => {
       permissionMode: 'default',
       state: 'idle',
       pinned: false,
-      runId: null,
-      stepId: null,
       createdAt: '2026-11-01T08:00:00.000Z',
       updatedAt: '2026-11-01T08:00:00.000Z',
     };

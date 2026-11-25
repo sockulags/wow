@@ -3,7 +3,7 @@ import {
   settingsRegistry,
   type ChangeRequest,
   type HostCheck,
-  type HostRead,
+  type HostItemRead,
 } from '@wow/contracts';
 
 // The words for what a host read returned: a pull request's state and checks, when it was
@@ -40,9 +40,14 @@ export function checksLabel(request: Pick<ChangeRequest, 'checkState' | 'checks'
   }
 }
 
+// What a read of a linked item says about itself: when and from where, and what went wrong.
+export type HostReadFacts = Pick<HostItemRead, 'fetchedAt' | 'hostName' | 'error'> & {
+  readonly host: HostItemRead['item']['host'];
+};
+
 // "Last fetched 09:02 from github.com", or that nothing was fetched yet.
 export function lastFetchedLabel(
-  read: Pick<HostRead, 'fetchedAt' | 'host' | 'hostName'> | undefined,
+  read: Pick<HostReadFacts, 'fetchedAt' | 'host' | 'hostName'> | undefined,
   when: (iso: string) => string,
 ): string {
   if (!read?.fetchedAt) return 'Not fetched yet';
@@ -54,10 +59,3 @@ export const settingLabel = (key: string): string =>
   Object.hasOwn(settingsRegistry, key)
     ? settingsRegistry[key as keyof typeof settingsRegistry].label
     : key;
-
-// The Settings page a setting is on; Trackers for one the registry does not know.
-// The Settings page a setting is on; Trackers for one the registry does not know.
-export const settingGroup = (key: string): string =>
-  Object.hasOwn(settingsRegistry, key)
-    ? settingsRegistry[key as keyof typeof settingsRegistry].group
-    : 'trackers';

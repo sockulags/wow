@@ -28,8 +28,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { HostLink, HostReadLine } from '@/hosts/host-read';
 import { ChangeRequestBody } from '@/workflows/pull-request-tab';
-import { PageBody } from '@/workflows/pages-tab';
-import { TicketBody } from '@/workflows/ticket-tab';
+import { PageBody } from '@/workflows/page-body';
+import { TicketBody } from '@/workflows/ticket-body';
 import { closeViewer, openHostItem } from './viewer';
 
 // An item a chat links to, in a panel tab (agent workbench spec 21 to 23): the body the run's
@@ -236,7 +236,7 @@ export function HostTab({ host }: { readonly host: ViewerHostItem }) {
           ) : data.kind === 'issue' ? (
             <IssueBody issue={data.issue} />
           ) : (
-            <TicketBody ticket={data.ticket} source={null} />
+            <TicketBody ticket={data.ticket} />
           )}
         </div>
       )}

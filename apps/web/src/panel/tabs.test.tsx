@@ -1,13 +1,11 @@
 import { recogniseHostRef } from '@wow/contracts';
 import type {
-  CalendarItem,
   FileReadResult,
   HostLinkRules,
   ProviderInstance,
   Thread,
   ThreadDiff,
   ThreadItem,
-  WorkflowRun,
 } from '@wow/contracts';
 import {
   createMemorySettingsSource,
@@ -44,8 +42,6 @@ const thread = (id: string, title: string): Thread => ({
   permissionMode: 'default',
   state: 'idle',
   pinned: false,
-  runId: null,
-  stepId: null,
   createdAt: '2026-11-02T08:00:00.000Z',
   updatedAt: '2026-11-02T08:00:00.000Z',
 });
@@ -121,57 +117,6 @@ const files: Readonly<Record<string, FileReadResult>> = {
   },
 };
 
-// Two cards, each with a run whose step thread the calendar's panel shows.
-const card = (id: string, runId: string): CalendarItem => ({
-  id,
-  source: 'local',
-  externalId: null,
-  title: `Card ${id}`,
-  start: '2026-11-02T09:00:00.000Z',
-  end: '2026-11-02T09:30:00.000Z',
-  zone: 'UTC',
-  allDay: false,
-  location: null,
-  joinUrl: null,
-  body: null,
-  organizer: null,
-  projectId: null,
-  backlogItemId: null,
-  workflowId: 'w',
-  runId,
-  state: 'running',
-  updatedAt: '2026-11-02T08:00:00.000Z',
-});
-
-const run = (id: string, threadId: string): WorkflowRun => ({
-  id,
-  workflowId: 'w',
-  projectId: 'demo',
-  calendarItemId: null,
-  backlogItemId: null,
-  state: 'running',
-  currentStep: 0,
-  baseSha: null,
-  baseFiles: null,
-  steps: [
-    {
-      stepId: 'build',
-      state: 'running',
-      threadId,
-      startedAt: '2026-11-02T09:00:00.000Z',
-      artifactsFound: [],
-    },
-  ],
-  startedAt: '2026-11-02T09:00:00.000Z',
-  endedAt: null,
-});
-
-const stepThread = (id: string, runId: string): Thread => ({
-  ...thread(id, `Step of ${runId}`),
-  runId,
-  stepId: 'build',
-});
-
 // A thread with one edit, made after its first turn began, for its Changes (spec 33, 34).
 const editItems: ThreadItem[] = [
   item('item-1', 'user', { text: 'ring twice' }),
@@ -199,7 +144,6 @@ const threadDiff: ThreadDiff = {
       added: 1,
       removed: 0,
       size: 10,
-      changedBy: [],
     },
   ],
   omitted: 0,
@@ -211,16 +155,9 @@ function fake(shownItems: readonly ThreadItem[] = items) {
   const read: unknown[] = [];
   const sent: unknown[] = [];
   const topics: Readonly<Record<string, unknown[]>> = {
-    threads: [
-      thread('tea', 'Tea timer'),
-      thread('kettle', 'Kettle'),
-      stepThread('step-1', 'run-1'),
-      stepThread('step-2', 'run-2'),
-    ],
+    threads: [thread('tea', 'Tea timer'), thread('kettle', 'Kettle')],
     providerInstances: [instance],
     projects: [],
-    calendarItems: [card('card-1', 'run-1'), card('card-2', 'run-2')],
-    workflowRuns: [run('run-1', 'step-1'), run('run-2', 'step-2')],
   };
   const connection: Connection = {
     state: createStore<ConnectionState>(() => ({ status: 'open', attempts: 0 })),
@@ -252,7 +189,7 @@ function fake(shownItems: readonly ThreadItem[] = items) {
     subscribe(topic, params, onData) {
       if (topic === 'threadItems') {
         const shown = (params as { threadId?: string }).threadId;
-        onData(shown === 'tea' || shown?.startsWith('step-') ? [...shownItems] : []);
+        onData(shown === 'tea' ? [...shownItems] : []);
       } else onData(topics[topic] ?? []);
       return () => undefined;
     },

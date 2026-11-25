@@ -1,4 +1,4 @@
-import type { BacklogItem, CalendarItem, ServerCommand, WorkflowRun } from '@wow/contracts';
+import type { BacklogItem, CalendarItem, ServerCommand } from '@wow/contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase, type Database } from '../db/database.js';
 import { providerInstances } from '../db/schema.js';
@@ -25,7 +25,6 @@ const rejection = (command: ServerCommand) => {
 };
 const items = () => snapshot(database.db, { topic: 'backlogItems' }) as BacklogItem[];
 const cards = () => snapshot(database.db, { topic: 'calendarItems' }) as CalendarItem[];
-const runs = () => snapshot(database.db, { topic: 'workflowRuns' }) as WorkflowRun[];
 const item = () => items()[0];
 
 const plan: ServerCommand = {
@@ -97,7 +96,6 @@ describe('backlog items', () => {
         body: 'The **login** fails on Mondays.',
         tags: ['auth', 'bug'],
         state: 'idea',
-        runId: null,
         remote: null,
         createdAt: '2026-11-02T08:00:00.000Z',
       },
@@ -171,48 +169,5 @@ describe('backlog items', () => {
       } as ServerCommand),
     ).toBe('conflict');
     expect(item()?.remote?.key).toBe('WOW-7');
-  });
-});
-
-describe('an item follows its run', () => {
-  const start: ServerCommand = {
-    type: 'workflowRun.start',
-    runId: 'r1',
-    workflowId: 'w1',
-    projectId: 'p1',
-    calendarItemId: 'card-1',
-    backlogItemId: 'b1',
-  };
-
-  it('is running while the run is live and done when it finished', () => {
-    run(plan);
-    run(start);
-    expect(item()).toMatchObject({ state: 'running', runId: 'r1' });
-    expect(rejection({ type: 'backlog.delete', backlogItemId: 'b1' })).toBe('conflict');
-    expect(rejection({ ...plan, cardId: 'card-2' })).toBe('conflict');
-    run({
-      type: 'workflowRun.stepCompleted',
-      runId: 'r1',
-      stepId: 's1',
-      finalMessage: 'Fixed.',
-      artifactsFound: [],
-    });
-    expect(runs()[0]?.state).toBe('done');
-    expect(item()).toMatchObject({ state: 'done', runId: 'r1' });
-  });
-
-  it('goes back to planned with the failed run kept when the run fails', () => {
-    run(plan);
-    run(start);
-    run({ type: 'workflowRun.stepFailed', runId: 'r1', stepId: 's1', error: 'Tests failed' });
-    expect(runs()[0]).toMatchObject({ state: 'failed' });
-    expect(item()).toMatchObject({ state: 'planned', runId: 'r1' });
-  });
-
-  it('goes back to planned when the run is stopped', () => {
-    run(plan);
-    run(start);
-    run({ type: 'workflowRun.stop', runId: 'r1' });
-    expect(item()).toMatchObject({ state: 'planned', runId: 'r1' });
   });
 });

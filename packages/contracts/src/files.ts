@@ -5,20 +5,18 @@ const FilePath = z
   .min(1)
   .refine((value) => !value.includes('\0'), 'A path cannot hold a NUL character');
 
-// Whose folders a file is read from or listed in (agent workbench Interface): a run (its working
-// folder, then the project folder), a chat or step thread (its folder, then its project's
-// folder) or a project (its folder). Files outside those folders are never read.
-const RunScope = z.object({ runId: z.string().min(1) });
+// Whose folders a file is read from or listed in (agent workbench Interface): a thread (its
+// folder, then its project's folder) or a project (its folder). Files outside those folders are
+// never read.
 const ThreadScope = z.object({ threadId: z.string().min(1) });
 const ProjectScope = z.object({ projectId: z.string().min(1) });
-export const FileScope = z.union([RunScope, ThreadScope, ProjectScope]);
+export const FileScope = z.union([ThreadScope, ProjectScope]);
 export type FileScope = z.infer<typeof FileScope>;
 
 // One file for the viewer in the side panel (review loop spec 6 to 8, agent workbench spec 15,
 // 16). The path is relative to the scope's first folder, or to a later one, or absolute inside
 // one of them.
 export const FileReadParams = z.union([
-  RunScope.extend({ path: FilePath }),
   ThreadScope.extend({ path: FilePath }),
   ProjectScope.extend({ path: FilePath }),
 ]);
@@ -32,7 +30,6 @@ const EditorPlace = {
   line: z.number().int().min(1).optional(),
 };
 export const FileOpenInEditorParams = z.union([
-  RunScope.extend(EditorPlace),
   ThreadScope.extend(EditorPlace),
   ProjectScope.extend(EditorPlace),
 ]);

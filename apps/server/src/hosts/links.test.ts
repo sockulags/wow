@@ -193,10 +193,8 @@ beforeEach(async () => {
     logSink: () => undefined,
     userHome: root,
     watchSkills: () => ({ close: () => Promise.resolve() }),
-    watchPlans: () => ({ close: () => Promise.resolve() }),
     clock: () => now,
     schedulerTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
-    hostTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
     fetch: (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const route = routes.find(([base]) => url.startsWith(`${base}/`));
@@ -322,7 +320,7 @@ describe('host links in chat (agent workbench spec 20 to 26)', () => {
     expect(linkHosts).toHaveBeenCalledTimes(3);
   });
 
-  it('reads a pull request when its tab opens, once, and again only on Refresh now; nothing polls it (spec 21, 22)', async () => {
+  it('reads a pull request when its tab opens, once, and again only on Refresh now (spec 21, 22)', async () => {
     const ref = `${web}/acme/tea/pull/14`;
     const first = await lookup({ threadId: 't-tea', ref, read: 'open' });
     expect(first.read).toMatchObject({
@@ -353,10 +351,6 @@ describe('host links in chat (agent workbench spec 20 to 26)', () => {
     expect(again.read?.fetchedAt).toBe('2026-11-12T09:00:00.000Z');
     expect(github.requests.length).toBe(once);
     expect(stored('t-tea')).toEqual([again.read]);
-
-    // The poller has nothing of the thread's to read.
-    await server.hosts.poll();
-    expect(github.requests.length).toBe(once);
 
     const refreshed = await lookup({ threadId: 't-tea', ref, read: 'refresh' });
     expect(github.requests.length).toBe(once * 2);

@@ -32,8 +32,6 @@ export const AssistantTargetKind = z.enum([
   'card',
   'backlogItem',
   'workflow',
-  'plan',
-  'trigger',
   // An own skill, by its name (wow skills spec 8, 22).
   'skill',
 ]);
@@ -461,10 +459,7 @@ export const assistantDiagnosisTool = 'diagnose_setup';
 export const DiagnosisKind = z.enum([
   'provider',
   'connection',
-  'hostRead',
   'skill',
-  'trigger',
-  'run',
   'card',
   // A workflow step without a model its provider needs (questions and models spec 19).
   'model',
@@ -591,15 +586,7 @@ export type AssistantPermissionUse = z.infer<typeof AssistantPermissionUse>;
 // The decision queue (chief of staff spec 16 to 19): everything that waits for the user, in the
 // server's order, each with a brief. `fixed` is what wow says itself; `brief` is what the
 // assistant wrote once when the row appeared, within `assistant.briefsPerDay`.
-export const DecisionKind = z.enum([
-  'approval',
-  'question',
-  'gate',
-  'limit',
-  'proposal',
-  'failedRun',
-  'missedCard',
-]);
+export const DecisionKind = z.enum(['approval', 'question', 'limit', 'proposal', 'missedCard']);
 export type DecisionKind = z.infer<typeof DecisionKind>;
 
 export const DecisionBrief = z.object({
@@ -621,7 +608,6 @@ export const Decision = z.object({
   // Where the app shows it.
   path: z.string().min(1),
   threadId: Id.nullable(),
-  runId: Id.nullable(),
   proposalId: Id.nullable(),
   approvalId: Id.nullable(),
   questionId: Id.nullable(),

@@ -29,7 +29,7 @@ import {
   toggleFullSize,
 } from './viewer';
 
-// One file of a run in the context panel (review loop spec 6 to 8): markdown rendered, a picture
+// One file of a thread or project in the context panel (review loop spec 6 to 8): markdown rendered, a picture
 // fitted, HTML as a page in a frame that reaches nothing, any other text as code. The server
 // reads the file; when it refuses, the panel says why.
 
@@ -123,11 +123,7 @@ const typingIn = (target: EventTarget): boolean =>
   (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 
 const outsideTitle = (scope: FileScope): string =>
-  'runId' in scope
-    ? 'Outside the run’s folders'
-    : 'threadId' in scope
-      ? 'Outside the thread’s folders'
-      : 'Outside the project folder';
+  'threadId' in scope ? 'Outside the thread’s folders' : 'Outside the project folder';
 
 const refusalTitles: Readonly<Record<Exclude<FileRefusal, 'outside'>, string>> = {
   missing: 'File not found',

@@ -26,11 +26,11 @@ import type { SettingsStore } from '@wow/client-runtime';
 import { notify } from '@/lib/feedback';
 import { useOpenInEditor } from '@/panel/editor';
 import { DiffLines } from '@/workflows/changes-tab';
-import { lineComment } from '@/workflows/gate';
 import {
   fileStatusLabels,
   fileStatusLetters,
   lineChanges,
+  lineComment,
   unshownReason,
 } from '@/workflows/changes';
 import { ApplyDialog, askApply } from './apply';

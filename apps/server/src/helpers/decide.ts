@@ -46,17 +46,11 @@ function mainOf(thread: Thread, read: ReadModel): Thread {
 }
 
 // The thread whose agent called the helper tools: a chat thread of the user's or a helper (spec
-// 4). A step's thread has none.
+// 4).
 function startingThread(parentThreadId: string, read: ReadModel): Thread {
   const parent = read.thread(parentThreadId);
   if (!parent || parent.kind === 'assistant') {
     throw new CommandRejected('not_found', `There is no thread ${parentThreadId}.`);
-  }
-  if (parent.runId !== null) {
-    throw new CommandRejected(
-      'rejected',
-      "A workflow step's thread cannot start helpers of its own.",
-    );
   }
   return parent;
 }

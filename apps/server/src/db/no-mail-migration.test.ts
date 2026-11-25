@@ -147,7 +147,6 @@ describe('migration 0015_no_mail', () => {
       watchSkills: () => ({ close: () => Promise.resolve() }),
       clock: () => now,
       schedulerTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
-      hostTimers: { setTimeout: () => undefined, clearTimeout: () => undefined },
       hooks: {
         outlook: async (_mode, context) => {
           const source = new MockOutlookSource({

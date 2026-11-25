@@ -327,7 +327,7 @@ describe('a card without a rule (spec 4)', () => {
     tickAt(at('2026-11-04'));
     const run = await runBecomes((current) => current.state === 'done');
     expect(run.occurrence ?? null).toBeNull();
-    expect(trigger()).toMatchObject({ state: 'fired', runId: run.id });
+    expect(trigger()).toMatchObject({ state: 'fired' });
     expect(card()?.nextAt).toBeNull();
     tickAt(at('2026-11-05'));
     expect(runs()).toHaveLength(1);
@@ -351,15 +351,15 @@ describe('firing (spec 5, 6, 9)', () => {
         (current) => current.occurrence?.date === date && current.state === 'done',
       );
       expect(run.occurrence).toEqual({ date });
-      expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at(next), runId: run.id });
+      expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at(next) });
       expect(card()?.nextAt).toBe(at(next));
     }
 
     tickAt(at('2026-11-06'));
-    const last = await runBecomes(
+    await runBecomes(
       (current) => current.occurrence?.date === '2026-11-06' && current.state === 'done',
     );
-    expect(trigger()).toMatchObject({ state: 'fired', runId: last.id });
+    expect(trigger()).toMatchObject({ state: 'fired' });
     expect(card()?.nextAt).toBeNull();
     expect(records().map((record) => [record.date, record.outcome])).toEqual([
       ['2026-11-04', 'fired'],
@@ -459,7 +459,7 @@ describe('three missed occurrences (spec 8)', () => {
     expect(card()?.state).toBe('missed');
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-09') });
 
-    dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'now' });
+    dispatch({ type: 'card.runNow', cardId: 'c1', threadId: 'now' });
     const run = await runBecomes((current) => current.id === 'now');
     expect(run.occurrence?.date).toBe('2026-11-06');
     expect(records().at(-1)).toMatchObject({
@@ -480,7 +480,7 @@ describe('three missed occurrences (spec 8)', () => {
       ['2026-11-05', 'missed', false],
       ['2026-11-06', 'missed', true],
     ]);
-    dispatch({ type: 'card.runNow', cardId: 'c1', runId: 'now' });
+    dispatch({ type: 'card.runNow', cardId: 'c1', threadId: 'now' });
     await runBecomes((current) => current.id === 'now' && current.state === 'done');
     expect(records().some((record) => record.offerRunNow)).toBe(false);
   });
@@ -593,7 +593,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(card()?.state).toBe('scheduled');
     dispatch({ type: 'card.skipOccurrence', cardId: 'c1', date: '2026-11-05' });
     expect(trigger()?.state).toBe('cancelled');
-    expect(card()).toMatchObject({ state: 'done', nextAt: null, runId: null });
+    expect(card()).toMatchObject({ state: 'done', nextAt: null });
     dispatch({ type: 'card.update', cardId: 'c1', skippedDates: ['2026-11-04'] });
     expect(card()).toMatchObject({ state: 'scheduled', nextAt: at('2026-11-05') });
   });
@@ -610,7 +610,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
         ['missed', value === 'mark'],
       ]);
       expect(trigger()?.state).toBe('cancelled');
-      expect(card()).toMatchObject({ state: 'missed', nextAt: null, runId: null });
+      expect(card()).toMatchObject({ state: 'missed', nextAt: null });
     },
   );
 
@@ -620,7 +620,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     tickAt(at('2026-11-04', 5));
     expect(runs()).toEqual([]);
     expect(records().map((record) => record.outcome)).toEqual(['failed']);
-    expect(card()).toMatchObject({ state: 'failed', nextAt: null, runId: null });
+    expect(card()).toMatchObject({ state: 'failed', nextAt: null });
   });
 
   it('moves the series from the moved occurrence on, and keeps the days before it', () => {
@@ -786,7 +786,7 @@ describe('changing a series (spec 10, 11, 12, 14)', () => {
     expect(trigger()).toMatchObject({ state: 'scheduled', runAt: at('2026-11-05') });
 
     dispatch({ type: 'card.update', cardId: 'c1', repeat: null });
-    expect(trigger()).toMatchObject({ state: 'fired', runId: run.id, runAt: at('2026-11-04') });
+    expect(trigger()).toMatchObject({ state: 'fired', runAt: at('2026-11-04') });
     expect(card()?.nextAt).toBeNull();
     tickAt(at('2026-11-05'));
     expect(runs()).toHaveLength(1);

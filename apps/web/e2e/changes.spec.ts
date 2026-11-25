@@ -3,20 +3,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  e2eChangesHome,
-  e2eChangesProjectId,
-  e2eChangesTrackerPort,
-  e2eChangesWorkflowId,
-  e2eMugProjectId,
-} from './env';
+import { e2eChangesHome, e2eChangesTrackerPort, e2eMugProjectId } from './env';
 import { choose } from './controls';
 import { sketchPath, sketching, sketchUse } from './sketch';
 
-// U3 ground truth (review loop spec 11, 12) against its own copy of the e2e server, whose home
-// holds an invented tea timer repository. The mock agent's build step commits one change and
-// leaves others uncommitted; its review step adds notes and renames a new file. Each run adds to
-// the same folder, so these tests run in order.
+// A chat thread's Changes, restore, commit and pull request (agent workbench spec 34, thread work
+// spec 20 to 32) against its own copy of the e2e server, whose home holds invented repositories.
+// Each test adds to the same folders, so these tests run in order.
 test.describe.configure({ mode: 'serial' });
 
 test.beforeEach(async ({ page }) => {
@@ -29,40 +22,7 @@ test.beforeEach(async ({ page }) => {
   }, info);
 });
 
-async function startRun(runId: string): Promise<void> {
-  const query = new URLSearchParams({
-    workflowId: e2eChangesWorkflowId,
-    projectId: e2eChangesProjectId,
-    runId,
-  });
-  const response = await fetch(`http://127.0.0.1:${e2eChangesTrackerPort}/run?${query}`, {
-    method: 'POST',
-  });
-  expect(response.ok).toBe(true);
-}
-
-const gate = (page: Page) => page.getByRole('region', { name: 'Gate' }).first();
-const files = (page: Page) =>
-  page.getByRole('navigation', { name: 'Changed files' }).getByTestId('changed-file');
-const fileRow = (page: Page, name: string) =>
-  page.getByRole('navigation', { name: 'Changed files' }).getByRole('button', { name });
-
-// Opens the run, lets the build step end, and passes its gate so the review step waits.
-async function untilReviewWaits(page: Page, runId: string): Promise<void> {
-  await startRun(runId);
-  await page.goto(`/workflows/runs/${runId}`);
-  await expect(gate(page)).toContainText('deliver-work finished');
-  await page.getByRole('tab', { name: 'Changes' }).click();
-  await expect(files(page).first()).toBeVisible();
-  await gate(page).getByRole('button', { name: 'Approve' }).click();
-  await expect(gate(page)).toContainText('check-work finished');
-}
-
-test.describe('changes', () => {});
-
-test.describe('line comments', () => {});
-
-// The run tests above may leave the side panel open, with fields of its own.
+// Earlier tests may leave the side panel open, with fields of its own.
 const main = (page: Page) => page.locator('#main-view');
 const messageBox = (page: Page) => main(page).getByRole('combobox', { name: 'Message' });
 
@@ -332,13 +292,6 @@ test.describe('commit and pull request', () => {
 test.describe('sketch', () => {
   test.skip(!sketching, 'Set WOW_E2E_SKETCHES to write the screenshots');
   test.use(sketchUse);
-
-  test('the Changes tab', async ({ page }) => {
-    await untilReviewWaits(page, 'changes-sketch-run');
-    await fileRow(page, 'Changed: src/timer.ts').click();
-    await expect(page.getByRole('table', { name: 'Diff of src/timer.ts' })).toBeVisible();
-    await page.screenshot({ path: sketchPath('2026-11-review-loop', 'changes-tab') });
-  });
 
   test('the commit dialog', async ({ page }) => {
     await startMugThread(page, 'Edit the bell for the commit sketch');

@@ -15,8 +15,8 @@ import {
   e2eTriggersTrackerPort,
 } from './env';
 
-// U11 ground truth against the scripted mock provider: a trigger set a few seconds ahead fires
-// into a run that stops at its gate, and server restarts with the clock moved past a trigger's
+// U11 ground truth against the scripted mock provider: a trigger set a few seconds ahead starts
+// a main thread, and server restarts with the clock moved past a trigger's
 // time exercise each missed-trigger policy (behaviors 6, 8, 9, 12, 13). This file owns its server,
 // because it stops and starts it.
 

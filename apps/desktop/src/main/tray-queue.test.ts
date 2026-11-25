@@ -10,7 +10,6 @@ describe('the decision queue in the tray', () => {
       [{ state: 'needs_you' }],
       [],
       [],
-      [],
       new Date('2026-11-10T08:00:00.000Z'),
       () => '09:00',
       [
@@ -38,10 +37,9 @@ describe('the decision queue in the tray', () => {
     ]);
   });
 
-  it('falls back to threads and runs, opening Chat, before the queue arrives', () => {
+  it('falls back to threads, opening Chat, before the queue arrives', () => {
     const summary = traySummary(
-      [{ state: 'needs_you' }],
-      [{ state: 'waiting' }],
+      [{ state: 'needs_you' }, { state: 'needs_you' }],
       [],
       [],
       new Date(),

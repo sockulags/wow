@@ -165,7 +165,6 @@ describe('migrations', () => {
         'command_receipts',
         'events',
         'outlook_status',
-        'plan_intents',
         'projects',
         'provider_instances',
         'questions',
@@ -175,7 +174,6 @@ describe('migrations', () => {
         'threads',
         'triggers',
         'turns',
-        'workflow_runs',
         'workflows',
       ]),
     );

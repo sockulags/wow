@@ -176,7 +176,7 @@ function ThreadHeader({
         </span>
         <div className="ml-auto flex min-w-0 items-center gap-0.5">
           {thread.kind !== 'assistant' && <ToolsChip threadId={thread.id} />}
-          {thread.runId === null && <ThreadChangesChip threadId={thread.id} />}
+          <ThreadChangesChip threadId={thread.id} />
           <ConversationMenu />
           <IconButton
             label={thread.pinned ? 'Unpin thread' : 'Pin thread'}
@@ -783,8 +783,7 @@ export function ThreadConversation({
   const stop = () => void send({ type: 'thread.interrupt', threadId });
   // A chat thread in the chat view offers Edit and Fork where its provider can go back; on
   // Codex the palette says why not (spec 63, 71).
-  const goBackShown =
-    !extras && !compact && thread.kind !== 'assistant' && thread.runId === null && !!instance;
+  const goBackShown = !extras && !compact && thread.kind !== 'assistant' && !!instance;
   const goBackRefusal =
     goBackShown && instance
       ? (providerChatOptions[instance.kind].cannotGoBack ?? undefined)
@@ -797,7 +796,7 @@ export function ThreadConversation({
       : undefined;
   // Restore files when going back (thread work spec 20 to 24): a chat thread in the chat view,
   // on any provider, since the conversation does not change.
-  const restoreShown = !extras && !compact && thread.kind !== 'assistant' && thread.runId === null;
+  const restoreShown = !extras && !compact && thread.kind !== 'assistant';
   const restorableTurns = useMemo(
     () =>
       new Set(
@@ -1005,7 +1004,7 @@ export function ThreadConversation({
   const appRows = useAppToolRows(
     items,
     turns,
-    !extras && thread.kind !== 'assistant' && !thread.parentThreadId && thread.runId === null,
+    !extras && thread.kind !== 'assistant' && !thread.parentThreadId,
   );
   const toolWords = extras?.toolWords ?? appRows?.toolWords;
   const words = useMemo(
@@ -1035,7 +1034,7 @@ export function ThreadConversation({
   const kindOf = useMemo(() => new Map((items ?? []).map((item) => [item.id, item.kind])), [items]);
   // A turn's summary opens its Changes in a chat thread's own view (chat overview spec 2).
   const turnChanges =
-    !extras && (thread.kind ?? 'chat') === 'chat' && thread.runId === null
+    !extras && (thread.kind ?? 'chat') === 'chat'
       ? (turn: Turn) =>
           openThreadChanges(
             { settings, layout },
@@ -1101,17 +1100,13 @@ export function ThreadConversation({
           ? {
               ...(retry
                 ? {
-                    // A step's message goes again as the step sent it, its skills' texts
-                    // filled in for the run, not as skills picked in a chat.
                     onRetry: () =>
-                      void (thread.stepId !== null
-                        ? send({ type: 'thread.retry', threadId })
-                        : message(
-                            retry.text,
-                            retry.skills.length > 0 ? retry.skills : undefined,
-                            undefined,
-                            retry.images.length > 0 ? retry.images : undefined,
-                          )),
+                      void message(
+                        retry.text,
+                        retry.skills.length > 0 ? retry.skills : undefined,
+                        undefined,
+                        retry.images.length > 0 ? retry.images : undefined,
+                      ),
                   }
                 : {}),
               onResume: () => void message(resumePrompt),
@@ -1489,9 +1484,7 @@ export function ThreadConversation({
               {...(extras?.beforeSend ? { beforeSend: extras.beforeSend } : {})}
               fileSource={fileLinks ? { threadId } : undefined}
               recentSkills={recentSkillNames(items ?? [])}
-              // Images go only with chat threads: the Assistant view (spec 61) and a workflow step,
-              // wherever it is shown, take none.
-              imageTarget={fileLinks && thread.stepId === null ? { threadId } : undefined}
+              imageTarget={fileLinks ? { threadId } : undefined}
               footer={
                 (showMeter && context) || (canResume && !errorId && !stoppedLineResumes) ? (
                   <div className="flex min-h-6 flex-wrap items-center gap-3">

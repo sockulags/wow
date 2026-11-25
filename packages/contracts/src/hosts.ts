@@ -34,10 +34,6 @@ export const HostCheck = z.object({
 });
 export type HostCheck = z.infer<typeof HostCheck>;
 
-// One `Intent-Unit: <intent-id>/<unit-key>` line of a change request's body.
-export const UnitRef = z.object({ intentId: z.string().min(1), unitKey: z.string().min(1) });
-export type UnitRef = z.infer<typeof UnitRef>;
-
 export const ReviewComment = z.object({
   id: Id,
   author: z.string(),
@@ -50,8 +46,8 @@ export const ReviewComment = z.object({
 });
 export type ReviewComment = z.infer<typeof ReviewComment>;
 
-// A pull request (GitHub) or merge request (GitLab) as last read. Later units compare the next read with this row, so it
-// keeps the state, the head commit, the check result and the newest comment.
+// A pull request (GitHub) or merge request (GitLab) as last read: its state, head commit, checks
+// and review comments.
 export const ChangeRequest = z.object({
   // `<projectId>:<number>`.
   id: Id,
@@ -68,13 +64,11 @@ export const ChangeRequest = z.object({
   // The head is in another repository than the one wow follows (a fork), or the host did not
   // say it is in this one. Absent on rows read before wow asked.
   fromFork: z.boolean().optional(),
-  units: z.array(UnitRef),
   checkState: CheckState,
   checks: z.array(HostCheck),
   comments: z.array(ReviewComment),
   newestCommentId: Id.nullable(),
-  // The web addresses its body links to, so the pages it names can be read (spec 35). Absent on
-  // rows read before wow looked for them.
+  // The web addresses its body links to. Absent on rows read before wow looked for them.
   links: z.array(z.string().min(1)).optional(),
 });
 export type ChangeRequest = z.infer<typeof ChangeRequest>;
@@ -102,65 +96,12 @@ export const HostError = z.object({
 });
 export type HostError = z.infer<typeof HostError>;
 
-// Whose host read it is: a followed plan or a run (both polled), or a chat thread, whose links
-// are read only when their tab opens and on Refresh now (agent workbench spec 22).
-export const HostReadScope = z.enum(['plan', 'run', 'thread']);
-export type HostReadScope = z.infer<typeof HostReadScope>;
-
-// The scopes the host poller reads.
-export const PolledHostScope = HostReadScope.exclude(['thread']);
-export type PolledHostScope = z.infer<typeof PolledHostScope>;
-
-// What was last read for one followed plan or one run: which change requests are its own, when
-// that was fetched and what went wrong since. A failed read keeps the last data and its time.
-export const HostRead = z.object({
-  // `plan:<planIntentId>` or `run:<runId>`.
-  id: Id,
-  projectId: Id,
-  scope: PolledHostScope,
-  host: HostKind,
-  // The host as the user knows it: github.com or the Enterprise host. Empty while not set up.
-  hostName: z.string(),
-  // For a run: the branch its folder was on, null when it is on none.
-  branch: z.string().nullable(),
-  changeRequestIds: z.array(Id),
-  fetchedAt: Timestamp.nullable(),
-  error: HostError.nullable(),
-});
-export type HostRead = z.infer<typeof HostRead>;
-
-// The code host a project's pull requests are on, as its newest host read names it; until one
-// was read, the host its git data names (`ProjectGit.codeHost`), else GitHub.
-export function projectCodeHost(
-  reads: readonly Pick<HostRead, 'projectId' | 'host' | 'fetchedAt'>[],
-  projectId: string,
-  unread: HostKind = 'github',
-): HostKind {
-  const newest = reads
-    .filter((read) => read.projectId === projectId && read.fetchedAt !== null)
-    .toSorted((a, b) => (b.fetchedAt ?? '').localeCompare(a.fetchedAt ?? ''))[0];
-  return newest?.host ?? unread;
-}
-
 // What the host calls a change request: GitLab's are merge requests.
 export const changeRequestNoun = (host: HostKind): string =>
   host === 'gitlab' ? 'merge request' : 'pull request';
 
-export const hostReadId = (scope: HostReadScope, id: string): string => `${scope}:${id}`;
 export const changeRequestId = (projectId: string, number: number): string =>
   `${projectId}:${number}`;
-
-// One scope of a poll as the poller reports it: read, or failed with the reason.
-export const HostReadOutcome = z.object({
-  id: Id,
-  scope: PolledHostScope,
-  branch: z.string().nullable(),
-  result: z.discriminatedUnion('ok', [
-    z.object({ ok: z.literal(true), changeRequestIds: z.array(Id) }),
-    z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
-  ]),
-});
-export type HostReadOutcome = z.infer<typeof HostReadOutcome>;
 
 // A ticket as last read (review loop spec 33): what the Ticket tab shows. Read only.
 export const Ticket = z.object({
@@ -177,47 +118,6 @@ export const Ticket = z.object({
   url: z.string().min(1).nullable(),
 });
 export type Ticket = z.infer<typeof Ticket>;
-
-// Where a run's ticket key came from, in the order it is looked for: the issue its backlog item
-// was published as, the title of its pull request, the branch its folder is on.
-export const TicketSource = z.enum(['backlog', 'pullRequest', 'branch']);
-export type TicketSource = z.infer<typeof TicketSource>;
-
-export const ticketSourceLabels: Readonly<Record<TicketSource, string>> = {
-  backlog: "From the backlog item's Jira issue",
-  pullRequest: "From the pull request's title",
-  branch: 'From the branch name',
-};
-
-// What was last read about one run's ticket. `key` is null when the run has none; a failed read
-// keeps the last ticket of the same key, with its time, beside the error (spec 31).
-export const TicketRead = z.object({
-  // `run:<runId>`.
-  id: Id,
-  projectId: Id,
-  runId: Id,
-  host: HostKind,
-  // The Jira site as the user knows it. Empty while not set up.
-  hostName: z.string(),
-  key: z.string().min(1).nullable(),
-  source: TicketSource.nullable(),
-  ticket: Ticket.nullable(),
-  fetchedAt: Timestamp.nullable(),
-  error: HostError.nullable(),
-});
-export type TicketRead = z.infer<typeof TicketRead>;
-
-// One run's ticket as one poll found it: no key, the ticket, or why it could not be read.
-export const TicketReadOutcome = z.object({
-  runId: Id,
-  key: z.string().min(1).nullable(),
-  source: TicketSource.nullable(),
-  result: z.discriminatedUnion('ok', [
-    z.object({ ok: z.literal(true), ticket: Ticket.nullable() }),
-    z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
-  ]),
-});
-export type TicketReadOutcome = z.infer<typeof TicketReadOutcome>;
 
 // An issue of a code host as last read (agent workbench spec 21): GitHub's or GitLab's. Read
 // only, like the rest.
@@ -257,75 +157,3 @@ export const Page = z.object({
   url: z.string().min(1).nullable(),
 });
 export type Page = z.infer<typeof Page>;
-
-// Where a link to a page was found: the run's ticket description, its pull request body or its
-// intent's files.
-export const PageSource = z.enum(['ticket', 'pullRequest', 'intent']);
-export type PageSource = z.infer<typeof PageSource>;
-
-export const pageSourceLabels: Readonly<Record<PageSource, string>> = {
-  ticket: 'the ticket description',
-  pullRequest: 'the pull request body',
-  intent: 'the intent',
-};
-
-// One linked page of a run. `ref` is how the link names the page, `id:<contentId>` or
-// `title:<spaceKey>/<title>`, which is also its key in the list. A failed read keeps the last page
-// of the same link and its time beside the error (spec 31).
-export const PageLink = z.object({
-  ref: z.string().min(1),
-  // The address as the link has it.
-  link: z.string().min(1),
-  source: PageSource,
-  page: Page.nullable(),
-  fetchedAt: Timestamp.nullable(),
-  error: HostError.nullable(),
-});
-export type PageLink = z.infer<typeof PageLink>;
-
-// What was last read about the pages one run's texts link to. `error` is what kept wow from
-// asking at all, or the first refusal or failure of the last round; `fetchedAt` the last round in
-// which the host answered.
-export const PageRead = z.object({
-  // `run:<runId>`.
-  id: Id,
-  projectId: Id,
-  runId: Id,
-  host: HostKind,
-  // The Confluence site as the user knows it. Empty while not set up.
-  hostName: z.string(),
-  pages: z.array(PageLink),
-  fetchedAt: Timestamp.nullable(),
-  error: HostError.nullable(),
-});
-export type PageRead = z.infer<typeof PageRead>;
-
-// A page read after a round in which the host answered just what it answered before: every page
-// and the read that had no error were fetched again at `at`, and nothing else changed.
-export const touchPageRead = (read: PageRead, at: string): PageRead => ({
-  ...read,
-  fetchedAt: read.error === null ? at : read.fetchedAt,
-  pages: read.pages.map((page) => (page.error === null ? { ...page, fetchedAt: at } : page)),
-});
-
-// One run's linked pages as one poll found them.
-export const PageReadOutcome = z.object({
-  runId: Id,
-  links: z.array(
-    z.object({
-      ref: z.string().min(1),
-      link: z.string().min(1),
-      source: PageSource,
-      result: z.discriminatedUnion('ok', [
-        z.object({ ok: z.literal(true), page: Page }),
-        z.object({ ok: z.literal(false), error: HostError.omit({ at: true }) }),
-      ]),
-    }),
-  ),
-  error: HostError.omit({ at: true }).nullable(),
-});
-export type PageReadOutcome = z.infer<typeof PageReadOutcome>;
-
-// "Refresh now": one plan, one run, or everything wow follows.
-export const HostRefreshParams = z.object({ planId: Id.optional(), runId: Id.optional() });
-export type HostRefreshParams = z.infer<typeof HostRefreshParams>;

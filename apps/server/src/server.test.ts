@@ -333,29 +333,7 @@ describe('rpc', () => {
     ]);
   });
 
-  it('lists the files expected artifact globs match in a project, for the builder', async () => {
-    await mkdir(path.join(home, 'intents', 'demo'), { recursive: true });
-    await writeFile(path.join(home, 'intents', 'demo', 'spec.md'), '# Spec\n');
-    const command = { type: 'project.create', projectId: 'p1', name: 'wow', cwd: home };
-    await client.request('dispatch', { commandId: 'c1', command });
-    expect(
-      await client.request('workflows.matchArtifacts', {
-        projectId: 'p1',
-        globs: ['intents/*/spec.md', 'missing/*.md'],
-      }),
-    ).toMatchObject({ result: { files: ['intents/demo/spec.md'] } });
-    expect(
-      await client.request('workflows.matchArtifacts', { projectId: 'nope', globs: ['*.md'] }),
-    ).toMatchObject({ error: { code: 'not_found' } });
-  });
-
-  it('reports an unknown run when asked to detect its artifacts', async () => {
-    expect(await client.request('workflowRuns.detectArtifacts', { runId: 'nope' })).toMatchObject({
-      error: { code: 'not_found' },
-    });
-  });
-
-  it('reads a file of a run through files.read, within the project folder and the size limit', async () => {
+  it('reads a file of a project through files.read, within the project folder and the size limit', async () => {
     const dispatch = (commandId: string, command: Record<string, unknown>) =>
       client.request('dispatch', { commandId, command });
     const project = path.join(home, 'project');
@@ -363,63 +341,17 @@ describe('rpc', () => {
     await writeFile(path.join(project, 'review', 'notes.md'), '# Invented notes\n');
     await writeFile(path.join(home, 'beside.txt'), 'outside the project\n');
     await dispatch('c1', { type: 'project.create', projectId: 'p1', name: 'wow', cwd: project });
-    await dispatch('c2', {
-      type: 'providerInstance.create',
-      providerInstanceId: 'mock',
-      kind: 'claude',
-      name: 'Mock',
-      binaryPath: 'claude',
-      configDir: '',
-      env: {},
-      launchArgs: [],
-    });
-    // A gate before the only step: the run exists and waits without starting a turn.
-    await dispatch('c3', {
-      type: 'workflow.create',
-      workflowId: 'wf1',
-      name: 'Review',
-      steps: [
-        {
-          id: 's1',
-          skillName: 'check-work',
-          providerInstanceId: 'mock',
-          model: 'mock-model',
-          effort: 'default',
-          permissionMode: 'default',
-          gateBefore: true,
-          gateAfter: false,
-          expectedArtifacts: [],
-        },
-      ],
-    });
     expect(
-      await dispatch('c4', {
-        type: 'workflowRun.start',
-        runId: 'r1',
-        workflowId: 'wf1',
-        projectId: 'p1',
-      }),
-    ).toHaveProperty('result');
-
-    expect(
-      await client.request('files.read', { runId: 'r1', path: 'review/notes.md' }),
+      await client.request('files.read', { projectId: 'p1', path: 'review/notes.md' }),
     ).toMatchObject({ result: { kind: 'markdown', text: '# Invented notes\n', size: 17 } });
     expect(
-      await client.request('files.read', { runId: 'r1', path: '../beside.txt' }),
+      await client.request('files.read', { projectId: 'p1', path: '../beside.txt' }),
     ).toMatchObject({ result: { kind: 'refused', reason: 'outside' } });
-    expect(await client.request('files.read', { runId: 'nope', path: 'a.md' })).toMatchObject({
+    expect(await client.request('files.read', { projectId: 'nope', path: 'a.md' })).toMatchObject({
       error: { code: 'not_found' },
     });
-    expect(await client.request('files.read', { runId: 'r1', path: '' })).toMatchObject({
+    expect(await client.request('files.read', { projectId: 'p1', path: '' })).toMatchObject({
       error: { code: 'invalid_params' },
-    });
-
-    // The same run's changes: its folder is not a repository, which is an answer, not a fault.
-    expect(await client.request('workflowRuns.diff', { runId: 'r1' })).toMatchObject({
-      result: { status: 'noRepository', files: [], patch: null },
-    });
-    expect(await client.request('workflowRuns.diff', { runId: 'nope' })).toMatchObject({
-      error: { code: 'not_found' },
     });
 
     await dispatch('c5', {
@@ -430,7 +362,7 @@ describe('rpc', () => {
     });
     await writeFile(path.join(project, 'review', 'long.log'), 'x'.repeat(1001));
     expect(
-      await client.request('files.read', { runId: 'r1', path: 'review/long.log' }),
+      await client.request('files.read', { projectId: 'p1', path: 'review/long.log' }),
     ).toMatchObject({ result: { kind: 'refused', reason: 'too_large' } });
   });
 

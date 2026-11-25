@@ -281,10 +281,10 @@ export class FolderSnapshots {
     return this.#deps.db.select().from(threads).where(eq(threads.id, threadId)).get();
   }
 
-  // Only a chat thread's files are kept and put back: a workflow step's thread works in its
-  // run's folder and the Assistant in wow's own (spec 23).
-  #isChat(thread: { readonly kind: string; readonly runId: string | null }): boolean {
-    return thread.kind === 'chat' && thread.runId === null;
+  // Only a chat thread's files are kept and put back: the Assistant works in wow's own folder
+  // (spec 23).
+  #isChat(thread: { readonly kind: string }): boolean {
+    return thread.kind === 'chat';
   }
 
   // The provider service, as a chat thread's turn starts (awaited, so the agent starts on the

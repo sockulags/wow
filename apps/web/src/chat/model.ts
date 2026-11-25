@@ -9,8 +9,6 @@ import {
   type Thread,
   type ThreadItem,
   type Turn,
-  type Workflow,
-  type WorkflowRun,
 } from '@wow/contracts';
 
 // Pure helpers for the chat view. Everything here derives from rows the server pushed; nothing
@@ -33,21 +31,6 @@ export const firstMessageTitle = (
   skillNames: readonly string[],
   imageCount: number,
 ): string => titleFromMessage(text) || skillNames.join(' ') || (imageCount > 0 ? 'Image' : '');
-
-// "Feature · plan-work" for a thread a workflow run started.
-export function runLabel(
-  thread: Pick<Thread, 'runId' | 'stepId'>,
-  runs: readonly WorkflowRun[],
-  workflows: readonly Workflow[],
-): string | undefined {
-  if (thread.runId === null) return undefined;
-  const run = runs.find((candidate) => candidate.id === thread.runId);
-  const workflow = run && workflows.find((candidate) => candidate.id === run.workflowId);
-  const step = workflow?.steps.find((candidate) => candidate.id === thread.stepId);
-  const runName = workflow?.name ?? 'Workflow run';
-  if (step) return `${runName} · ${step.skillName}`;
-  return thread.stepId === null ? runName : `${runName} · ${thread.stepId}`;
-}
 
 export const runningTurn = (turns: readonly Turn[]): Turn | undefined =>
   turns.find((turn) => turn.state === 'running');

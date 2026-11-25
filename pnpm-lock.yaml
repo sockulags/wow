@@ -65,9 +65,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
-      '@wow/agent-os':
-        specifier: workspace:*
-        version: link:../../packages/agent-os
       '@wow/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -86,9 +83,6 @@ importers:
       '@wow/skills':
         specifier: workspace:*
         version: link:../../packages/skills
-      '@wow/workflow-engine':
-        specifier: workspace:*
-        version: link:../../packages/workflow-engine
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -257,8 +251,6 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(jsdom@30.1.3(@noble/hashes@1.8.0))(msw@3.0.3(@types/node@22.20.5)(typescript@7.0.2)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  packages/agent-os: {}
-
   packages/client-runtime:
     dependencies:
       '@wow/contracts':
@@ -323,12 +315,6 @@ importers:
       yaml:
         specifier: ^2.9.1
         version: 2.9.1
-
-  packages/workflow-engine:
-    dependencies:
-      '@wow/contracts':
-        specifier: workspace:*
-        version: link:../contracts
 
 packages:
 

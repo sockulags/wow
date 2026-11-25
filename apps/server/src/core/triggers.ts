@@ -1,18 +1,14 @@
 import {
-  isCardTrigger,
-  isEventTrigger,
-  triggerEventLabel,
   type AppNotification,
   type CalendarItem,
   type CardOccurrence,
   type CardState,
-  type CardTrigger,
   type DomainEvent,
-  type EventTrigger,
+  type MissedTriggerPolicy,
   type ServerCommand,
   type Trigger,
+  type TriggerState,
 } from '@wow/contracts';
-import { missedTriggerOutcome } from '@wow/workflow-engine';
 import { localDay, startingBetween, type Occurrence } from '../scheduler/occurrences.js';
 import { isDeepStrictEqual } from 'node:util';
 import { backlogFollowsCard } from './backlog.js';
@@ -24,46 +20,32 @@ import {
   startsWork,
   type CardThreadStart,
 } from './card-threads.js';
-import {
-  CommandRejected,
-  codeHostOf,
-  decide,
-  type DecideContext,
-  type ReadModel,
-} from './orchestrator.js';
+import { CommandRejected, decide, type DecideContext, type ReadModel } from './orchestrator.js';
 import {
   isRepeating,
-  liveRunOf,
   nextOccurrence,
   scheduleOf,
   takenDays,
   type RepeatingCard,
 } from './series.js';
 import { threadPath } from './threads.js';
-import { notificationsEnabled, runInput } from './workflows.js';
+import { notificationsEnabled } from './workflows.js';
 
 // Decisions for a card's trigger (spec 8, 12, 13): a local card with a workflow has one trigger
 // at its next start; the scheduler fires it, and the occurrence starts a main thread that runs
 // the workflow or sends the next message to the card's one thread (orchestrator threads spec
-// 27). The card then follows that thread (spec 28). Event triggers are gone (spec 29); only rows
-// stored before can still be switched off or deleted until the migration has removed them.
+// 27). The card then follows that thread (spec 28).
 
 type TriggerCommand = Extract<
   ServerCommand,
   {
-    type:
-      | 'trigger.fire'
-      | 'trigger.applyMissed'
-      | 'card.runNow'
-      | 'card.followThread'
-      | 'trigger.create'
-      | 'trigger.setEnabled'
-      | 'trigger.delete';
+    type: 'trigger.fire' | 'trigger.applyMissed' | 'card.runNow' | 'card.followThread';
   }
 >;
 
 export const isTriggerCommand = (command: ServerCommand): command is TriggerCommand =>
-  command.type.startsWith('trigger.') ||
+  command.type === 'trigger.fire' ||
+  command.type === 'trigger.applyMissed' ||
   command.type === 'card.runNow' ||
   command.type === 'card.followThread';
 
@@ -109,9 +91,6 @@ export function* decideTriggerInSteps(
 // One trigger per card, so moving the card moves the same row.
 export const triggerIdFor = (cardId: string): string => `${cardId}:trigger`;
 
-// What a card trigger's row holds in the columns only event triggers use.
-const noEventFields = { projectId: null, event: null, enabled: null, createdAt: null };
-
 const triggerSet = (trigger: Trigger): DomainEvent => ({
   kind: 'trigger.set',
   aggregate: trigger.id,
@@ -121,24 +100,33 @@ const triggerSet = (trigger: Trigger): DomainEvent => ({
 const cardState = (
   card: CalendarItem,
   state: CardState,
-  runId: string | null,
   context: DecideContext,
   threadId: string | null = card.threadId ?? null,
 ): DomainEvent[] =>
-  card.state === state && card.runId === runId && (card.threadId ?? null) === threadId
+  card.state === state && (card.threadId ?? null) === threadId
     ? []
     : [
         {
           kind: 'card.stateChanged',
           aggregate: card.id,
-          payload: { cardId: card.id, state, runId, threadId, updatedAt: context.now },
+          payload: { cardId: card.id, state, threadId, updatedAt: context.now },
         },
       ];
 
-// Whether the card has started anything yet: a workflow run before workflows were files, a main
-// thread since.
-const hasStarted = (card: CalendarItem): boolean =>
-  card.runId !== null || (card.threadId ?? null) !== null;
+// Whether the card has started work yet: a thread, or, for a card that ran before cards started
+// threads, a run that migration 0051 removed. Such a card has no thread, but an occurrence that
+// fired without one, or a fired trigger and the end state its run left (`done` or `stopped`). A
+// card made again with the same id (Undo of a delete) is `scheduled` and its occurrences that
+// fired name their threads, so it is armed again.
+const hasStarted = (card: CalendarItem, read: ReadModel): boolean =>
+  (card.threadId ?? null) !== null ||
+  read
+    .cardOccurrences(card.id)
+    .some(
+      (occurrence) => occurrence.outcome === 'fired' && (occurrence.threadId ?? null) === null,
+    ) ||
+  (read.trigger(triggerIdFor(card.id))?.state === 'fired' &&
+    (card.state === 'done' || card.state === 'stopped'));
 
 // What the card's trigger row names as its workflow.
 const workflowRef = (card: CalendarItem): string => card.workflowName ?? card.workflowId ?? '';
@@ -149,31 +137,26 @@ const notification = (read: ReadModel, context: DecideContext, entry: AppNotific
     : [];
 
 // Brings a card's trigger in line with the card after it was created, moved or given another
-// workflow or project. A card that already started a run keeps its fired trigger. A start time
+// workflow or project. A card that already started a thread keeps its fired trigger. A start time
 // that has already passed gives a missed trigger with "Run now" rather than an immediate run.
 export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: DecideContext) {
   if (card.source !== 'local') return [];
   if (isRepeating(card)) return seriesTriggerEvents(card, read, context);
   const existing = read.trigger(triggerIdFor(card.id));
-  if (hasStarted(card)) {
+  if (hasStarted(card, read)) {
     // A card that stopped repeating may still hold a trigger for a later occurrence. It goes
-    // back to the fired trigger of the run it carries, as it was before the card repeated.
+    // back to a fired trigger at the occurrence that started its thread.
     if (existing?.state !== 'scheduled') return [];
-    const ran =
-      existing.runId === null
-        ? undefined
-        : read
-            .cardOccurrences(card.id)
-            .find(
-              (occurrence) =>
-                occurrence.runId === existing.runId || occurrence.threadId === existing.runId,
-            );
+    const ran = read
+      .cardOccurrences(card.id)
+      .find((occurrence) => occurrence.threadId === card.threadId);
     return [
-      triggerSet(
-        existing.runId === null
-          ? { ...existing, state: 'cancelled', offerRunNow: false }
-          : { ...existing, state: 'fired', runAt: ran?.start ?? card.start, offerRunNow: false },
-      ),
+      triggerSet({
+        ...existing,
+        state: 'fired',
+        runAt: ran?.start ?? card.start,
+        offerRunNow: false,
+      }),
     ];
   }
   const events: DomainEvent[] = [];
@@ -182,15 +165,12 @@ export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: 
   if (startsWork(card)) {
     const due = Date.parse(card.start) <= Date.parse(context.now);
     next = {
-      ...noEventFields,
       id: triggerIdFor(card.id),
-      kind: 'card',
       calendarItemId: card.id,
       workflowId: workflowRef(card),
       runAt: card.start,
       zone: card.zone,
       state: due ? 'missed' : 'scheduled',
-      runId: null,
       offerRunNow: due,
     };
     state = due ? 'missed' : 'scheduled';
@@ -198,7 +178,7 @@ export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: 
     next = { ...existing, state: 'cancelled', offerRunNow: false };
   }
   if (next && !isDeepStrictEqual(next, existing)) events.push(triggerSet(next));
-  events.push(...cardState(card, state, null, context));
+  events.push(...cardState(card, state, context));
   return events;
 }
 
@@ -210,87 +190,54 @@ function seriesTriggerEvents(
   read: ReadModel,
   context: DecideContext,
   alsoTaken: ReadonlySet<string> = new Set(),
-  runId?: string,
+  startedThreadId?: string,
   handled = false,
 ): DomainEvent[] {
   const existing = read.trigger(triggerIdFor(card.id));
-  const lastRunId = runId ?? existing?.runId ?? null;
+  const started = startedThreadId !== undefined || hasStarted(card, read);
   let next: Trigger | undefined;
   const upcoming = startsWork(card)
     ? nextOccurrence(card, read, Date.parse(context.now), alsoTaken)
     : undefined;
   if (upcoming) {
     next = {
-      ...noEventFields,
       id: triggerIdFor(card.id),
-      kind: 'card',
       calendarItemId: card.id,
       workflowId: workflowRef(card),
       runAt: upcoming.start,
       zone: card.zone,
       state: 'scheduled',
-      runId: lastRunId,
       offerRunNow: false,
     };
   } else if (existing && (existing.state === 'scheduled' || existing.state === 'missed')) {
-    next = {
-      ...existing,
-      runId: lastRunId,
-      state: lastRunId === null ? 'cancelled' : 'fired',
-      offerRunNow: false,
-    };
-  } else if (existing && runId !== undefined) {
-    next = { ...existing, runId };
+    next = { ...existing, state: started ? 'fired' : 'cancelled', offerRunNow: false };
   }
   const events: DomainEvent[] = [];
   if (next && !isDeepStrictEqual(next, existing)) events.push(triggerSet(next));
-  // A card that has run shows how its newest run went; one that has not waits for its first,
+  // A card that has started a thread follows it; one that has not waits for its first,
   // and once every remaining occurrence was skipped it is finished as a last occurrence leaves it.
   // An occurrence this decision handled (missed, failed, started) has set the state already.
   if (handled) return events;
-  if (!hasStarted(card) && runId === undefined && upcoming) {
-    events.push(...cardState(card, 'scheduled', null, context));
-  } else if (
-    !hasStarted(card) &&
-    runId === undefined &&
-    card.state === 'scheduled' &&
-    startsWork(card)
-  ) {
-    events.push(...cardState(card, 'done', null, context));
+  if (!started && upcoming) {
+    events.push(...cardState(card, 'scheduled', context));
+  } else if (!started && card.state === 'scheduled' && startsWork(card)) {
+    events.push(...cardState(card, 'done', context));
   }
   return events;
 }
 
-// What deleting a card does to its run and trigger. A live run needs the user's answer first.
-export function cardDeleteEvents(
-  card: CalendarItem,
-  stopRun: boolean | undefined,
-  read: ReadModel,
-  context: DecideContext,
-): DomainEvent[] {
-  const events: DomainEvent[] = [];
-  const run = liveRunOf(card, read);
-  if (run) {
-    if (stopRun === undefined) {
-      throw new CommandRejected(
-        'conflict',
-        `The workflow run of "${card.title}" is ${run.state === 'waiting' ? 'waiting for you' : 'running'}; say whether to stop it`,
-        { runId: run.id },
-      );
-    }
-    if (stopRun) events.push(...runInput('card.delete', run.id, { type: 'stop' }, read, context));
-  }
+// What deleting a card does to its trigger. The threads it started stay.
+export function cardDeleteEvents(card: CalendarItem, read: ReadModel): DomainEvent[] {
   const trigger = read.trigger(triggerIdFor(card.id));
-  if (trigger && (trigger.state === 'scheduled' || trigger.state === 'missed')) {
-    events.push(triggerSet({ ...trigger, state: 'cancelled', offerRunNow: false }));
-  }
-  return events;
+  return trigger && (trigger.state === 'scheduled' || trigger.state === 'missed')
+    ? [triggerSet({ ...trigger, state: 'cancelled', offerRunNow: false })]
+    : [];
 }
 
-function requireTrigger(read: ReadModel, id: string, runAt: string): CardTrigger | undefined {
+function requireTrigger(read: ReadModel, id: string, runAt: string): Trigger | undefined {
   const trigger = read.trigger(id);
   // Fired, missed or cancelled meanwhile, or the card moved after the scheduler looked.
-  if (!trigger || !isCardTrigger(trigger)) return undefined;
+  if (!trigger) return undefined;
   if (trigger.state !== 'scheduled' || trigger.runAt !== runAt) return undefined;
   return trigger;
 }
@@ -313,7 +260,7 @@ function startThread(
     ...plan,
     refused: (reason) => [
       ...(occurrence ? [occurrenceRecorded(card, occurrence, 'failed', context, { reason })] : []),
-      ...cardState(card, 'failed', card.runId, context, before),
+      ...cardState(card, 'failed', context, before),
       ...backlogFollowsCard(card, 'failed', read),
       ...notification(read, context, {
         id: `${triggerIdFor(card.id)}:${occurrence?.start ?? card.start}:${newThreadId}:refused`,
@@ -322,7 +269,6 @@ function startThread(
         title: 'Trigger failed',
         body: [card.title, occurrence?.date].filter(Boolean).join(' · ') + `: ${reason}`,
         path: '/calendar',
-        runId: null,
         calendarItemId: card.id,
       }),
     ],
@@ -337,7 +283,7 @@ const threadStarted = (
   read: ReadModel,
   context: DecideContext,
 ): DomainEvent[] => [
-  ...cardState(card, 'running', card.runId, context, threadId),
+  ...cardState(card, 'running', context, threadId),
   ...backlogFollowsCard(card, 'running', read),
   ...notification(read, context, {
     id: `${card.id}:${date ?? card.start}:${threadId}:started`,
@@ -346,7 +292,6 @@ const threadStarted = (
     title: 'Scheduled thread started',
     body: [cardWorkflowName(card, read), card.title, date].filter(Boolean).join(' · '),
     path: threadPath(threadId),
-    runId: null,
     calendarItemId: card.id,
   }),
 ];
@@ -354,7 +299,7 @@ const threadStarted = (
 // Starts the card's thread for a due trigger. A thread that cannot start (its workflow or every
 // provider instance is gone) fails the card instead of retrying on every tick.
 function fire(
-  trigger: CardTrigger,
+  trigger: Trigger,
   newThreadId: string,
   read: ReadModel,
   context: DecideContext,
@@ -370,8 +315,8 @@ function fire(
   } catch (error) {
     if (!(error instanceof CommandRejected)) throw error;
     return [
-      triggerSet({ ...trigger, state: 'fired', runId: null, offerRunNow: false }),
-      ...cardState(card, 'failed', card.runId, context),
+      triggerSet({ ...trigger, state: 'fired', offerRunNow: false }),
+      ...cardState(card, 'failed', context),
       ...notification(read, context, {
         id: `${trigger.id}:${trigger.runAt}:failed`,
         at: context.now,
@@ -379,13 +324,12 @@ function fire(
         title: 'Trigger failed',
         body: `${card.title}: ${error.message}`,
         path: '/calendar',
-        runId: null,
         calendarItemId: card.id,
       }),
     ];
   }
   return [
-    triggerSet({ ...trigger, state: 'fired', runId: threadId, offerRunNow: false }),
+    triggerSet({ ...trigger, state: 'fired', offerRunNow: false }),
     ...threadStarted(card, threadId, undefined, read, context),
   ];
 }
@@ -395,7 +339,7 @@ const occurrenceRecorded = (
   occurrence: Occurrence,
   outcome: CardOccurrence['outcome'],
   context: DecideContext,
-  extra: Partial<Pick<CardOccurrence, 'runId' | 'threadId' | 'reason' | 'offerRunNow'>> = {},
+  extra: Partial<Pick<CardOccurrence, 'threadId' | 'reason' | 'offerRunNow'>> = {},
 ): DomainEvent => ({
   kind: 'card.occurrenceRecorded',
   aggregate: card.id,
@@ -404,7 +348,6 @@ const occurrenceRecorded = (
     occurrence: {
       ...occurrence,
       outcome,
-      runId: extra.runId ?? null,
       threadId: extra.threadId ?? null,
       reason: extra.reason ?? null,
       offerRunNow: extra.offerRunNow ?? false,
@@ -420,7 +363,7 @@ const occurrenceRecorded = (
 // `same` thread still works starts nothing (orchestrator threads spec 28). Then the trigger
 // waits for the next occurrence.
 function fireSeries(
-  trigger: CardTrigger,
+  trigger: Trigger,
   card: RepeatingCard,
   newThreadId: string,
   mode: 'run' | 'mark' | 'skip',
@@ -459,7 +402,7 @@ function fireSeries(
   if (latest && mode !== 'run') {
     events.push(
       occurrenceRecorded(card, latest, 'missed', context, { offerRunNow: mode === 'mark' }),
-      ...cardState(card, 'missed', card.runId, context),
+      ...cardState(card, 'missed', context),
     );
   } else if (latest) {
     const busy = busyThreadOf(card, read);
@@ -474,7 +417,6 @@ function fireSeries(
           title: 'Occurrence skipped',
           body: `${card.title} · ${latest.date}: ${reason}`,
           path: `/calendar?item=${encodeURIComponent(card.id)}`,
-          runId: null,
           calendarItemId: card.id,
         }),
       );
@@ -506,7 +448,7 @@ function startSeriesThread(
     return {
       events: [
         occurrenceRecorded(card, occurrence, 'failed', context, { reason: error.message }),
-        ...cardState(card, 'failed', card.runId, context),
+        ...cardState(card, 'failed', context),
         ...notification(read, context, {
           id: `${triggerIdFor(card.id)}:${occurrence.start}:failed`,
           at: context.now,
@@ -514,7 +456,6 @@ function startSeriesThread(
           title: 'Trigger failed',
           body: `${card.title} · ${occurrence.date}: ${error.message}`,
           path: '/calendar',
-          runId: null,
           calendarItemId: card.id,
         }),
       ],
@@ -545,23 +486,31 @@ export function decideTrigger(
       if (!trigger) return [];
       const card = read.calendarItem(trigger.calendarItemId);
       if (card && isRepeating(card)) {
-        return fireSeries(trigger, card, command.runId, 'run', read, context, starts);
+        return fireSeries(trigger, card, command.threadId, 'run', read, context, starts);
       }
-      return fire(trigger, command.runId, read, context, starts);
+      return fire(trigger, command.threadId, read, context, starts);
     }
     case 'trigger.applyMissed': {
       const trigger = requireTrigger(read, command.triggerId, command.runAt);
       if (!trigger) return [];
       const repeating = read.calendarItem(trigger.calendarItemId);
       if (repeating && isRepeating(repeating)) {
-        return fireSeries(trigger, repeating, command.runId, command.policy, read, context, starts);
+        return fireSeries(
+          trigger,
+          repeating,
+          command.threadId,
+          command.policy,
+          read,
+          context,
+          starts,
+        );
       }
       const outcome = missedTriggerOutcome(command.policy);
-      if (outcome.startRun) return fire(trigger, command.runId, read, context, starts);
+      if (outcome.startRun) return fire(trigger, command.threadId, read, context, starts);
       const card = read.calendarItem(trigger.calendarItemId);
       return [
         triggerSet({ ...trigger, state: outcome.triggerState, offerRunNow: outcome.offerRunNow }),
-        ...(card ? cardState(card, 'missed', card.runId, context) : []),
+        ...(card ? cardState(card, 'missed', context) : []),
       ];
     }
     case 'card.runNow': {
@@ -573,7 +522,7 @@ export function decideTrigger(
       if (!startsWork(card)) {
         throw new CommandRejected('rejected', `"${card.title}" has no workflow`);
       }
-      if (liveRunOf(card, read) || busyThreadOf(card, read)) {
+      if (busyThreadOf(card, read)) {
         throw new CommandRejected('conflict', `"${card.title}" is still working`);
       }
       // On a repeating card, Run now answers the missed occurrence that offers it, and the
@@ -581,7 +530,7 @@ export function decideTrigger(
       const offered = isRepeating(card)
         ? read.cardOccurrences(card.id).findLast((occurrence) => occurrence.offerRunNow)
         : undefined;
-      const threadId = startThread(card, offered, command.runId, read, context, starts);
+      const threadId = startThread(card, offered, command.threadId, read, context, starts);
       const events = threadStarted(card, threadId, offered?.date, read, context);
       if (isRepeating(card)) {
         if (offered) {
@@ -591,9 +540,7 @@ export function decideTrigger(
       }
       const trigger = read.trigger(triggerIdFor(card.id));
       if (trigger && (trigger.state === 'scheduled' || trigger.state === 'missed')) {
-        events.unshift(
-          triggerSet({ ...trigger, state: 'fired', runId: threadId, offerRunNow: false }),
-        );
+        events.unshift(triggerSet({ ...trigger, state: 'fired', offerRunNow: false }));
       }
       return events;
     }
@@ -601,68 +548,24 @@ export function decideTrigger(
       const card = read.calendarItem(command.cardId);
       return card ? cardFollowsThread(card, read, context) : [];
     }
-    // An event trigger is stored as before but nothing fires it any more (spec 29); the command
-    // goes with the Triggers tab and the assistant's trigger tools (orchestrator threads U8).
-    case 'trigger.create': {
-      // A card's trigger is `<cardId>:trigger`; an event trigger's id must never be one.
-      if (command.triggerId.includes(':')) {
-        throw new CommandRejected('rejected', 'A trigger id cannot contain a colon');
-      }
-      if (read.trigger(command.triggerId)) {
-        throw new CommandRejected('conflict', `Trigger ${command.triggerId} already exists`);
-      }
-      const project = read.project(command.projectId);
-      if (!project) throw new CommandRejected('not_found', `No project ${command.projectId}`);
-      const workflow = read.workflow(command.workflowId);
-      if (!workflow) throw new CommandRejected('not_found', `No workflow ${command.workflowId}`);
-      const same = read
-        .eventTriggers(project.id)
-        .some((trigger) => trigger.event === command.event && trigger.workflowId === workflow.id);
-      if (same) {
-        throw new CommandRejected(
-          'conflict',
-          `${project.name} already has a trigger that starts ${workflow.name} for "${triggerEventLabel(command.event, codeHostOf(read, context, project.id))}"`,
-        );
-      }
-      return [
-        triggerSet({
-          id: command.triggerId,
-          kind: 'event',
-          workflowId: workflow.id,
-          runId: null,
-          calendarItemId: null,
-          runAt: null,
-          zone: null,
-          state: null,
-          offerRunNow: false,
-          projectId: project.id,
-          event: command.event,
-          enabled: true,
-          createdAt: context.now,
-        }),
-      ];
-    }
-    case 'trigger.setEnabled': {
-      const trigger = requireEventTrigger(read, command.triggerId);
-      if (trigger.enabled === command.enabled) return [];
-      return [triggerSet({ ...trigger, enabled: command.enabled })];
-    }
-    case 'trigger.delete': {
-      const trigger = requireEventTrigger(read, command.triggerId);
-      return [
-        { kind: 'trigger.deleted', aggregate: trigger.id, payload: { triggerId: trigger.id } },
-      ];
-    }
   }
 }
 
-function requireEventTrigger(read: ReadModel, id: string): EventTrigger {
-  const trigger = read.trigger(id);
-  if (!trigger) throw new CommandRejected('not_found', `No trigger ${id}`);
-  if (!isEventTrigger(trigger)) {
-    throw new CommandRejected('rejected', `Trigger ${id} belongs to a calendar card`);
+// What happens to a trigger whose time passed while the server was down (behavior 12): run starts
+// it, mark offers a one-click "Run now" on the card, skip does neither.
+function missedTriggerOutcome(policy: MissedTriggerPolicy): {
+  readonly triggerState: Extract<TriggerState, 'fired' | 'missed'>;
+  readonly startRun: boolean;
+  readonly offerRunNow: boolean;
+} {
+  switch (policy) {
+    case 'run':
+      return { triggerState: 'fired', startRun: true, offerRunNow: false };
+    case 'mark':
+      return { triggerState: 'missed', startRun: false, offerRunNow: true };
+    case 'skip':
+      return { triggerState: 'missed', startRun: false, offerRunNow: false };
   }
-  return trigger;
 }
 
 // Triggers are cards on the calendar (orchestrator threads spec 27, 34).

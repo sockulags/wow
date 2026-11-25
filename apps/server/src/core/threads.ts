@@ -94,7 +94,6 @@ type ThreadCommand = Extract<
       | 'thread.handedOver'
       | 'thread.changesMarked'
       | 'thread.toolsReported'
-      | 'thread.retry'
       | 'thread.answerQuestions'
       | 'thread.interrupt'
       | 'thread.stopTask'
@@ -325,9 +324,6 @@ function checkMessage(
   }
   if (thread.kind === 'assistant' && images.length > 0) {
     throw new CommandRejected('rejected', 'The assistant takes no images');
-  }
-  if (thread.stepId !== null && images.length > 0) {
-    throw new CommandRejected('rejected', 'A workflow step takes no images');
   }
 }
 
@@ -751,8 +747,6 @@ export function decideThread(
             permissionMode: command.permissionMode,
             state: 'idle',
             pinned: false,
-            runId: null,
-            stepId: null,
             createdAt: now,
             updatedAt: now,
           },
@@ -928,32 +922,11 @@ export function decideThread(
         }),
       ];
     }
-    case 'thread.retry': {
-      const thread = requireThread(read, command.threadId);
-      if (thread.stepId === null) {
-        throw new CommandRejected(
-          'rejected',
-          "Only a workflow step's thread is retried this way; send the message again instead.",
-        );
-      }
-      if (read.runningTurn(thread.id)) {
-        throw new CommandRejected('rejected', `Thread ${thread.id} already has a running turn`);
-      }
-      const sent = read.lastSent(thread.id);
-      if (!sent) throw new CommandRejected('rejected', 'This thread has no message to send again');
-      return [
-        turnStarted(read, thread, now, {
-          text: sent.text,
-          prompt: sent.prompt,
-          skills: sent.skills,
-        }),
-      ];
-    }
     case 'thread.answerQuestions': {
       const stored = requireThread(read, command.threadId);
       // The assistant's, and a main thread's since it has the app tools (orchestrator threads
       // spec 24).
-      const main = stored.kind === 'chat' && !stored.parentThreadId && stored.runId === null;
+      const main = stored.kind === 'chat' && !stored.parentThreadId;
       if (stored.kind !== 'assistant' && !main) {
         throw new CommandRejected(
           'rejected',
@@ -1209,12 +1182,6 @@ export function decideThread(
       const thread = requireThread(read, command.threadId);
       if ((thread.archived ?? false) === command.archived) return [];
       if (command.archived) refuseWhileHelpersWork(thread, read, 'archived');
-      if (command.archived && thread.runId !== null) {
-        throw new CommandRejected(
-          'rejected',
-          "A workflow step's thread belongs to its run, so it is not archived on its own.",
-        );
-      }
       return [
         {
           kind: 'thread.archived',
@@ -1613,22 +1580,19 @@ function answerApproval(
     });
   }
   // Codex takes no message with a decline (spec 37): the turn stops and the note is the next
-  // message, as Codex's own "tell it what to do instead" does. A step's turn is not stopped, since
-  // that would stop the step; its note waits for the turn to end.
+  // message, as Codex's own "tell it what to do instead" does.
   const running = read.runningTurn(thread.id);
   if (note !== undefined && kind === 'codex' && running) {
     out.push(queueMessage(read, context, thread, running, note, []));
-    if (thread.runId === null) {
-      out.push({
-        kind: 'turn.interruptRequested',
-        aggregate: thread.id,
-        payload: {
-          threadId: thread.id,
-          turnId: running.id,
-          providerInstanceId: thread.providerInstanceId,
-        },
-      });
-    }
+    out.push({
+      kind: 'turn.interruptRequested',
+      aggregate: thread.id,
+      payload: {
+        threadId: thread.id,
+        turnId: running.id,
+        providerInstanceId: thread.providerInstanceId,
+      },
+    });
   }
   out.push(...resumeWork(read, thread.id, thread.state, now));
   return out;
@@ -1693,12 +1657,11 @@ function cutToolDiff(diff: string | undefined, read: ReadModel, context: DecideC
     : { ...cutDiff(diff, read, context), diffCounts: diffCounts(diff) };
 }
 
-// Only a thread the user started notifies; a step's thread tells through its run, and the
-// assistant has its own view.
+// Only a thread the user started notifies; the assistant has its own view.
 const threadTitleOf = (thread: Thread) =>
   thread.title.trim() === '' ? 'New thread' : thread.title;
 
-const notifiesAsChat = (thread: Thread) => thread.runId === null && thread.kind !== 'assistant';
+const notifiesAsChat = (thread: Thread) => thread.kind !== 'assistant';
 
 export const threadPath = (threadId: string) => `/chat/${threadId}`;
 
@@ -1800,7 +1763,6 @@ function decideProviderEvents(
         title: `Needs you: ${threadTitleOf(thread)}`,
         body: summary,
         path: threadPath(threadId),
-        runId: null,
         calendarItemId: null,
         threadId,
         approvalId,
@@ -1824,7 +1786,6 @@ function decideProviderEvents(
         title: `Finished: ${threadTitleOf(thread)}`,
         body: how === 'failed' ? 'The turn failed.' : '',
         path: threadPath(threadId),
-        runId: null,
         calendarItemId: null,
         threadId,
         approvalId: null,

@@ -12,15 +12,14 @@ import {
   type ViewerThread,
   type ViewerFile,
   type ViewerHostItem,
-  type ViewerPage,
 } from '@/app/runtime';
 import { eventToBinding, normalizeBinding, type KeyLike } from '@/app/keybindings';
 import { CONTEXT_PANEL_ID, isContextPanelShown, setContextPanelShown } from './panel-state';
 
-// Files and pages open in tabs of the context panel (review loop spec 6, agent workbench spec 11
-// to 14), beside the panel's own body. Tabs are UI state kept per route like the open dialogs:
-// a thread or a run has its own, and they are there again when the view comes back. What a tab
-// shows is read from the server each time it is shown.
+// Files and other items open in tabs of the context panel (agent workbench spec 11 to 14),
+// beside the panel's own body. Tabs are UI state kept per route like the open dialogs: a thread
+// has its own, and they are there again when the view comes back. What a tab shows is read from
+// the server each time it is shown.
 
 interface ViewerContext {
   readonly settings: SettingsStore;
@@ -33,11 +32,7 @@ export const panelTabsOf = (state: Pick<LayoutState, 'panelTabs'>, route: string
   state.panelTabs[route] ?? noTabs;
 
 const scopeKey = (scope: FileScope): string =>
-  'runId' in scope
-    ? `run:${scope.runId}`
-    : 'threadId' in scope
-      ? `thread:${scope.threadId}`
-      : `project:${scope.projectId}`;
+  'threadId' in scope ? `thread:${scope.threadId}` : `project:${scope.projectId}`;
 
 // One file has one tab however it is named: `src/a.ts`, `./src/a.ts`, `src\a.ts` and the full
 // path are one file, so the id is the full path with forward slashes and no `.` parts, in lower
@@ -55,8 +50,6 @@ function samePath(file: Pick<ViewerFile, 'path' | 'fullPath'>): string {
 
 export const fileTabId = (file: Pick<ViewerFile, 'scope' | 'path' | 'fullPath'>): string =>
   `file:${scopeKey(file.scope)}:${samePath(file)}`;
-export const pageTabId = (page: Pick<ViewerPage, 'runId' | 'ref'>): string =>
-  `page:${page.runId}:${page.ref}`;
 export const hostTabId = (host: Pick<ViewerHostItem, 'threadId' | 'item'>): string =>
   `host:${host.threadId}:${hostItemKey(host.item)}`;
 export const changesTabId = (threadId: string): string => `changes:${threadId}`;
@@ -71,17 +64,15 @@ export const tabName = (tab: PanelTab): string =>
         .split(/[\\/]/)
         .filter((part) => part !== '')
         .at(-1) ?? tab.file.path)
-    : tab.kind === 'page'
-      ? tab.page.ref
-      : tab.kind === 'changes'
-        ? 'Changes'
-        : tab.kind === 'tools'
-          ? 'Tools'
-          : tab.kind === 'outline'
-            ? 'Outline'
-            : tab.kind === 'thread'
-              ? tab.thread.title
-              : tab.host.item.id;
+    : tab.kind === 'changes'
+      ? 'Changes'
+      : tab.kind === 'tools'
+        ? 'Tools'
+        : tab.kind === 'outline'
+          ? 'Outline'
+          : tab.kind === 'thread'
+            ? tab.thread.title
+            : tab.host.item.id;
 
 // A route whose last tab closes leaves no entry behind.
 function updateTabs(layout: LayoutStore, route: string, change: (tabs: PanelTabs) => PanelTabs) {
@@ -139,14 +130,14 @@ function openTab(context: ViewerContext, route: string, tab: PanelTab): void {
   if (!isContextPanelShown(context)) setContextPanelShown(context, true);
 }
 
-// A file of a run (its artifacts) or of a thread or project. `runId` is a run's scope.
-export type FileOpening = Pick<ViewerFile, 'path' | 'fullPath' | 'from'> &
-  ({ readonly runId: string } | { readonly scope: FileScope });
+// A file of a thread or project.
+export type FileOpening = Pick<ViewerFile, 'path' | 'fullPath' | 'from'> & {
+  readonly scope: FileScope;
+};
 
 export function openFile(context: ViewerContext, opening: FileOpening): void {
-  const scope = 'scope' in opening ? opening.scope : { runId: opening.runId };
   const file: ViewerFile = {
-    scope,
+    scope: opening.scope,
     path: opening.path,
     fullPath: opening.fullPath,
     from: opening.from,
@@ -154,11 +145,6 @@ export function openFile(context: ViewerContext, opening: FileOpening): void {
     read: undefined,
   };
   openTab(context, file.from, { kind: 'file', id: fileTabId(file), file });
-}
-
-// A linked Confluence page (review loop spec 35).
-export function openPage(context: ViewerContext, page: ViewerPage): void {
-  openTab(context, page.from, { kind: 'page', id: pageTabId(page), page });
 }
 
 // An item a chat links to (agent workbench spec 21), in a tab of the view it was opened from.
@@ -187,14 +173,6 @@ export function openThreadTab(context: ViewerContext, thread: ViewerThread): voi
 
 export const selectedTab = (tabs: PanelTabs): PanelTab | undefined =>
   tabs.tabs.find((tab) => tab.id === tabs.selected);
-
-export function shownPage(
-  state: Pick<LayoutState, 'panelTabs'>,
-  pathname: string,
-): ViewerPage | undefined {
-  const tab = selectedTab(panelTabsOf(state, pathname));
-  return tab?.kind === 'page' ? tab.page : undefined;
-}
 
 // The file the panel shows for the view on screen, if a file tab is selected.
 export function shownFile(

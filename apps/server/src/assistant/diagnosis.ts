@@ -6,41 +6,23 @@ import {
   lacksRequiredModel,
   modelMark,
   providerKindLabels,
-  isEventTrigger,
-  isLiveRunState,
-  projectCodeHost,
   resolveZoneSetting,
   settingGroupTitles,
   settingsRegistry,
   trackerConnectionLabels,
-  triggerEventLabel,
   type AssistantPlace,
   type Diagnosis,
   type DiagnosisProblem,
   type TrackerConnection,
 } from '@wow/contracts';
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  not,
-  or,
-  sql,
-  type SQL,
-} from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, not, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
-import { runPath } from '../core/workflows.js';
 import * as t from '../db/schema.js';
 import { skillInstalled, type Reader, type ReaderDeps } from './readers.js';
 
 // "Why does this not work" (app assistant spec 19, 20): what is failing in the setup, each with
 // its reason and the setting or view to fix it in. Everything comes from stored state and the
-// sign-in test Settings runs, never from a thread's messages or a step's final message: a run
-// is explained by its stored error.
+// sign-in test Settings runs, never from a thread's messages.
 
 const none = z.object({}).strict();
 
@@ -54,8 +36,6 @@ const trackersPlace: AssistantPlace = {
   label: `Settings → ${settingGroupTitles.trackers}`,
   path: '/settings/trackers',
 };
-// A trigger is a card on the calendar now (orchestrator threads spec 27, 34).
-const triggersPlace: AssistantPlace = { label: 'Calendar', path: '/calendar' };
 const projectPlace = (name: string): AssistantPlace => ({
   label: `Settings → Projects → ${name}`,
   path: '/settings/projects',
@@ -65,15 +45,6 @@ const workflowPlace = (_id: string, name: string): AssistantPlace => ({
   label: `Settings → Workflows → ${name}`,
   path: '/settings/workflows',
 });
-
-function settingPlace(key: string): AssistantPlace {
-  const group = Object.hasOwn(settingsRegistry, key)
-    ? settingsRegistry[key as keyof typeof settingsRegistry].group
-    : undefined;
-  return group
-    ? { label: `Settings → ${settingGroupTitles[group]}`, path: `/settings/${group}` }
-    : trackersPlace;
-}
 
 const reasonOf = (error: unknown) =>
   error instanceof Error ? error.message : 'It failed without saying why.';
@@ -158,59 +129,6 @@ function providers(deps: ReaderDeps): DiagnosisProblem[] {
     }));
 }
 
-// A read of a run counts only while the run is live: an ended run is not read again, so its
-// last error would stay for good. Plan reads stay while the plan is read.
-function hostReads(deps: ReaderDeps): DiagnosisProblem[] {
-  const failed = [
-    ...deps.db
-      .select()
-      .from(t.hostReads)
-      .where(isNotNull(t.hostReads.error))
-      .orderBy(asc(t.hostReads.id))
-      .all()
-      .map((row) => ({
-        ...row,
-        runId: row.scope === 'run' ? row.id.slice('run:'.length) : null,
-      })),
-    ...deps.db
-      .select()
-      .from(t.ticketReads)
-      .where(isNotNull(t.ticketReads.error))
-      .orderBy(asc(t.ticketReads.id))
-      .all(),
-    ...deps.db
-      .select()
-      .from(t.pageReads)
-      .where(isNotNull(t.pageReads.error))
-      .orderBy(asc(t.pageReads.id))
-      .all(),
-  ];
-  const runIds = [...new Set(failed.flatMap((row) => (row.runId === null ? [] : [row.runId])))];
-  const live = new Set(
-    runIds.length === 0
-      ? []
-      : deps.db
-          .select({ id: t.workflowRuns.id, state: t.workflowRuns.state })
-          .from(t.workflowRuns)
-          .where(inArray(t.workflowRuns.id, runIds))
-          .all()
-          .filter((run) => isLiveRunState(run.state))
-          .map((run) => run.id),
-  );
-  return failed.flatMap((row) =>
-    row.error && (row.runId === null || live.has(row.runId))
-      ? [
-          {
-            kind: 'hostRead' as const,
-            what: `Reading ${row.hostName}`,
-            reason: row.error.message,
-            place: row.error.setting ? settingPlace(row.error.setting) : trackersPlace,
-          },
-        ]
-      : [],
-  );
-}
-
 function skills(
   deps: ReaderDeps,
   workflows: readonly (typeof t.workflows.$inferSelect)[],
@@ -280,136 +198,12 @@ interface Names {
 // An event trigger that could not start its run records the event with no run and stores a
 // "Trigger failed" notification under `<trigger>:<event>:failed` (see core/triggers.ts); its
 // newest failure counts until the trigger starts a run after it.
-function triggers(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
-  const failures = deps.db
-    .select({ trigger: t.triggers, body: t.notifications.body })
-    .from(t.triggerEvents)
-    .innerJoin(
-      t.notifications,
-      eq(
-        t.notifications.id,
-        sql`${t.triggerEvents.triggerId} || ':' || ${t.triggerEvents.eventId} || ':failed'`,
-      ),
-    )
-    .innerJoin(t.triggers, eq(t.triggers.id, t.triggerEvents.triggerId))
-    .where(
-      and(
-        isNull(t.triggerEvents.runId),
-        eq(t.notifications.kind, 'failed'),
-        eq(t.triggers.kind, 'event'),
-        sql`not exists (select 1 from ${t.triggerEvents} as other join ${t.notifications} as newer on newer.id = other.trigger_id || ':' || other.event_id || ':failed' where other.trigger_id = ${t.triggerEvents.triggerId} and other.run_id is null and newer.kind = 'failed' and (julianday(newer.at) > julianday(${t.notifications.at}) or (julianday(newer.at) = julianday(${t.notifications.at}) and newer.id > ${t.notifications.id})))`,
-        sql`not exists (select 1 from ${t.triggerEvents} as started where started.trigger_id = ${t.triggerEvents.triggerId} and started.run_id is not null and julianday(started.at) > julianday(${t.notifications.at}))`,
-      ),
-    )
-    .orderBy(desc(t.notifications.at))
-    .limit(limit)
-    .all();
-  const reads = deps.db
-    .select({
-      projectId: t.hostReads.projectId,
-      host: t.hostReads.host,
-      fetchedAt: t.hostReads.fetchedAt,
-    })
-    .from(t.hostReads)
-    .where(
-      inArray(t.hostReads.projectId, [
-        ...new Set(failures.flatMap(({ trigger }) => trigger.projectId ?? [])),
-      ]),
-    )
-    .all();
-  return failures.flatMap(({ trigger, body }) =>
-    isEventTrigger(trigger)
-      ? [
-          {
-            kind: 'trigger' as const,
-            what: `Trigger "${triggerEventLabel(trigger.event, projectCodeHost(reads, trigger.projectId, deps.trackers.codeHost(trigger.projectId)))}" for ${names.workflows.get(trigger.workflowId) ?? trigger.workflowId} in ${names.projects.get(trigger.projectId) ?? trigger.projectId}`,
-            reason: `It could not start a run: ${body}`,
-            place: triggersPlace,
-          },
-        ]
-      : [],
-  );
-}
-
-// A run of the workflow in the project that started after `startedAt` and ended done. Times are
-// compared as instants: a card's start keeps the offset the command gave it, so text order is
-// not time order.
-const doneAfter = (
-  workflowId: typeof t.workflowRuns.workflowId | typeof t.calendarItems.workflowId,
-  projectId: typeof t.workflowRuns.projectId | typeof t.calendarItems.projectId,
-  startedAt: typeof t.workflowRuns.startedAt | typeof t.calendarItems.start,
-) =>
-  sql`exists (select 1 from ${t.workflowRuns} as later where later.state = 'done' and later.workflow_id = ${workflowId} and later.project_id = ${projectId} and julianday(later.started_at) > julianday(${startedAt}))`;
-
 const dismissed = (decisionId: SQL) =>
   sql`exists (select 1 from ${t.decisionDismissals} where ${t.decisionDismissals.decisionId} = ${decisionId})`;
 
-// A failed run counts until a later run of the same workflow in the same project ends done; a
-// failed plan run until a later plan run of the same plan ends done. A run whose workflow or
-// project was deleted cannot be run again, so it no longer counts, nor does one the user
-// dismissed from the decision queue.
-function runs(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
-  const candidates = deps.db
-    .select({ run: t.workflowRuns })
-    .from(t.workflowRuns)
-    .innerJoin(t.workflows, eq(t.workflows.id, t.workflowRuns.workflowId))
-    .innerJoin(t.projects, eq(t.projects.id, t.workflowRuns.projectId))
-    .where(
-      and(
-        eq(t.workflowRuns.state, 'failed'),
-        not(
-          doneAfter(t.workflowRuns.workflowId, t.workflowRuns.projectId, t.workflowRuns.startedAt),
-        ),
-        not(dismissed(sql`'failedRun:' || ${t.workflowRuns.id}`)),
-      ),
-    )
-    .orderBy(desc(t.workflowRuns.startedAt))
-    .limit(limit)
-    .all();
-  const failed = candidates.map(({ run }): DiagnosisProblem => {
-    const workflow = names.workflows.get(run.workflowId) ?? run.workflowId;
-    const step = run.steps.find((entry) => entry.state === 'failed' && entry.error);
-    const reason = step?.error
-      ? `Step ${step.stepId} failed: ${step.error}`
-      : run.workingCopy?.error
-        ? `Its working copy failed: ${run.workingCopy.error}`
-        : 'It failed without an error message.';
-    return {
-      kind: 'run',
-      what: `Run of ${workflow} in ${names.projects.get(run.projectId) ?? run.projectId}, started ${names.time(run.startedAt)}`,
-      reason,
-      place: { label: `The run of ${workflow}`, path: runPath(run.id) },
-    };
-  });
-  const failedPlans = deps.db
-    .select({ run: t.planRuns })
-    .from(t.planRuns)
-    .innerJoin(t.projects, eq(t.projects.id, t.planRuns.projectId))
-    .where(
-      and(
-        eq(t.planRuns.state, 'failed'),
-        sql`not exists (select 1 from ${t.planRuns} as later where later.state = 'done' and later.plan_id = ${t.planRuns.planId} and julianday(later.started_at) > julianday(${t.planRuns.startedAt}))`,
-      ),
-    )
-    .orderBy(desc(t.planRuns.startedAt))
-    .limit(limit)
-    .all();
-  const planRuns = failedPlans.map(({ run }): DiagnosisProblem => ({
-    kind: 'run',
-    what: `Plan run of ${run.intentId} in ${names.projects.get(run.projectId) ?? run.projectId}, started ${names.time(run.startedAt)}`,
-    reason: run.message ?? 'It failed without an error message.',
-    place: {
-      label: `Plans → ${run.intentId}`,
-      path: `/plans/${encodeURIComponent(run.projectId)}/${encodeURIComponent(run.intentId)}`,
-    },
-  }));
-  return [...failed, ...planRuns];
-}
-
-// A card with a workflow whose start passed without a run: missed, or failed before its run
-// could start (the reason is in its "Trigger failed" notification). It counts until a run of
-// its workflow in its project that started after the card's start ends done, or the user
-// dismisses it from the decision queue.
+// A card with a workflow whose start passed without starting its thread: missed, or failed
+// before its thread could start (the reason is in its "Trigger failed" notification). It counts
+// until the card starts a thread, or the user dismisses it from the decision queue.
 function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[] {
   const policy = deps.settings.get('scheduler.missedPolicy');
   const policyLabel = settingsRegistry['scheduler.missedPolicy'].options?.[policy]?.label ?? policy;
@@ -418,10 +212,10 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
       card: t.calendarItems,
       failure: sql<
         string | null
-      >`(select failure.body from ${t.notifications} as failure where failure.kind = 'failed' and failure.run_id is null and failure.calendar_item_id = "calendar_items"."id" order by failure.at desc limit 1)`,
+      >`(select failure.body from ${t.notifications} as failure where failure.kind = 'failed' and failure.calendar_item_id = "calendar_items"."id" order by failure.at desc limit 1)`,
       offered: sql<
         number | null
-      >`(select card_trigger.offer_run_now from ${t.triggers} as card_trigger where card_trigger.kind = 'card' and card_trigger.calendar_item_id = "calendar_items"."id" limit 1)`,
+      >`(select card_trigger.offer_run_now from ${t.triggers} as card_trigger where card_trigger.calendar_item_id = "calendar_items"."id" limit 1)`,
     })
     .from(t.calendarItems)
     .where(
@@ -430,11 +224,8 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
         isNotNull(t.calendarItems.workflowId),
         isNotNull(t.calendarItems.projectId),
         or(
-          and(eq(t.calendarItems.state, 'failed'), isNull(t.calendarItems.runId)),
+          and(eq(t.calendarItems.state, 'failed'), isNull(t.calendarItems.threadId)),
           eq(t.calendarItems.state, 'missed'),
-        ),
-        not(
-          doneAfter(t.calendarItems.workflowId, t.calendarItems.projectId, t.calendarItems.start),
         ),
         not(dismissed(sql`'missedCard:' || ${t.calendarItems.id}`)),
       ),
@@ -447,9 +238,9 @@ function cards(deps: ReaderDeps, limit: number, names: Names): DiagnosisProblem[
     if (card.state === 'failed') {
       const prefix = `${card.title}: `;
       const why = failure?.startsWith(prefix) ? failure.slice(prefix.length) : failure;
-      reason = `Its run could not start${why ? `: ${why}` : '.'}`;
+      reason = `Its thread could not start${why ? `: ${why}` : '.'}`;
     } else {
-      reason = `Its start time passed without a run: it was put in the past, or wow was closed or the scheduler paused then. Missed triggers are set to "${policyLabel}" in Settings → Scheduler.${offered ? ' Run now on the card starts it.' : ''}`;
+      reason = `Its start time passed without starting its thread: it was put in the past, or wow was closed or the scheduler paused then. Missed triggers are set to "${policyLabel}" in Settings → Scheduler.${offered ? ' Run now on the card starts it.' : ''}`;
     }
     return {
       kind: 'card',
@@ -504,11 +295,8 @@ export async function diagnose(deps: ReaderDeps): Promise<Diagnosis> {
   const problems = [
     ...providers(deps),
     ...tested.problems,
-    ...hostReads(deps),
     ...skills(deps, workflows),
     ...models(deps, workflows),
-    ...triggers(deps, limit, names),
-    ...runs(deps, limit, names),
     ...cards(deps, limit, names),
   ];
   const checked = [
@@ -518,10 +306,7 @@ export async function diagnose(deps: ReaderDeps): Promise<Diagnosis> {
     tested.tested.length === 0
       ? 'connection tests: no host connection is set up'
       : `connection tests: ${tested.tested.join(', ')}`,
-    'the last read of each host',
     `skills and models of ${plural(workflows.length, 'workflow')}`,
-    'event triggers',
-    'runs and plan runs',
     'calendar cards with a workflow',
   ];
   return {
@@ -538,7 +323,7 @@ export async function diagnose(deps: ReaderDeps): Promise<Diagnosis> {
 export const diagnosisReaders = {
   [assistantDiagnosisTool]: {
     description:
-      'Says what is failing in the setup and where to fix each: provider instances that are not signed in, failed connection tests of the hosts in use, failed host reads, workflow steps whose skill is not installed or that lack a model their provider needs, event triggers that failed, failed runs with their error, and cards that did not start and why. Use it when the user asks why something does not work, and give each place as a link.',
+      'Says what is failing in the setup and where to fix each: provider instances that are not signed in, failed connection tests of the hosts in use, workflow steps whose skill is not installed or that lack a model their provider needs, and cards that did not start and why. Use it when the user asks why something does not work, and give each place as a link.',
     input: none,
     read: (_args, deps) => diagnose(deps),
   } satisfies Reader<typeof none>,

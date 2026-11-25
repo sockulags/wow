@@ -114,23 +114,17 @@ export function trackerSuggestions(input: SuggestionInput): TrackerSuggestion[] 
   return suggestions;
 }
 
-export interface ItemLinks {
-  // The item's cards with a project, newest first.
-  readonly cards: readonly { readonly projectId: string }[];
-  // The item's runs, newest first.
-  readonly runs: readonly { readonly projectId: string }[];
-}
-
 export interface TargetChoice {
   // undefined: work it out from the item; null: the defaults, no project; else that project.
   readonly requested: string | null | undefined;
-  readonly links: ItemLinks;
+  // The item's cards with a project, newest first.
+  readonly cards: readonly { readonly projectId: string }[];
   readonly projects: readonly { readonly id: string; readonly name: string }[];
 }
 
 // Whose tracker settings a publish uses: the project chosen in the dialog, else the project of
-// the item's newest card, else of its newest run. Without any, the dialog asks while projects
-// exist (needsProject) and the defaults apply until it does.
+// the item's newest card. Without one, the dialog asks while projects exist (needsProject) and
+// the defaults apply until it does.
 export function publishTarget(choice: TargetChoice): {
   readonly project: PublishProject | null;
   readonly needsProject: boolean;
@@ -142,14 +136,9 @@ export function publishTarget(choice: TargetChoice): {
     if (!project) return { project: null, needsProject: choice.projects.length > 0 };
     return { project: { ...project, source: 'chosen' }, needsProject: false };
   }
-  for (const [links, source] of [
-    [choice.links.cards, 'card'],
-    [choice.links.runs, 'run'],
-  ] as const) {
-    for (const link of links) {
-      const project = named(link.projectId);
-      if (project) return { project: { ...project, source }, needsProject: false };
-    }
+  for (const card of choice.cards) {
+    const project = named(card.projectId);
+    if (project) return { project: { ...project, source: 'card' }, needsProject: false };
   }
   return { project: null, needsProject: choice.projects.length > 0 };
 }

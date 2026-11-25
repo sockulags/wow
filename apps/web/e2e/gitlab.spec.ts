@@ -7,7 +7,7 @@ import { e2eChangesHome, e2eChangesTrackerPort, e2eGitLabProjectPath } from './e
 // U12 ground truth (review loop spec 34, with 31 and 32 for GitLab) against the Changes copy of
 // the e2e server: project `tea-field` has its git remote on the mock GitLab, under a nested group,
 // is on the branch of an open merge request, and has a plan whose units have merge requests
-// there. The first test follows the plan and the tests share that server, so they run in order.
+// there. The tests share that server, so they run in order.
 test.describe.configure({ mode: 'serial' });
 
 const control = `http://127.0.0.1:${e2eChangesTrackerPort}`;

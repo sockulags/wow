@@ -66,8 +66,6 @@ describe('migration 0027_thread_list', () => {
       permissionMode: 'default',
       state: 'idle',
       pinned: false,
-      runId: null,
-      stepId: null,
       createdAt: '2026-11-01T08:00:00.000Z',
       updatedAt: '2026-11-01T08:00:00.000Z',
     };
@@ -84,8 +82,8 @@ describe('migration 0027_thread_list', () => {
     old
       .prepare(
         `insert into notifications (id, at, kind, title, body, path, run_id, calendar_item_id)
-         values ('run-1:failed', '2026-11-01T09:00:00.000Z', 'failed', 'Workflow run failed',
-          'Feature', '/workflows/runs/run-1', 'run-1', null)`,
+         values ('card-1:failed', '2026-11-01T09:00:00.000Z', 'failed', 'Trigger failed',
+          'Feature', '/calendar', null, 'card-1')`,
       )
       .run();
     old
@@ -117,14 +115,13 @@ describe('migration 0027_thread_list', () => {
     });
     expect(snapshot(server.database.db, { topic: 'notifications' })).toEqual([
       {
-        id: 'run-1:failed',
+        id: 'card-1:failed',
         at: '2026-11-01T09:00:00.000Z',
         kind: 'failed',
-        title: 'Workflow run failed',
+        title: 'Trigger failed',
         body: 'Feature',
-        path: '/workflows/runs/run-1',
-        runId: 'run-1',
-        calendarItemId: null,
+        path: '/calendar',
+        calendarItemId: 'card-1',
         threadId: null,
         approvalId: null,
       },
