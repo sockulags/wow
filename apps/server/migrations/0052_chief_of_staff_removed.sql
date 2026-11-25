@@ -24,21 +24,39 @@ DELETE FROM `events` WHERE `kind` IN (
 DELETE FROM `events`
   WHERE `kind` = 'notification.sent' AND json_extract(`payload`, '$.kind') IN ('briefing', 'reminder');
 --> statement-breakpoint
--- The removed settings, with the assistant's changes and proposals of them, which could no longer
--- be undone or accepted.
+-- The assistant's changes and proposals of a setting that is gone could no longer be undone or
+-- accepted: the ones removed here, and the ones 0051 removed, whose records it left.
 DELETE FROM `assistant_changes`
-  WHERE json_extract(`target`, '$.kind') = 'setting' AND (
-    json_extract(`target`, '$.id') LIKE 'assistant.delegation:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.permissions:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.followTurns:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.maxDelegatedLive:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.briefsPerDay:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.briefings:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.briefingsPerDay:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.briefAfterMeetingMinutes:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.briefAfterIdleMinutes:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.remindAfterMinutes:%' OR
-    json_extract(`target`, '$.id') LIKE 'assistant.notes:%'
+  WHERE json_extract(`target`, '$.kind') = 'setting'
+    AND substr(json_extract(`target`, '$.id'), 1, instr(json_extract(`target`, '$.id'), ':') - 1) IN (
+    'assistant.delegation',
+    'assistant.permissions',
+    'assistant.followTurns',
+    'assistant.maxDelegatedLive',
+    'assistant.briefsPerDay',
+    'assistant.briefings',
+    'assistant.briefingsPerDay',
+    'assistant.briefAfterMeetingMinutes',
+    'assistant.briefAfterIdleMinutes',
+    'assistant.remindAfterMinutes',
+    'assistant.notes',
+    'workflows.handoverTemplate',
+    'workflows.sendBackTemplate',
+    'workflows.goBackTemplate',
+    'workflows.unitPromptTemplate',
+    'workflows.planRunOnFailure',
+    'workflows.planRunParallel',
+    'workflows.attachBuiltInSkills',
+    'workflows.gateChecksTimeoutMinutes',
+    'workflows.maxStepVisits',
+    'workflows.templates',
+    'plans.intentsDirectory',
+    'plans.writeSettleMs',
+    'hosts.polling',
+    'hosts.pollSeconds',
+    'hosts.listFallbackCount',
+    'assistant.readMaxDiffLines',
+    'appearance.changesListWidth'
   );
 --> statement-breakpoint
 DELETE FROM `assistant_proposals`
@@ -53,9 +71,27 @@ DELETE FROM `assistant_proposals`
     'assistant.briefAfterMeetingMinutes',
     'assistant.briefAfterIdleMinutes',
     'assistant.remindAfterMinutes',
-    'assistant.notes'
+    'assistant.notes',
+    'workflows.handoverTemplate',
+    'workflows.sendBackTemplate',
+    'workflows.goBackTemplate',
+    'workflows.unitPromptTemplate',
+    'workflows.planRunOnFailure',
+    'workflows.planRunParallel',
+    'workflows.attachBuiltInSkills',
+    'workflows.gateChecksTimeoutMinutes',
+    'workflows.maxStepVisits',
+    'workflows.templates',
+    'plans.intentsDirectory',
+    'plans.writeSettleMs',
+    'hosts.polling',
+    'hosts.pollSeconds',
+    'hosts.listFallbackCount',
+    'assistant.readMaxDiffLines',
+    'appearance.changesListWidth'
   );
 --> statement-breakpoint
+-- The removed settings.
 DELETE FROM `settings` WHERE `key` IN (
   'assistant.delegation',
   'assistant.permissions',

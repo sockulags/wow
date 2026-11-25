@@ -1921,8 +1921,8 @@ log 2026-11-23). Events are never replayed, so the migration leaves only what it
 the assistant started keeps its conversation as an ordinary chat thread (`startedBy` back to
 null, `follow_turns` dropped); a question it answered keeps its answer without the quoted words
 (`answered_because` dropped); the notifications of kind `briefing` and `reminder`, the events
-of the removed kinds, and the assistant's changes and proposals of the removed settings are
-deleted with those settings' rows; and the tables `assistant_permission_uses`, `briefings`,
+of the removed kinds, and the assistant's changes and proposals of the removed settings (and of the
+settings 0051 removed, whose records it left) are deleted with those settings' rows; and the tables `assistant_permission_uses`, `briefings`,
 `decision_briefs`, `decision_dismissals` and `decision_reminders` are dropped. The web app no
 longer sends `presence.back`. A missed card counts in `diagnose_setup` until it starts a thread.
 
@@ -2171,8 +2171,8 @@ out. Undo checks every part with `undoRefusal` first and is refused, changing no
 changed when any thing the file set changed again; otherwise it decides every inverse, newest
 part first, and `setup.undone` marks the row. A part that set a setting wow no longer has (its
 row deleted by the migration that removed it, such as 0051 or 0052) is passed over: there is
-nothing to put back. A step that refuses rolls back the whole transaction. Both commands are refused from the assistant in the class table: the user reads the
-preview and presses Apply.
+nothing to put back. A step that refuses rolls back the whole transaction. Both commands are
+refused from the assistant in the class table: the user reads the preview and presses Apply.
 
 **The view** (`apps/web/src/settings/setup.ts`, `setup-section.tsx`). Settings → Advanced has a
 "Setup file" section: "Save setup to a file" (download through a blob link, a toast that says

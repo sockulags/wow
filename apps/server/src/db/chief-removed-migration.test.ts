@@ -104,6 +104,8 @@ describe('migration 0052_chief_of_staff_removed', () => {
     }
     for (const [id, key] of [
       ['change-notes', 'assistant.notes'],
+      // A setting 0051 removed, whose change it left.
+      ['change-steps', 'workflows.maxStepVisits'],
       ['change-snap', 'calendar.snapMinutes'],
     ] as const) {
       insert(old, 'assistant_changes', {
@@ -119,6 +121,7 @@ describe('migration 0052_chief_of_staff_removed', () => {
     }
     for (const [id, key] of [
       ['proposal-delegation', 'assistant.delegation'],
+      ['proposal-polling', 'hosts.polling'],
       ['proposal-weekends', 'calendar.showWeekends'],
     ] as const) {
       insert(old, 'assistant_proposals', {
