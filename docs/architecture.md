@@ -848,7 +848,13 @@ restore` stay, so a card made before workflows were files still names its stored
 - **Migration 0051** (`0051_runs_plans_and_event_triggers_removed`, tested in
   `db/runs-removed-migration.test.ts`). Events are never replayed, so what a removed kind wrote
   stays only where the migration leaves it. A step thread becomes an ordinary thread marked
-  `done`. A card that followed a live run and has no thread becomes `stopped`, and a backlog item
+  `done`. One whose run had its own working copy moves to its project's folder and starts a new
+  session there: nothing settles or removes run copies any more, an event run may have left one
+  at a fork's head, and an ordinary thread offers Commit and push, which run the repository's
+  hooks. Those copies stay on disk and in `git worktree list` until removed by hand
+  (`git worktree remove`). A card that ran before cards started threads has no thread, so a
+  fired occurrence, or a fired trigger on a card that did not fail, counts as started
+  (`hasStarted` in `core/triggers.ts`) and a move does not run it again. A card that followed a live run and has no thread becomes `stopped`, and a backlog item
   whose run was going goes back to `planned`. The run notifications, the events of the removed
   kinds (`workflowRun.changed`, `planRun.changed`, `plans.synced`, `hosts.synced`,
   `tickets.synced`, `pages.synced`, `trigger.eventSeen`, and `trigger.set` and `trigger.deleted`

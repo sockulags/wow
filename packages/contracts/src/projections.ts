@@ -577,11 +577,9 @@ export const Workflow = z.object({
   // "Own working copy": each run works in a Git worktree of its own instead of the project
   // folder (review loop spec 36, 39). Absent means off.
   ownWorkingCopy: z.boolean().optional(),
-  // "For units": a plan run may run this workflow once per unit of a plan (review loop spec 40).
-  // Absent means off.
+  // "For units", kept as data since plan runs went (orchestrator threads U8). Absent means off.
   forUnits: z.boolean().optional(),
-  // How often one step may start in a run before the run waits for the user (workflow branches
-  // spec 9). Absent or null: the `workflows.maxStepVisits` setting.
+  // The workflow's own limit on step starts from when runs had one, kept as data.
   maxStepVisits: z.number().int().min(1).max(50).nullable().optional(),
   createdAt: Timestamp,
   updatedAt: Timestamp,

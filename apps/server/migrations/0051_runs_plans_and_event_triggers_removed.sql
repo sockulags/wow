@@ -2,6 +2,16 @@
 -- (orchestrator threads spec 35). Step threads stay as ordinary threads, marked done.
 UPDATE `threads` SET `state` = 'done' WHERE `run_id` IS NOT NULL AND `state` != 'done';
 --> statement-breakpoint
+-- A step thread of a run with its own working copy worked in that copy, which nothing settles or
+-- removes any more and which an event run may have left at a fork's head. As an ordinary thread
+-- it would offer Commit and push there, which run the repository's hooks (thread work Security),
+-- so it moves to its project's folder and starts a new session there.
+UPDATE `threads` SET
+  `cwd` = (SELECT `projects`.`cwd` FROM `projects` WHERE `projects`.`id` = `threads`.`project_id`),
+  `provider_session_id` = NULL
+  WHERE `run_id` IN (SELECT `id` FROM `workflow_runs` WHERE `working_copy` IS NOT NULL)
+    AND `project_id` IN (SELECT `id` FROM `projects`);
+--> statement-breakpoint
 -- A card or backlog item that followed a run that is now gone no longer waits for it.
 UPDATE `calendar_items` SET `state` = 'stopped'
   WHERE `run_id` IS NOT NULL AND `thread_id` IS NULL AND `state` IN ('running', 'waiting');

@@ -132,8 +132,6 @@ const defineSetting = <S extends z.ZodType>(definition: SettingDefinition<S>) =>
 
 // The context panel's width range; the web app's resize handle stops at the same bounds.
 export const contextPanelWidthBounds = { min: 280, max: 720 } as const;
-// The list of changed files beside a run's diff (agent workbench spec 94).
-export const changesListWidthBounds = { min: 120, max: 800 } as const;
 
 export const Weekday = z.enum([
   'monday',

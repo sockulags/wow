@@ -290,7 +290,6 @@ export async function startServer(options: StartOptions = {}): Promise<RunningSe
   // Set once the Outlook hook has started, which happens after the socket listens.
   let outlook: OutlookService | undefined;
   workspaces.recover();
-  workspaces.recover();
   void snapshots
     .expire()
     .catch((error: unknown) => logger.warn('old snapshots were not dropped', error));

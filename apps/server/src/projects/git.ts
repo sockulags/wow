@@ -700,23 +700,6 @@ export async function fetchRemote(
   );
 }
 
-// Fetches one ref of the remote (a pull request's `refs/pull/<n>/head`) without storing it under
-// a name, so its commit can be checked out by sha.
-export async function fetchRemoteRef(
-  folder: string,
-  remote: string,
-  ref: string,
-  options: GitRunOptions,
-): Promise<GitOutcome> {
-  return outcomeOf(
-    await runGit(
-      folder,
-      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', '--end-of-options', remote, ref],
-      options,
-    ),
-  );
-}
-
 // The branch the remote calls its default (`refs/remotes/<remote>/HEAD`, which a clone sets), or
 // null when the repository does not say.
 export async function readRemoteDefaultBranch(
@@ -781,18 +764,6 @@ export async function readCommitsAhead(
 // Windows refuses paths over 260 characters unless git is told to use long ones.
 const longPaths = ['-c', 'core.longpaths=true'];
 
-// A worktree of the project's repository at `target`, on the commit and on no branch.
-export async function addWorktree(
-  folder: string,
-  target: string,
-  commit: string,
-  options: GitRunOptions,
-): Promise<GitOutcome> {
-  return outcomeOf(
-    await runGit(folder, ['worktree', 'add', '--detach', target, commit], options, longPaths),
-  );
-}
-
 // A worktree on a branch the repository has. Git refuses when another folder is on the branch.
 export async function addBranchWorktree(
   folder: string,
@@ -830,24 +801,6 @@ export async function checkBranchName(
     ok: false,
     message: checked.missing ? checked.message : `${branch} is not a name Git takes for a branch`,
   };
-}
-
-// A worktree on a new local branch that follows the remote's branch of the same name.
-export async function addTrackingWorktree(
-  folder: string,
-  target: string,
-  branch: string,
-  remote: string,
-  options: GitRunOptions,
-): Promise<GitOutcome> {
-  return outcomeOf(
-    await runGit(
-      folder,
-      ['worktree', 'add', '--track', '-b', branch, target, `${remote}/${branch}`],
-      options,
-      longPaths,
-    ),
-  );
 }
 
 // Removes the worktree and its folder. Without `force` git refuses when a tracked file is

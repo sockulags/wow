@@ -113,8 +113,13 @@ const cardState = (
         },
       ];
 
-// Whether the card has started a thread yet.
-const hasStarted = (card: CalendarItem): boolean => (card.threadId ?? null) !== null;
+// Whether the card has started work yet: a thread, or, for a card that ran before cards started
+// threads, a run that migration 0051 removed. Such a card has no thread but a fired occurrence, or
+// a fired trigger without the failure of a thread that could not start.
+const hasStarted = (card: CalendarItem, read: ReadModel): boolean =>
+  (card.threadId ?? null) !== null ||
+  read.cardOccurrences(card.id).some((occurrence) => occurrence.outcome === 'fired') ||
+  (read.trigger(triggerIdFor(card.id))?.state === 'fired' && card.state !== 'failed');
 
 // What the card's trigger row names as its workflow.
 const workflowRef = (card: CalendarItem): string => card.workflowName ?? card.workflowId ?? '';
@@ -131,7 +136,7 @@ export function cardTriggerEvents(card: CalendarItem, read: ReadModel, context: 
   if (card.source !== 'local') return [];
   if (isRepeating(card)) return seriesTriggerEvents(card, read, context);
   const existing = read.trigger(triggerIdFor(card.id));
-  if (hasStarted(card)) {
+  if (hasStarted(card, read)) {
     // A card that stopped repeating may still hold a trigger for a later occurrence. It goes
     // back to a fired trigger at the occurrence that started its thread.
     if (existing?.state !== 'scheduled') return [];
@@ -182,7 +187,7 @@ function seriesTriggerEvents(
   handled = false,
 ): DomainEvent[] {
   const existing = read.trigger(triggerIdFor(card.id));
-  const started = startedThreadId !== undefined || hasStarted(card);
+  const started = startedThreadId !== undefined || hasStarted(card, read);
   let next: Trigger | undefined;
   const upcoming = startsWork(card)
     ? nextOccurrence(card, read, Date.parse(context.now), alsoTaken)

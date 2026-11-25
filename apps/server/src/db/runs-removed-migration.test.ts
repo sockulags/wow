@@ -309,3 +309,118 @@ describe('migration 0051_runs_plans_and_event_triggers_removed', () => {
     check(server.database.sqlite);
   });
 });
+
+describe('what a run left behind (migration 0051)', () => {
+  it('moves the step threads of a run with its own copy to the project folder, and a card that ran keeps its fired trigger when moved', async () => {
+    const home = path.join(root, 'before');
+    await mkdir(home, { recursive: true });
+    const old = new Sqlite(path.join(home, databaseFileName));
+    migrate(drizzle({ client: old, casing: 'snake_case' }), {
+      migrationsFolder: await previousMigrations(),
+    });
+    insert(old, 'projects', { id: 'tea', name: 'Tea', cwd: '/home/me/tea', created_at: at });
+    insert(old, 'workflows', {
+      id: 'delivery',
+      name: 'Delivery',
+      steps: [],
+      own_working_copy: 1,
+      for_units: 0,
+      created_at: at,
+      updated_at: at,
+    });
+    // A step thread in the run's own copy, which an event run may have left at a fork's head.
+    insert(
+      old,
+      'threads',
+      thread('in-copy', {
+        project_id: 'tea',
+        cwd: '/home/me/.wow/workspaces/tea-1a2b3c4d',
+        provider_session_id: 'session-in-copy',
+        run_id: 'run-copy',
+        step_id: 'build',
+        state: 'done',
+      }),
+    );
+    // A step thread of a run in the project folder stays where it was.
+    insert(
+      old,
+      'threads',
+      thread('in-folder', {
+        project_id: 'tea',
+        provider_session_id: 'session-in-folder',
+        run_id: 'run-folder',
+        step_id: 'build',
+        state: 'done',
+      }),
+    );
+    insert(old, 'workflow_runs', {
+      id: 'run-copy',
+      workflow_id: 'delivery',
+      project_id: 'tea',
+      state: 'done',
+      current_step: 0,
+      started_at: at,
+      working_copy: { path: '/home/me/.wow/workspaces/tea-1a2b3c4d', state: 'kept' },
+    });
+    insert(old, 'workflow_runs', {
+      id: 'run-folder',
+      workflow_id: 'delivery',
+      project_id: 'tea',
+      state: 'done',
+      current_step: 0,
+      started_at: at,
+    });
+    // A card that ran before cards started threads: its run is all that said it started.
+    insert(old, 'calendar_items', {
+      id: 'card-ran',
+      source: 'local',
+      title: 'Ring the bell',
+      start: '2026-11-19T09:00:00.000Z',
+      end: '2026-11-19T10:00:00.000Z',
+      zone: 'Europe/Stockholm',
+      project_id: 'tea',
+      workflow_id: 'delivery',
+      state: 'done',
+      run_id: 'run-folder',
+      updated_at: at,
+    });
+    insert(old, 'triggers', {
+      id: 'card-ran:trigger',
+      kind: 'card',
+      calendar_item_id: 'card-ran',
+      workflow_id: 'delivery',
+      run_at: '2026-11-19T09:00:00.000Z',
+      zone: 'Europe/Stockholm',
+      state: 'fired',
+      run_id: 'run-folder',
+    });
+    old.close();
+
+    server = await launch(home);
+    expect(
+      server.database.sqlite
+        .prepare('SELECT id, cwd, provider_session_id FROM threads ORDER BY id')
+        .all(),
+    ).toEqual([
+      { id: 'in-copy', cwd: '/home/me/tea', provider_session_id: null },
+      { id: 'in-folder', cwd: '/home/me/tea', provider_session_id: 'session-in-folder' },
+    ]);
+    // Moved to a time still to come, it is not run again.
+    server.engine.dispatch('move-card-ran', {
+      type: 'card.update',
+      cardId: 'card-ran',
+      start: '2099-01-05T09:00:00.000Z',
+      end: '2099-01-05T10:00:00.000Z',
+    });
+    expect(
+      server.database.sqlite
+        .prepare("SELECT state FROM triggers WHERE id = 'card-ran:trigger'")
+        .get(),
+    ).toEqual({ state: 'fired' });
+    expect(
+      server.database.sqlite
+        .prepare("SELECT state FROM calendar_items WHERE id = 'card-ran'")
+        .get(),
+    ).toEqual({ state: 'done' });
+  });
+});
