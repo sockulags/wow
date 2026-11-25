@@ -1,5 +1,5 @@
 import type { AssistantChangeRecord, DomainEvent, ServerCommand } from '@wow/contracts';
-import { changeOf, snapshot, targetOf, undoRefusal } from '../assistant/changes.js';
+import { changeOf, settingOf, snapshot, targetOf, undoRefusal } from '../assistant/changes.js';
 import {
   CommandRejected,
   decide,
@@ -76,7 +76,14 @@ export function* decideSetup(
           `The setup from ${application.name} was already undone`,
         );
       }
-      for (const part of application.parts) {
+      // A setting wow no longer has (removed with its feature, its stored row deleted by the
+      // migration that removed it) has nothing to put back.
+      const parts = application.parts.filter(
+        (part) =>
+          part.target.kind !== 'setting' ||
+          Object.hasOwn(context.registry, settingOf(part.target.id).key),
+      );
+      for (const part of parts) {
         const refusal = undoRefusal(part, read, asUser);
         if (refusal !== undefined) {
           throw new CommandRejected(
@@ -85,7 +92,7 @@ export function* decideSetup(
           );
         }
       }
-      for (const part of application.parts.toReversed()) {
+      for (const part of parts.toReversed()) {
         for (const inverse of part.inverse) {
           try {
             yield decide(inverse, read, { ...asUser, putBackSteps: true });

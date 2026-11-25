@@ -7,8 +7,9 @@ import type { RunningServer } from '../server.js';
 import { insert, launchOn, oldStore, tablesOf, threadRow } from './old-store.js';
 
 // The assistant's briefings, decision queue, delegation under standing permissions and notes are
-// gone (orchestrator threads spec 35): the migration deletes their rows, settings and events, and
-// keeps a thread the assistant started as an ordinary chat thread.
+// gone (orchestrator threads spec 35): the migration deletes their rows, settings and the events of
+// the removed kinds, and keeps a thread the assistant started as an ordinary chat thread. A setup
+// file applied before that set a removed setting can still be undone.
 
 const at = '2026-11-21T08:00:00.000Z';
 
@@ -141,6 +142,32 @@ describe('migration 0052_chief_of_staff_removed', () => {
     ] as const) {
       insert(old, 'settings', { key, scope: 'global', value: JSON.stringify(value) });
     }
+    // A setup file applied before set a removed setting beside one that stays.
+    const part = (key: string, value: unknown) => ({
+      id: `setup-team:${key}`,
+      at,
+      commandType: 'setting.set',
+      what: key,
+      from: null,
+      to: String(value),
+      place: { label: 'Settings', path: '/settings' },
+      target: { kind: 'setting', id: `${key}:global` },
+      inverse: [{ type: 'setting.reset', key, scope: 'global' }],
+      expect: { value },
+      state: 'applied',
+      undoneAt: null,
+    });
+    insert(old, 'setup_applications', {
+      id: 'setup-team',
+      at,
+      name: 'team.yaml',
+      added: [],
+      replaced: [],
+      marked: [],
+      to_fill_in: [],
+      parts: [part('assistant.briefings', false), part('calendar.snapMinutes', 30)],
+      state: 'applied',
+    });
     old.close();
 
     const check = (db: Sqlite.Database) => {
@@ -188,5 +215,13 @@ describe('migration 0052_chief_of_staff_removed', () => {
     await server.stop();
     server = await launchOn(root, home);
     check(server.database.sqlite);
+
+    // Its Undo puts back what is still there and passes over the setting that is gone.
+    server.engine.dispatch('undo-team', { type: 'setup.undo', applicationId: 'setup-team' });
+    const sqlite = server.database.sqlite;
+    expect(sqlite.prepare('SELECT key FROM settings').all()).toEqual([]);
+    expect(sqlite.prepare('SELECT state FROM setup_applications').all()).toEqual([
+      { state: 'undone' },
+    ]);
   });
 });

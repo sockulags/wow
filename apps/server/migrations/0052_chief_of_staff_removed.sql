@@ -5,7 +5,7 @@ UPDATE `threads` SET `started_by` = NULL WHERE `started_by` = 'assistant';
 --> statement-breakpoint
 DELETE FROM `notifications` WHERE `kind` IN ('briefing', 'reminder');
 --> statement-breakpoint
--- Events are never replayed; the ones of the removed kinds go so the store holds nothing of them.
+-- Events are never replayed; the ones of the removed kinds go, so they cannot be read back.
 DELETE FROM `events` WHERE `kind` IN (
   'decision.briefRequested',
   'decision.briefWritten',

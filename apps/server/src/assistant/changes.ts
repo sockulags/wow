@@ -57,7 +57,7 @@ export function patternsOf(read: ReadModel, context: DecideContext): RegExp[] {
 
 const settingTargetId = (key: string, scope: string) => `${key}:${scope}`;
 
-function settingOf(id: string): { key: string; scope: string } {
+export function settingOf(id: string): { key: string; scope: string } {
   const at = id.indexOf(':');
   return { key: id.slice(0, at), scope: id.slice(at + 1) };
 }

@@ -2169,8 +2169,9 @@ update with the old text, or the create. The event `setup.applied` stores them a
 the `SetupApplicationRecord`; the `setupApplications` topic row (`SetupApplication`) leaves them
 out. Undo checks every part with `undoRefusal` first and is refused, changing nothing, with what
 changed when any thing the file set changed again; otherwise it decides every inverse, newest
-part first, and `setup.undone` marks the row. A step that refuses rolls back the whole
-transaction. Both commands are refused from the assistant in the class table: the user reads the
+part first, and `setup.undone` marks the row. A part that set a setting wow no longer has (its
+row deleted by the migration that removed it, such as 0051 or 0052) is passed over: there is
+nothing to put back. A step that refuses rolls back the whole transaction. Both commands are refused from the assistant in the class table: the user reads the
 preview and presses Apply.
 
 **The view** (`apps/web/src/settings/setup.ts`, `setup-section.tsx`). Settings → Advanced has a

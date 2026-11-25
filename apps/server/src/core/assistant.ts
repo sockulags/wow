@@ -94,19 +94,9 @@ export function* decideInSteps(
     const target = targetOf(sent.data);
     if (!target) throw new Error(`${command.type} is ordinary but names nothing it changes`);
     const before = snapshot(target, read);
-    // A card's Run now is decided in steps; what it did is reported like any change below.
-    if (isSteppedTriggerCommand(sent.data) && isTriggerCommand(sent.data)) {
-      let any = false;
-      for (const step of decideTriggerInSteps(sent.data, read, asUser)) {
-        any ||= step.length > 0;
-        yield step;
-      }
-      if (!any) return;
-    } else {
-      const events = decide(sent.data, read, asUser);
-      if (events.length === 0) return;
-      yield events;
-    }
+    const events = decide(sent.data, read, asUser);
+    if (events.length === 0) return;
+    yield events;
     const change = changeOf(
       commandId,
       sent.data,

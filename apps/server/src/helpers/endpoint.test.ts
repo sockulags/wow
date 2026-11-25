@@ -1177,14 +1177,10 @@ describe('main threads without a project, with the app tools (orchestrator threa
     expect(startTurnsOf('crowded')).toEqual([]);
   });
 
-  it('offers a main thread the app tools beside the helper tools, without delegation or notes, and a helper none', async () => {
+  it('offers a main thread the app tools beside the helper tools, and a helper none', async () => {
     const client = await mainThread();
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining(['start_helper', 'read_projects', 'create_card']));
-    expect(names).not.toEqual(expect.arrayContaining(['start_thread']));
-    expect(names).not.toContain('remember');
-    expect(names).not.toContain('read_notes');
-    expect(names).not.toContain('write_brief');
     const started = await call(client, 'start_helper', { brief: 'Plan the timer change' });
     const helperId = String(started.value['id']);
     await helperStarted(helperId);
